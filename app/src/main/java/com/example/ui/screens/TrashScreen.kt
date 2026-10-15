@@ -190,7 +190,7 @@ fun TrashScreen(
                                     )
                                 }
                                 IconButton(
-                                    onClick = { viewModel.permanentDelete(item.id) },
+                                    onClick = { viewModel.deletePermanently(item.id) },
                                     modifier = Modifier.testTag("perm_delete_btn_${item.id}")
                                 ) {
                                     Icon(

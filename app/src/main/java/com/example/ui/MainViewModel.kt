@@ -176,6 +176,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     aiStatus = "READY"
                 )
             )
+
+            // Persist 768-dim normalized embedding vector locally in Room
+            val textToEmbed = "${item.title}. ${item.content}. ${res.description}. ${res.concepts}"
+            val vectors = aiGateway.embed(listOf(textToEmbed))
+            val vector = vectors.firstOrNull()
+            if (vector != null) {
+                val vectorStr = vector.joinToString(",")
+                repository.dao.insertSearchDocument(
+                    com.example.data.SearchDocumentEntity(
+                        id = "doc_${item.id}",
+                        itemId = item.id,
+                        textContent = textToEmbed,
+                        embedding = vectorStr,
+                        embeddingDimension = 768,
+                        modelVersion = "text-embedding-004",
+                        coverage = res.coverage
+                    )
+                )
+            }
         }
     }
 
@@ -187,9 +206,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val cols = _collections.value.map { it.name }
             val plan = aiGateway.getSearchPlan(query, cols)
 
-            // Generate query embedding
+            // Generate query embedding once online
             val queryVectors = aiGateway.embed(listOf(query))
             val queryVec = queryVectors.firstOrNull()
+
+            // Load all pre-stored embeddings locally from Room database
+            val storedDocs = repository.dao.getAllSearchDocuments().associateBy { it.itemId }
 
             val results = mutableListOf<SemanticSearchResult>()
 
@@ -198,16 +220,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 var score = 0f
                 val explanations = mutableListOf<String>()
 
-                // 1. Vector similarity if embeddings exist
-                if (queryVec != null) {
-                    val itemText = "${item.title} ${item.content} ${item.aiDescription ?: ""} ${item.aiConcepts ?: ""}"
-                    val itemVec = aiGateway.embed(listOf(itemText)).firstOrNull()
-                    if (itemVec != null) {
+                // 1. Vector similarity from stored local embedding (fast local float math)
+                val storedDoc = storedDocs[item.id]
+                if (queryVec != null && storedDoc?.embedding != null) {
+                    try {
+                        val itemVec = storedDoc.embedding.split(",").map { it.toFloat() }.toFloatArray()
                         val sim = SemanticVectorMath.cosineSimilarity(queryVec, itemVec)
-                        if (sim > 0.4f) {
+                        if (sim > 0.35f) {
                             score += sim * 10f
                             explanations.add("Semantic concept match (similarity %.2f)".format(sim))
                         }
+                    } catch (_: Exception) {
                     }
                 }
 
@@ -276,8 +299,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setReminder(id: String, timeMillis: Long?) {
         viewModelScope.launch(Dispatchers.IO) {
-            repository.dao.setReminder(id, timeMillis)
             val item = repository.dao.getItemById(id) ?: return@launch
+            repository.setReminder(id, timeMillis)
             if (timeMillis != null) {
                 reminderScheduler.schedule(id, item.title, timeMillis)
             } else {

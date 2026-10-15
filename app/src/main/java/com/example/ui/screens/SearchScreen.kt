@@ -19,19 +19,19 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.model.ItemKind
-import com.example.model.LibraryItem
+import com.example.data.ItemWithCollections
 import com.example.ui.MainViewModel
 import com.example.ui.components.ItemCard
 import com.example.ui.components.TypeFilterChipStrip
 import com.example.ui.components.getKindColor
 import com.example.ui.components.getKindIcon
+import com.personallibrary.core.model.ItemKind
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SearchScreen(
     viewModel: MainViewModel,
-    onOpenItemDetail: (LibraryItem) -> Unit,
+    onOpenItemDetail: (ItemWithCollections) -> Unit,
     onOpenVoiceSearch: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -165,7 +165,8 @@ fun SearchScreen(
                         }
                     }
 
-                    items(aiResults, key = { "ai_${it.item.id}" }) { res ->
+                    items(aiResults, key = { "ai_${it.item.item.id}" }) { res ->
+                        val item = res.item.item
                         Card(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -179,12 +180,12 @@ fun SearchScreen(
                                     horizontalArrangement = Arrangement.SpaceBetween
                                 ) {
                                     Surface(
-                                        color = getKindColor(res.item.kind).copy(alpha = 0.15f),
+                                        color = getKindColor(item.kind).copy(alpha = 0.15f),
                                         shape = RoundedCornerShape(6.dp)
                                     ) {
                                         Text(
-                                            text = res.item.kind.displayName,
-                                            color = getKindColor(res.item.kind),
+                                            text = item.kind,
+                                            color = getKindColor(item.kind),
                                             fontSize = 11.sp,
                                             fontWeight = FontWeight.Bold,
                                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
@@ -196,7 +197,7 @@ fun SearchScreen(
                                         shape = RoundedCornerShape(6.dp)
                                     ) {
                                         Text(
-                                            text = res.matchExplanation,
+                                            text = res.explanation,
                                             fontSize = 11.sp,
                                             color = MaterialTheme.colorScheme.onTertiaryContainer,
                                             fontWeight = FontWeight.Medium,
@@ -208,15 +209,15 @@ fun SearchScreen(
                                 Spacer(modifier = Modifier.height(8.dp))
 
                                 Text(
-                                    text = res.item.title,
+                                    text = item.title,
                                     style = MaterialTheme.typography.titleMedium,
                                     fontWeight = FontWeight.Bold
                                 )
 
-                                if (res.item.content.isNotBlank()) {
+                                if (item.content.isNotBlank()) {
                                     Spacer(modifier = Modifier.height(4.dp))
                                     Text(
-                                        text = res.item.content,
+                                        text = item.content,
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                         maxLines = 2
@@ -236,14 +237,13 @@ fun SearchScreen(
                         )
                     }
 
-                    items(filteredItems, key = { it.id }) { item ->
-                        val colName = collections.find { it.id == item.collectionId }?.name
+                    items(filteredItems, key = { it.item.id }) { itemWithCols ->
                         ItemCard(
-                            item = item,
-                            onClick = { onOpenItemDetail(item) },
-                            onFavoriteToggle = { viewModel.toggleFavorite(item.id) },
-                            onDelete = { viewModel.moveToTrash(item.id) },
-                            collectionName = colName
+                            itemWithCols = itemWithCols,
+                            fileResolver = { hash -> viewModel.repository.assetStore.getBlobFile(hash) },
+                            onClick = { onOpenItemDetail(itemWithCols) },
+                            onFavoriteToggle = { viewModel.toggleFavorite(itemWithCols.item.id) },
+                            onDelete = { viewModel.moveToTrash(itemWithCols.item.id) }
                         )
                     }
                 } else {

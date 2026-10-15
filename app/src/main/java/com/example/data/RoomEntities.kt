@@ -65,6 +65,22 @@ data class ReminderEntity(
     val isExact: Boolean = true
 )
 
+@Entity(
+    tableName = "search_documents",
+    indices = [Index(value = ["itemId"])]
+)
+data class SearchDocumentEntity(
+    @PrimaryKey val id: String,
+    val itemId: String,
+    val chunkIndex: Int = 0,
+    val pageNumber: Int? = null,
+    val textContent: String,
+    val embedding: String? = null,
+    val embeddingDimension: Int = 768,
+    val modelVersion: String = "text-embedding-004",
+    val coverage: String = "COMPLETE"
+)
+
 @Fts4(contentEntity = ItemEntity::class)
 @Entity(tableName = "items_fts")
 data class ItemFtsEntity(
@@ -216,6 +232,38 @@ interface LibraryDao {
 
     @Query("DELETE FROM reminders WHERE id = :id")
     suspend fun deleteReminderById(id: String)
+
+    // Search Documents & Stored Semantic Embeddings
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertSearchDocument(doc: SearchDocumentEntity)
+
+    @Query("SELECT * FROM search_documents WHERE itemId = :itemId")
+    suspend fun getSearchDocumentsForItem(itemId: String): List<SearchDocumentEntity>
+
+    @Query("SELECT * FROM search_documents")
+    suspend fun getAllSearchDocuments(): List<SearchDocumentEntity>
+
+    @Query("DELETE FROM search_documents WHERE itemId = :itemId")
+    suspend fun deleteSearchDocumentsForItem(itemId: String)
+}
+
+val MIGRATION_1_2 = object : androidx.room.migration.Migration(1, 2) {
+    override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+        db.execSQL("""
+            CREATE TABLE IF NOT EXISTS search_documents (
+                id TEXT NOT NULL PRIMARY KEY,
+                itemId TEXT NOT NULL,
+                chunkIndex INTEGER NOT NULL,
+                pageNumber INTEGER,
+                textContent TEXT NOT NULL,
+                embedding TEXT,
+                embeddingDimension INTEGER NOT NULL,
+                modelVersion TEXT NOT NULL,
+                coverage TEXT NOT NULL
+            )
+        """.trimIndent())
+        db.execSQL("CREATE INDEX IF NOT EXISTS index_search_documents_itemId ON search_documents (itemId)")
+    }
 }
 
 @Database(
@@ -225,9 +273,10 @@ interface LibraryDao {
         CollectionEntity::class,
         ItemCollectionCrossRef::class,
         ReminderEntity::class,
-        ItemFtsEntity::class
+        ItemFtsEntity::class,
+        SearchDocumentEntity::class
     ],
-    version = 1,
+    version = 2,
     exportSchema = false
 )
 abstract class LibraryRoomDatabase : RoomDatabase() {

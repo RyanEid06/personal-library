@@ -1,40 +1,6 @@
 package com.example.model
 
-import kotlinx.serialization.Serializable
-
 typealias ItemKind = com.personallibrary.core.model.ItemKind
-
-@Serializable
-data class LibraryItem(
-    val id: String,
-    val title: String,
-    val content: String,
-    val kind: ItemKind,
-    val isFavorite: Boolean = false,
-    val isTrash: Boolean = false,
-    val trashTimestamp: Long? = null,
-    val createdAt: Long = System.currentTimeMillis(),
-    val sourceDate: Long? = null,
-    val reminderTime: Long? = null,
-    val isReminderDone: Boolean = false,
-    val collectionId: String? = null,
-    val localFilePath: String? = null,
-    val originalFileName: String? = null,
-    val mimeType: String? = null,
-    val fileSizeBytes: Long = 0L,
-    val aiDescription: String? = null,
-    val aiConcepts: String? = null,
-    val aiStatus: String = "READY"
-)
-
-@Serializable
-data class CollectionItem(
-    val id: String,
-    val name: String,
-    val iconName: String = "folder",
-    val colorHex: String = "#3B82F6",
-    val createdAt: Long = System.currentTimeMillis()
-)
 
 enum class SortOrder(val label: String) {
     SAVED_NEWEST("Newest Saved"),

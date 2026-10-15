@@ -29,7 +29,7 @@ class LibraryRepository(private val context: Context) {
         context.applicationContext,
         LibraryRoomDatabase::class.java,
         "personal_library_room.db"
-    ).fallbackToDestructiveMigration().build()
+    ).addMigrations(MIGRATION_1_2).build()
 
     val dao = db.libraryDao()
 
@@ -154,12 +154,45 @@ class LibraryRepository(private val context: Context) {
         dao.setFavorite(id, isFavorite)
     }
 
+    suspend fun setReminder(id: String, timeMillis: Long?) = withContext(Dispatchers.IO) {
+        dao.setReminder(id, timeMillis)
+        val item = dao.getItemById(id) ?: return@withContext
+        if (timeMillis != null) {
+            val reminder = ReminderEntity(
+                id = "rem_$id",
+                itemId = id,
+                title = item.title,
+                dueMillis = timeMillis,
+                isDone = false,
+                isExact = true
+            )
+            dao.insertReminder(reminder)
+        } else {
+            dao.deleteReminderByItemId(id)
+        }
+    }
+
     suspend fun moveToTrash(id: String) = withContext(Dispatchers.IO) {
         dao.moveToTrash(id, System.currentTimeMillis())
+        dao.deleteReminderByItemId(id)
     }
 
     suspend fun restoreFromTrash(id: String) = withContext(Dispatchers.IO) {
         dao.restoreFromTrash(id)
+        val item = dao.getItemById(id)
+        val reminderTime = item?.reminderTime
+        if (item != null && reminderTime != null && reminderTime > System.currentTimeMillis()) {
+            dao.insertReminder(
+                ReminderEntity(
+                    id = "rem_$id",
+                    itemId = id,
+                    title = item.title,
+                    dueMillis = reminderTime,
+                    isDone = false,
+                    isExact = true
+                )
+            )
+        }
     }
 
     /**
@@ -172,6 +205,7 @@ class LibraryRepository(private val context: Context) {
 
         dao.removeAllCollectionsForItem(id)
         dao.deleteReminderByItemId(id)
+        dao.deleteSearchDocumentsForItem(id)
         dao.deleteItemPermanently(id)
 
         if (hash != null) {
@@ -341,13 +375,29 @@ class LibraryRepository(private val context: Context) {
             dao.insertCollection(CollectionEntity(col.id, col.name, col.iconName, col.colorHex, col.createdAt))
         }
 
-        // Restore asset files
+        // Restore asset files & metadata
         for (asset in preview.manifest.assets) {
             val stagedFile = File(preview.stagingDir, "assets/${asset.hash}")
             if (stagedFile.exists()) {
                 stagedFile.inputStream().use { input ->
                     assetStore.import(input, asset.hash, asset.mimeType)
                 }
+            }
+            val existingAsset = dao.getAssetByHash(asset.hash)
+            if (existingAsset == null) {
+                dao.insertAsset(
+                    AssetEntity(
+                        hash = asset.hash,
+                        relativePath = asset.relativePath,
+                        sizeBytes = asset.sizeBytes,
+                        originalName = asset.hash,
+                        mimeType = asset.mimeType,
+                        kind = "FILE",
+                        refCount = 1
+                    )
+                )
+            } else {
+                dao.updateAsset(existingAsset.copy(refCount = existingAsset.refCount + 1))
             }
         }
 
@@ -383,6 +433,24 @@ class LibraryRepository(private val context: Context) {
         // Restore memberships
         for (mem in preview.manifest.memberships) {
             dao.insertItemCollectionCrossRef(ItemCollectionCrossRef(mem.itemId, mem.collectionId))
+        }
+
+        // Restore reminders
+        val reminderScheduler = com.example.reminder.ReminderScheduler(context)
+        for (rem in preview.manifest.reminders) {
+            if (!rem.isDone && rem.dueMillis > System.currentTimeMillis()) {
+                dao.insertReminder(
+                    ReminderEntity(
+                        id = rem.id,
+                        itemId = rem.itemId,
+                        title = rem.title,
+                        dueMillis = rem.dueMillis,
+                        isDone = rem.isDone,
+                        isExact = true
+                    )
+                )
+                reminderScheduler.schedule(rem.itemId, rem.title, rem.dueMillis)
+            }
         }
 
         preview.stagingDir.deleteRecursively()

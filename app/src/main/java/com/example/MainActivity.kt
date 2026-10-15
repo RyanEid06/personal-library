@@ -12,20 +12,15 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Collections
-import androidx.compose.material.icons.filled.Folder
-import androidx.compose.material.icons.filled.LocalLibrary
-import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.outlined.Collections
-import androidx.compose.material.icons.outlined.Folder
-import androidx.compose.material.icons.outlined.LocalLibrary
-import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
 import com.example.data.ItemWithCollections
-import com.example.model.LibraryItem
 import com.example.model.SharePayload
 import com.example.reminder.ReminderReceiver
 import com.example.ui.MainViewModel
@@ -48,7 +43,7 @@ enum class AppDestination(val label: String) {
     TRASH("Trash")
 }
 
-class MainActivity : ComponentActivity() {
+class MainActivity : androidx.fragment.app.FragmentActivity() {
 
     private val viewModel: MainViewModel by viewModels()
 
@@ -60,12 +55,66 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             PersonalLibraryTheme {
-                MainAppScaffold(
-                    viewModel = viewModel,
-                    intentTargetItemId = intent?.getStringExtra(ReminderReceiver.EXTRA_ITEM_ID)
-                )
+                val isLocked by viewModel.appLockManager.isLocked.collectAsState()
+                if (isLocked) {
+                    Surface(
+                        modifier = Modifier.fillMaxSize(),
+                        color = MaterialTheme.colorScheme.background
+                    ) {
+                        Column(
+                            modifier = Modifier.fillMaxSize().padding(32.dp),
+                            verticalArrangement = Arrangement.Center,
+                            horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally
+                        ) {
+                            Icon(
+                                Icons.Filled.Lock,
+                                contentDescription = "Locked",
+                                modifier = Modifier.size(64.dp),
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                            Spacer(modifier = Modifier.height(16.dp))
+                            Text(
+                                "Personal Library is Locked",
+                                style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                "Authenticate using your device biometric or screen lock PIN/password.",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.outline,
+                                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                            )
+                            Spacer(modifier = Modifier.height(24.dp))
+                            Button(
+                                onClick = {
+                                    viewModel.appLockManager.authenticate(
+                                        this@MainActivity,
+                                        onSuccess = {},
+                                        onError = {}
+                                    )
+                                },
+                                modifier = Modifier.testTag("unlock_app_button")
+                            ) {
+                                Icon(Icons.Filled.Fingerprint, contentDescription = null)
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Unlock Library")
+                            }
+                        }
+                    }
+                } else {
+                    MainAppScaffold(
+                        viewModel = viewModel,
+                        intentTargetItemId = intent?.getStringExtra(ReminderReceiver.EXTRA_ITEM_ID)
+                    )
+                }
             }
         }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        viewModel.appLockManager.lock()
     }
 
     override fun onNewIntent(intent: Intent) {

@@ -1,0 +1,11 @@
+{
+  "devices": [
+    {
+      "deviceId": "test-android-keystore-device-999",
+      "appVersion": "1.0.0",
+      "enrolledAt": 1792080754609,
+      "revoked": true,
+      "requestCount": 8
+    }
+  ]
+}

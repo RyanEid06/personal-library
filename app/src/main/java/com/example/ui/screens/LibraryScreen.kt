@@ -20,10 +20,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.ItemWithCollections
-import com.example.model.CollectionItem
 import com.example.model.DateFilter
 import com.example.model.ItemKind
-import com.example.model.LibraryItem
 import com.example.model.SortOrder
 import com.example.ui.MainViewModel
 import com.example.ui.components.ItemCard

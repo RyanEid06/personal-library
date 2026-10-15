@@ -22,7 +22,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.ui.MainViewModel
+import com.example.ui.components.EncryptedBackupPassphraseDialog
 import com.example.ui.components.WhatsAppMigrationDialog
+import com.personallibrary.core.backup.RestorePreview
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -32,18 +35,32 @@ fun SettingsScreen(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
     val stats by viewModel.storageStats.collectAsState()
+
     var showMigrationDialog by remember { mutableStateOf(false) }
+    var showExportPassphraseDialog by remember { mutableStateOf(false) }
+    var pendingExportPassphrase by remember { mutableStateOf<CharArray?>(null) }
+
+    var showRestorePassphraseDialog by remember { mutableStateOf(false) }
+    var pendingRestoreUri by remember { mutableStateOf<Uri?>(null) }
+    var restorePreviewState by remember { mutableStateOf<RestorePreview?>(null) }
+    var showRestorePreviewDialog by remember { mutableStateOf(false) }
+
+    var isLockEnabled by remember { mutableStateOf(viewModel.appLockManager.isLockEnabled()) }
 
     val exportBackupLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.CreateDocument("application/json")
+        contract = ActivityResultContracts.CreateDocument("application/octet-stream")
     ) { uri: Uri? ->
-        if (uri != null) {
-            val success = viewModel.exportBackup(uri)
-            if (success) {
-                Toast.makeText(context, "Backup exported successfully", Toast.LENGTH_LONG).show()
-            } else {
-                Toast.makeText(context, "Failed to export backup", Toast.LENGTH_SHORT).show()
+        if (uri != null && pendingExportPassphrase != null) {
+            coroutineScope.launch {
+                val success = viewModel.exportEncryptedBackup(uri, pendingExportPassphrase!!)
+                pendingExportPassphrase = null
+                if (success) {
+                    Toast.makeText(context, "Encrypted backup exported successfully (.plb)", Toast.LENGTH_LONG).show()
+                } else {
+                    Toast.makeText(context, "Failed to export encrypted backup", Toast.LENGTH_SHORT).show()
+                }
             }
         }
     }
@@ -52,21 +69,112 @@ fun SettingsScreen(
         contract = ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
         if (uri != null) {
-            val summary = viewModel.restoreBackup(uri)
-            if (summary != null) {
-                Toast.makeText(context, "Restored ${summary.importedCount} items (${summary.skippedDuplicates} duplicates skipped)", Toast.LENGTH_LONG).show()
-            } else {
-                Toast.makeText(context, "Failed to restore backup", Toast.LENGTH_SHORT).show()
-            }
+            pendingRestoreUri = uri
+            showRestorePassphraseDialog = true
         }
+    }
+
+    if (showExportPassphraseDialog) {
+        EncryptedBackupPassphraseDialog(
+            title = "Export Encrypted Backup",
+            actionButtonText = "Choose Destination",
+            onDismiss = { showExportPassphraseDialog = false },
+            onConfirm = { pass ->
+                pendingExportPassphrase = pass
+                showExportPassphraseDialog = false
+                exportBackupLauncher.launch("PersonalLibrary_Backup_${System.currentTimeMillis()}.plb")
+            }
+        )
+    }
+
+    if (showRestorePassphraseDialog) {
+        EncryptedBackupPassphraseDialog(
+            title = "Decrypt & Inspect Backup",
+            actionButtonText = "Inspect Archive",
+            onDismiss = {
+                showRestorePassphraseDialog = false
+                pendingRestoreUri = null
+            },
+            onConfirm = { pass ->
+                showRestorePassphraseDialog = false
+                val targetUri = pendingRestoreUri
+                if (targetUri != null) {
+                    coroutineScope.launch {
+                        val preview = viewModel.inspectBackup(targetUri, pass)
+                        if (preview != null) {
+                            restorePreviewState = preview
+                            showRestorePreviewDialog = true
+                        } else {
+                            Toast.makeText(context, "Incorrect passphrase or invalid encrypted backup archive", Toast.LENGTH_LONG).show()
+                        }
+                    }
+                }
+            }
+        )
+    }
+
+    if (showRestorePreviewDialog && restorePreviewState != null) {
+        val preview = restorePreviewState!!
+        val newItems = (preview.manifest.items.size - preview.existingDuplicateCount).coerceAtLeast(0)
+        AlertDialog(
+            onDismissRequest = {
+                preview.stagingDir.deleteRecursively()
+                showRestorePreviewDialog = false
+                restorePreviewState = null
+                pendingRestoreUri = null
+            },
+            title = { Text("Restore Backup Inspection") },
+            text = {
+                Column {
+                    Text("Verified encrypted backup integrity:\n", fontWeight = FontWeight.SemiBold)
+                    Text("• Total items in archive: ${preview.manifest.items.size}")
+                    Text("• New items to restore: $newItems")
+                    Text("• Duplicate items skipped: ${preview.existingDuplicateCount}")
+                    Text("• Collections in backup: ${preview.manifest.collections.size}")
+                    Text("• Managed assets: ${preview.manifest.assets.size}")
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Text("Proceed with restoring records into your local personal library?", style = MaterialTheme.typography.bodySmall)
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        coroutineScope.launch {
+                            val count = viewModel.commitRestore(preview)
+                            showRestorePreviewDialog = false
+                            restorePreviewState = null
+                            pendingRestoreUri = null
+                            Toast.makeText(context, "Successfully restored $count items into library", Toast.LENGTH_LONG).show()
+                        }
+                    },
+                    modifier = Modifier.testTag("confirm_restore_button")
+                ) {
+                    Text("Commit Restore")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        preview.stagingDir.deleteRecursively()
+                        showRestorePreviewDialog = false
+                        restorePreviewState = null
+                        pendingRestoreUri = null
+                    }
+                ) {
+                    Text("Cancel")
+                }
+            }
+        )
     }
 
     if (showMigrationDialog) {
         WhatsAppMigrationDialog(
             onDismiss = { showMigrationDialog = false },
-            onImport = { chatText ->
-                viewModel.importWhatsAppChat(chatText) { count ->
-                    Toast.makeText(context, "Imported $count messages into 'Random Links'", Toast.LENGTH_LONG).show()
+            onImport = { chatText, dateOrder ->
+                coroutineScope.launch {
+                    val (imported, ambiguous) = viewModel.importWhatsAppMigration(chatText, dateOrder)
+                    val ambiguousMsg = if (ambiguous > 0) " ($ambiguous ambiguous dates flagged)" else ""
+                    Toast.makeText(context, "Imported $imported messages into 'Random Links'$ambiguousMsg", Toast.LENGTH_LONG).show()
                 }
             }
         )
@@ -151,7 +259,7 @@ fun SettingsScreen(
                     Spacer(modifier = Modifier.height(8.dp))
 
                     Text(
-                        text = "Migrate your existing Random Links chat export directly into organized collections, preserving dates, notes, and attachment links.",
+                        text = "Migrate your existing Random Links chat export directly into organized collections, preserving dates, notes, and attachment links with strict date parsing.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -169,7 +277,7 @@ fun SettingsScreen(
                 }
             }
 
-            // Backup & Portability Card
+            // Encrypted Backup & Portability Card
             Card(
                 shape = RoundedCornerShape(16.dp),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -177,15 +285,15 @@ fun SettingsScreen(
             ) {
                 Column(modifier = Modifier.padding(18.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Filled.Backup, contentDescription = null, tint = MaterialTheme.colorScheme.secondary)
+                        Icon(Icons.Filled.Security, contentDescription = null, tint = MaterialTheme.colorScheme.secondary)
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text("Backup & Portability", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                        Text("Encrypted Backup & Portability", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                     }
 
                     Spacer(modifier = Modifier.height(8.dp))
 
                     Text(
-                        text = "Export a standalone, portable JSON backup of your library metadata, notes, and collection structure, or restore an existing backup.",
+                        text = "Export a passphrase-protected, AES-256-GCM encrypted portable backup (.plb) containing original files, metadata, collections, and reminders. Inspect archive before committing on restore.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -197,9 +305,7 @@ fun SettingsScreen(
                         horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
                         Button(
-                            onClick = {
-                                exportBackupLauncher.launch("PersonalLibrary_Backup_${System.currentTimeMillis()}.json")
-                            },
+                            onClick = { showExportPassphraseDialog = true },
                             modifier = Modifier.weight(1f).testTag("export_backup_button")
                         ) {
                             Icon(Icons.Filled.FileUpload, contentDescription = null)
@@ -209,7 +315,7 @@ fun SettingsScreen(
 
                         OutlinedButton(
                             onClick = {
-                                restoreBackupLauncher.launch(arrayOf("application/json", "*/*"))
+                                restoreBackupLauncher.launch(arrayOf("*/*"))
                             },
                             modifier = Modifier.weight(1f).testTag("restore_backup_button")
                         ) {
@@ -218,6 +324,57 @@ fun SettingsScreen(
                             Text("Restore")
                         }
                     }
+                }
+            }
+
+            // Security & App Lock Card
+            Card(
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(18.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(
+                        modifier = Modifier.weight(1f),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Filled.Lock, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Column {
+                            Text("Biometric App Lock", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                            Text(
+                                text = if (isLockEnabled) "App locks on background and requires authentication" else "No lock enabled",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.outline
+                            )
+                        }
+                    }
+
+                    Switch(
+                        checked = isLockEnabled,
+                        onCheckedChange = { checked ->
+                            if (checked) {
+                                if (viewModel.appLockManager.canAuthenticate()) {
+                                    viewModel.appLockManager.setLockEnabled(true)
+                                    isLockEnabled = true
+                                    Toast.makeText(context, "App lock enabled", Toast.LENGTH_SHORT).show()
+                                } else {
+                                    Toast.makeText(context, "Device has no biometric or screen lock configured", Toast.LENGTH_LONG).show()
+                                }
+                            } else {
+                                viewModel.appLockManager.setLockEnabled(false)
+                                isLockEnabled = false
+                                Toast.makeText(context, "App lock disabled", Toast.LENGTH_SHORT).show()
+                            }
+                        },
+                        modifier = Modifier.testTag("app_lock_switch")
+                    )
                 }
             }
 
@@ -238,7 +395,7 @@ fun SettingsScreen(
                         Icon(Icons.Outlined.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.error)
                         Spacer(modifier = Modifier.width(10.dp))
                         Column {
-                            Text("Trash & Retention", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                            Text("Trash & 30-Day Purge", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                             Text("${stats.trashedItems} items currently in trash", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline)
                         }
                     }
@@ -262,13 +419,13 @@ fun SettingsScreen(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Filled.AutoAwesome, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text("AI Enrichment & Privacy", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                        Text("AI Enrichment & Gateway", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                     }
 
                     Spacer(modifier = Modifier.height(8.dp))
 
                     Text(
-                        text = "• Model: gemini-3.5-flash\n• Automatic analysis: Active on save\n• Authority: Originals and metadata stay 100% private on your phone\n• Offline search: Full text indexing works without internet",
+                        text = "• Backend Gateway: Dedicated authenticated Node/TypeScript server\n• No API Keys in APK: Gemini keys remain server-side only\n• Authority: Originals, metadata, and vectors stay 100% on your device\n• Offline search: Full text search operates fully offline",
                         style = MaterialTheme.typography.bodySmall,
                         lineHeight = 20.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
