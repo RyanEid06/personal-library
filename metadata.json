@@ -1,0 +1,6 @@
+{
+  "name": "Personal Library",
+  "description": "Android app for saving, organizing, and finding personal media, notes, links, and documents with local storage and AI-assisted search",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
