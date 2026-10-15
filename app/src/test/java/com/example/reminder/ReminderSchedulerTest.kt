@@ -21,6 +21,7 @@ class ReminderSchedulerTest {
     fun setup() {
         context = ApplicationProvider.getApplicationContext()
         scheduler = ReminderScheduler(context)
+        org.robolectric.Shadows.shadowOf(context as android.app.Application).grantPermissions(android.Manifest.permission.POST_NOTIFICATIONS)
     }
 
     @Test
@@ -39,5 +40,15 @@ class ReminderSchedulerTest {
         // Cancel reminder
         scheduler.cancel("item_future")
         // No exception thrown on cancel
+    }
+
+    @Test fun deniedNotificationPermissionCannotReportDeliverableReminder() {
+        org.robolectric.Shadows.shadowOf(context as android.app.Application).denyPermissions(android.Manifest.permission.POST_NOTIFICATIONS)
+        assertFalse(scheduler.schedule("denied", "Not deliverable", System.currentTimeMillis() + 60_000))
+    }
+
+    @Test @Config(sdk = [32]) fun android12DoesNotRequireAndroid13NotificationPermission() {
+        org.robolectric.Shadows.shadowOf(context as android.app.Application).denyPermissions(android.Manifest.permission.POST_NOTIFICATIONS)
+        assertTrue(scheduler.schedule("legacy", "Deliverable", System.currentTimeMillis() + 60_000))
     }
 }
