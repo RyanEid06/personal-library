@@ -129,7 +129,7 @@ class EncryptedBackupTest {
         val sampleBytes = "Fake image binary data 123456789".toByteArray()
         assetFile.writeBytes(sampleBytes)
 
-        val hash = "1b645fd236f1ba230790cf5c22e20440e1e54ebe017ae02f1387ef712e0f35ac"
+        val hash = java.security.MessageDigest.getInstance("SHA-256").digest(sampleBytes).joinToString("") { "%02x".format(it) }
 
         val manifest = BackupManifest(
             items = listOf(
