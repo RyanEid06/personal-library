@@ -60,8 +60,8 @@ class RoomDatabaseAndFtsTest {
         dao.insertItem(item1)
         dao.insertItem(item2)
 
-        val col1 = CollectionEntity(id = "col_chem", name = "Chemistry", icon = "school", colorHex = "#3B82F6")
-        val col2 = CollectionEntity(id = "col_urgent", name = "Urgent", icon = "priority_high", colorHex = "#EF4444")
+        val col1 = CollectionEntity(id = "col_chem", name = "Chemistry", iconName = "school", colorHex = "#3B82F6")
+        val col2 = CollectionEntity(id = "col_urgent", name = "Urgent", iconName = "priority_high", colorHex = "#EF4444")
         dao.insertCollection(col1)
         dao.insertCollection(col2)
 

@@ -1,18 +1,23 @@
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert';
 import http from 'node:http';
-import { createServer, FakeGeminiProvider } from '../src/server.js';
+import { createServer, DeviceRegistry, FakeGeminiProvider } from '../src/server.js';
 
 describe('Personal Library Authenticated Backend (TypeScript)', () => {
   let server: http.Server;
   let baseUrl: string;
   const deviceId = 'test-android-keystore-device-999';
+  const sessionSecret = 'test-session-secret-constant-123';
+  const enrollmentSecret = 'test-enrollment-secret-456';
   let sessionToken = '';
+  let deviceCredential = '';
 
   before(async () => {
     const app = createServer({
       customProvider: new FakeGeminiProvider(),
-      requestTimeoutMs: 2000
+      requestTimeoutMs: 2000,
+      sessionSigningSecret: sessionSecret,
+      deviceEnrollmentSecret: enrollmentSecret
     });
     server = app.server;
     await new Promise<void>(resolve => {
@@ -53,11 +58,13 @@ describe('Personal Library Authenticated Backend (TypeScript)', () => {
     });
   }
 
-  test('GET /health returns 200 with service information', async () => {
+  test('GET /health returns 200 with service information and gemini-embedding-2', async () => {
     const res = await request('GET', '/health');
     assert.strictEqual(res.status, 200);
     assert.strictEqual(res.body.status, 'ok');
     assert.strictEqual(res.body.service, 'personal-library-backend');
+    assert.strictEqual(res.body.geminiModel, 'gemini-3.8-flash');
+    assert.strictEqual(res.body.geminiEmbeddingModel, 'gemini-embedding-2');
   });
 
   test('Protected endpoint /v1/ai/analyze rejects unauthenticated request with 401', async () => {
@@ -74,21 +81,52 @@ describe('Personal Library Authenticated Backend (TypeScript)', () => {
     assert.strictEqual(typeof res.body.nonce, 'string');
   });
 
-  test('POST /v1/auth/enroll successfully enrolls device and returns session token', async () => {
+  test('POST /v1/auth/enroll successfully enrolls device and returns session token and device credential', async () => {
     // 1. Get challenge
     const chRes = await request('GET', `/v1/auth/challenge?deviceId=${deviceId}`);
     const nonce = chRes.body.nonce;
 
-    // 2. Enroll with challenge
+    // 2. Enroll with challenge and enrollment secret
     const res = await request('POST', '/v1/auth/enroll', {
       deviceId,
       appVersion: '1.0.0',
-      challengeNonce: nonce
+      challengeNonce: nonce,
+      enrollmentSecret
     });
     assert.strictEqual(res.status, 200);
     assert.strictEqual(res.body.status, 'ENROLLED');
     assert.ok(res.body.sessionToken);
+    assert.ok(res.body.deviceCredential);
     sessionToken = res.body.sessionToken;
+    deviceCredential = res.body.deviceCredential;
+  });
+
+  test('POST /v1/auth/session renews session token using device credential', async () => {
+    const chRes = await request('GET', `/v1/auth/challenge?deviceId=${deviceId}`);
+    const nonce = chRes.body.nonce;
+
+    const res = await request('POST', '/v1/auth/session', {
+      deviceId,
+      deviceCredential,
+      challengeNonce: nonce
+    });
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(res.body.status, 'AUTHENTICATED');
+    assert.ok(res.body.sessionToken);
+    // Use renewed session token
+    sessionToken = res.body.sessionToken;
+  });
+
+  test('Stateless DeviceRegistry survives server restarts without persistent disk state', () => {
+    // Create completely fresh registry instance simulating cold start/reboot with same secret
+    const rebootedRegistry = new DeviceRegistry(sessionSecret, enrollmentSecret);
+    assert.strictEqual(rebootedRegistry.validateSession(deviceId, sessionToken), true);
+    assert.strictEqual(rebootedRegistry.verifyDeviceCredential(deviceId, deviceCredential), true);
+
+    // Can issue new sessions on rebooted instance
+    const freshToken = rebootedRegistry.renewSession(deviceId, deviceCredential);
+    assert.ok(freshToken);
+    assert.strictEqual(rebootedRegistry.validateSession(deviceId, freshToken), true);
   });
 
   test('POST /v1/ai/analyze succeeds with authenticated device session', async () => {

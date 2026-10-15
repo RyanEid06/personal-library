@@ -29,7 +29,7 @@ class LibraryRepository(private val context: Context) {
         context.applicationContext,
         LibraryRoomDatabase::class.java,
         "personal_library_room.db"
-    ).addMigrations(MIGRATION_1_2).build()
+    ).addMigrations(MIGRATION_1_2).addCallback(DATABASE_CALLBACK).build()
 
     val dao = db.libraryDao()
 
@@ -222,6 +222,8 @@ class LibraryRepository(private val context: Context) {
         }
     }
 
+    suspend fun deletePermanently(id: String) = deleteItemPermanently(id)
+
     suspend fun emptyTrash() = withContext(Dispatchers.IO) {
         val trashItems = dao.getAllItemsIncludingTrash().filter { it.isTrash }
         for (item in trashItems) {
@@ -283,6 +285,28 @@ class LibraryRepository(private val context: Context) {
             dao.searchLike("%$trimmed%")
         } else {
             dao.getAllActiveItems()
+        }
+    }
+
+    suspend fun searchWithCollections(query: String): List<ItemWithCollections> = withContext(Dispatchers.IO) {
+        val sanitized = SearchQuery.fts(query)
+        val ftsResults = if (sanitized != null) {
+            try {
+                dao.searchFtsWithCollections(sanitized)
+            } catch (_: Exception) {
+                emptyList()
+            }
+        } else emptyList()
+
+        if (ftsResults.isNotEmpty()) {
+            return@withContext ftsResults
+        }
+
+        val trimmed = query.trim()
+        if (trimmed.isNotBlank()) {
+            dao.searchLikeWithCollections("%$trimmed%")
+        } else {
+            dao.observeItemsWithCollections().first()
         }
     }
 

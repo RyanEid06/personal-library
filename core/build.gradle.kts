@@ -11,6 +11,7 @@ java {
 dependencies {
     implementation(libs.kotlinx.coroutines.core)
     implementation(libs.kotlinx.serialization.json)
+    implementation("com.google.crypto.tink:tink:1.15.0")
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)

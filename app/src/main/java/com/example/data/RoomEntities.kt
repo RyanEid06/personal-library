@@ -206,6 +206,15 @@ interface LibraryDao {
     """)
     suspend fun searchFts(sanitizedFtsQuery: String): List<ItemEntity>
 
+    @Transaction
+    @Query("""
+        SELECT items.* FROM items
+        JOIN items_fts ON items.rowid = items_fts.docid
+        WHERE items_fts MATCH :sanitizedFtsQuery AND items.isTrash = 0
+        ORDER BY items.createdAt DESC
+    """)
+    suspend fun searchFtsWithCollections(sanitizedFtsQuery: String): List<ItemWithCollections>
+
     // Fallback Substring LIKE Search
     @Query("""
         SELECT * FROM items
@@ -219,6 +228,20 @@ interface LibraryDao {
         ORDER BY createdAt DESC
     """)
     suspend fun searchLike(pattern: String): List<ItemEntity>
+
+    @Transaction
+    @Query("""
+        SELECT * FROM items
+        WHERE isTrash = 0 AND (
+            title LIKE :pattern OR
+            content LIKE :pattern OR
+            originalFileName LIKE :pattern OR
+            aiDescription LIKE :pattern OR
+            aiConcepts LIKE :pattern
+        )
+        ORDER BY createdAt DESC
+    """)
+    suspend fun searchLikeWithCollections(pattern: String): List<ItemWithCollections>
 
     // Reminders
     @Query("SELECT * FROM reminders WHERE isDone = 0 ORDER BY dueMillis ASC")
@@ -245,6 +268,47 @@ interface LibraryDao {
 
     @Query("DELETE FROM search_documents WHERE itemId = :itemId")
     suspend fun deleteSearchDocumentsForItem(itemId: String)
+
+    @Query("INSERT INTO items_fts(items_fts) VALUES('rebuild')")
+    suspend fun rebuildFts()
+}
+
+val DATABASE_CALLBACK = object : androidx.room.RoomDatabase.Callback() {
+    override fun onCreate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+        super.onCreate(db)
+        setupFts(db)
+    }
+
+    override fun onOpen(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+        super.onOpen(db)
+        setupFts(db)
+    }
+
+    private fun setupFts(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+        try {
+            db.execSQL("""
+                CREATE TRIGGER IF NOT EXISTS items_fts_insert AFTER INSERT ON items BEGIN
+                    INSERT INTO items_fts(docid, title, content, originalFileName, aiDescription, aiConcepts)
+                    VALUES (new.rowid, new.title, new.content, new.originalFileName, new.aiDescription, new.aiConcepts);
+                END;
+            """.trimIndent())
+            db.execSQL("""
+                CREATE TRIGGER IF NOT EXISTS items_fts_delete AFTER DELETE ON items BEGIN
+                    INSERT INTO items_fts(items_fts, docid, title, content, originalFileName, aiDescription, aiConcepts)
+                    VALUES ('delete', old.rowid, old.title, old.content, old.originalFileName, old.aiDescription, old.aiConcepts);
+                END;
+            """.trimIndent())
+            db.execSQL("""
+                CREATE TRIGGER IF NOT EXISTS items_fts_update AFTER UPDATE ON items BEGIN
+                    INSERT INTO items_fts(items_fts, docid, title, content, originalFileName, aiDescription, aiConcepts)
+                    VALUES ('delete', old.rowid, old.title, old.content, old.originalFileName, old.aiDescription, old.aiConcepts);
+                    INSERT INTO items_fts(docid, title, content, originalFileName, aiDescription, aiConcepts)
+                    VALUES (new.rowid, new.title, new.content, new.originalFileName, new.aiDescription, new.aiConcepts);
+                END;
+            """.trimIndent())
+            db.execSQL("INSERT INTO items_fts(items_fts) VALUES('rebuild')")
+        } catch (_: Exception) {}
+    }
 }
 
 val MIGRATION_1_2 = object : androidx.room.migration.Migration(1, 2) {

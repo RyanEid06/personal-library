@@ -1,7 +1,5 @@
 import http from 'node:http';
 import crypto from 'node:crypto';
-import fs from 'node:fs';
-import path from 'node:path';
 import { GoogleGenAI } from '@google/genai';
 
 export interface ServerConfig {
@@ -11,7 +9,8 @@ export interface ServerConfig {
   geminiEmbeddingModel: string;
   maxBodyBytes: number;
   requestTimeoutMs: number;
-  dbPath?: string;
+  sessionSigningSecret: string;
+  deviceEnrollmentSecret: string;
   customProvider?: GeminiProvider;
 }
 
@@ -36,132 +35,128 @@ export interface GeminiProvider {
   }>;
 }
 
-export interface DeviceRecord {
-  deviceId: string;
-  appVersion: string;
-  enrolledAt: number;
-  revoked: boolean;
-  requestCount: number;
-}
-
-export interface SessionRecord {
-  token: string;
-  deviceId: string;
-  expiresAt: number;
-}
-
+/**
+ * Stateless, HMAC-signed device registry that survives server restarts.
+ * Uses SESSION_SIGNING_SECRET and DEVICE_ENROLLMENT_SECRET to sign and verify
+ * device credentials and session tokens without requiring persistent disk state.
+ */
 export class DeviceRegistry {
-  private devices = new Map<string, DeviceRecord>();
-  private sessions = new Map<string, SessionRecord>();
-  private challenges = new Map<string, { nonce: string; expiresAt: number }>();
-  private filePath?: string;
+  private sessionSigningSecret: string;
+  private deviceEnrollmentSecret: string;
+  private revokedDevices = new Set<string>();
 
-  constructor(filePath?: string) {
-    this.filePath = filePath;
-    this.load();
-  }
-
-  private load(): void {
-    if (!this.filePath) return;
-    try {
-      if (fs.existsSync(this.filePath)) {
-        const raw = fs.readFileSync(this.filePath, 'utf-8');
-        const data = JSON.parse(raw);
-        for (const dev of data.devices || []) {
-          this.devices.set(dev.deviceId, dev);
-        }
-      }
-    } catch {
-      // Continue with in-memory if file read fails
-    }
-  }
-
-  private persist(): void {
-    if (!this.filePath) return;
-    try {
-      const dir = path.dirname(this.filePath);
-      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-      const data = {
-        devices: Array.from(this.devices.values()),
-      };
-      fs.writeFileSync(this.filePath, JSON.stringify(data, null, 2), 'utf-8');
-    } catch {
-      // Best-effort persistence
-    }
+  constructor(sessionSigningSecret: string, deviceEnrollmentSecret: string = '') {
+    this.sessionSigningSecret = sessionSigningSecret;
+    this.deviceEnrollmentSecret = deviceEnrollmentSecret;
   }
 
   createChallenge(deviceId: string): string {
-    const nonce = crypto.randomBytes(24).toString('hex');
-    this.challenges.set(deviceId, {
-      nonce,
-      expiresAt: Date.now() + 5 * 60 * 1000 // 5 minutes
-    });
-    return nonce;
+    const timestamp = Date.now();
+    const random = crypto.randomBytes(16).toString('hex');
+    const payload = `${deviceId}:${timestamp}:${random}`;
+    const hmac = crypto.createHmac('sha256', this.sessionSigningSecret).update(payload).digest('hex');
+    return `${timestamp}.${random}.${hmac}`;
   }
 
   verifyChallenge(deviceId: string, nonce: string): boolean {
-    const ch = this.challenges.get(deviceId);
-    if (!ch) return false;
-    this.challenges.delete(deviceId);
-    return ch.nonce === nonce && Date.now() < ch.expiresAt;
+    if (!nonce || typeof nonce !== 'string') return false;
+    const parts = nonce.split('.');
+    if (parts.length !== 3) return false;
+    const [tsStr, random, hmac] = parts;
+    const timestamp = parseInt(tsStr, 10);
+    if (isNaN(timestamp)) return false;
+    // 5 minutes expiry window
+    if (Date.now() - timestamp > 5 * 60 * 1000 || timestamp > Date.now() + 60 * 1000) {
+      return false;
+    }
+    const payload = `${deviceId}:${timestamp}:${random}`;
+    const expected = crypto.createHmac('sha256', this.sessionSigningSecret).update(payload).digest('hex');
+    try {
+      return crypto.timingSafeEqual(Buffer.from(hmac, 'hex'), Buffer.from(expected, 'hex'));
+    } catch {
+      return false;
+    }
   }
 
-  enroll(deviceId: string, appVersion: string): string {
-    let dev = this.devices.get(deviceId);
-    if (!dev) {
-      dev = {
-        deviceId,
-        appVersion,
-        enrolledAt: Date.now(),
-        revoked: false,
-        requestCount: 0
-      };
-      this.devices.set(deviceId, dev);
-    } else {
-      dev.appVersion = appVersion;
-      dev.revoked = false;
-    }
-    this.persist();
+  createDeviceCredential(deviceId: string): string {
+    const enrolledAt = Date.now();
+    const payload = `${deviceId}:${enrolledAt}`;
+    const secret = this.deviceEnrollmentSecret || this.sessionSigningSecret;
+    const hmac = crypto.createHmac('sha256', secret).update(payload).digest('hex');
+    return `${deviceId}.${enrolledAt}.${hmac}`;
+  }
 
-    const token = crypto.randomBytes(32).toString('hex');
-    this.sessions.set(token, {
-      token,
-      deviceId,
-      expiresAt: Date.now() + 24 * 60 * 60 * 1000 // 24 hours
-    });
-    return token;
+  verifyDeviceCredential(deviceId: string, credential: string): boolean {
+    if (!credential || typeof credential !== 'string') return false;
+    const parts = credential.split('.');
+    if (parts.length !== 3) return false;
+    const [credDevId, enrolledAtStr, hmac] = parts;
+    if (credDevId !== deviceId) return false;
+    const payload = `${deviceId}:${enrolledAtStr}`;
+    const secret = this.deviceEnrollmentSecret || this.sessionSigningSecret;
+    const expected = crypto.createHmac('sha256', secret).update(payload).digest('hex');
+    try {
+      return crypto.timingSafeEqual(Buffer.from(hmac, 'hex'), Buffer.from(expected, 'hex'));
+    } catch {
+      return false;
+    }
+  }
+
+  createSessionToken(deviceId: string, durationMs: number = 24 * 60 * 60 * 1000): string {
+    const expiresAt = Date.now() + durationMs;
+    const payload = `${deviceId}:${expiresAt}`;
+    const hmac = crypto.createHmac('sha256', this.sessionSigningSecret).update(payload).digest('hex');
+    return `${deviceId}.${expiresAt}.${hmac}`;
+  }
+
+  enroll(deviceId: string, appVersion: string, enrollmentSecret?: string): { sessionToken: string; deviceCredential: string } {
+    if (this.deviceEnrollmentSecret && enrollmentSecret && enrollmentSecret !== this.deviceEnrollmentSecret) {
+      const err = new Error('INVALID_ENROLLMENT_SECRET');
+      (err as any).statusCode = 401;
+      throw err;
+    }
+    this.revokedDevices.delete(deviceId);
+    const deviceCredential = this.createDeviceCredential(deviceId);
+    const sessionToken = this.createSessionToken(deviceId);
+    return { sessionToken, deviceCredential };
+  }
+
+  renewSession(deviceId: string, deviceCredential: string): string {
+    if (this.revokedDevices.has(deviceId)) {
+      const err = new Error('DEVICE_REVOKED');
+      (err as any).statusCode = 401;
+      throw err;
+    }
+    if (!this.verifyDeviceCredential(deviceId, deviceCredential)) {
+      const err = new Error('INVALID_DEVICE_CREDENTIAL');
+      (err as any).statusCode = 401;
+      throw err;
+    }
+    return this.createSessionToken(deviceId);
   }
 
   revoke(deviceId: string): void {
-    const dev = this.devices.get(deviceId);
-    if (dev) {
-      dev.revoked = true;
-      this.persist();
-    }
-    for (const [t, s] of this.sessions.entries()) {
-      if (s.deviceId === deviceId) {
-        this.sessions.delete(t);
-      }
-    }
+    this.revokedDevices.add(deviceId);
   }
 
   validateSession(deviceId: string, token: string): boolean {
-    const session = this.sessions.get(token);
-    if (!session) return false;
-    if (session.deviceId !== deviceId) return false;
-    if (Date.now() > session.expiresAt) {
-      this.sessions.delete(token);
+    if (this.revokedDevices.has(deviceId)) return false;
+    if (!token || typeof token !== 'string') return false;
+    const parts = token.split('.');
+    if (parts.length !== 3) return false;
+    const [tokenDevId, expiresAtStr, hmac] = parts;
+    if (tokenDevId !== deviceId) return false;
+    const expiresAt = parseInt(expiresAtStr, 10);
+    if (isNaN(expiresAt) || Date.now() > expiresAt) {
       return false;
     }
-    const dev = this.devices.get(deviceId);
-    if (!dev || dev.revoked) return false;
-
-    // Rate / quota check
-    dev.requestCount++;
-    if (dev.requestCount % 50 === 0) {
-      this.persist();
+    const payload = `${deviceId}:${expiresAtStr}`;
+    const expected = crypto.createHmac('sha256', this.sessionSigningSecret).update(payload).digest('hex');
+    try {
+      return crypto.timingSafeEqual(Buffer.from(hmac, 'hex'), Buffer.from(expected, 'hex'));
+    } catch {
+      return false;
     }
-    return true;
   }
 }
 
@@ -201,7 +196,7 @@ Text Content: ${textContent?.slice(0, 4000) || 'None provided'}
         detectedDates: Array.isArray(parsed.detectedDates) ? parsed.detectedDates : [],
         coverage: 'COMPLETE'
       };
-    } catch {
+    } catch (err: any) {
       return {
         itemId,
         description: `Saved ${kind.toLowerCase()}: ${originalFileName || textContent?.slice(0, 40) || 'Archive item'}`,
@@ -218,22 +213,24 @@ Text Content: ${textContent?.slice(0, 4000) || 'None provided'}
       try {
         const response = await this.ai.models.embedContent({
           model: this.embeddingModel,
-          contents: text.slice(0, 2048)
+          contents: text.slice(0, 2048),
+          config: {
+            outputDimensionality: 768
+          }
         });
         const resAny = response as any;
         const values: number[] | undefined = resAny.embedding?.values || resAny.embeddings?.[0]?.values;
         if (values && values.length > 0) {
-          // Normalize to unit length
           let sumSq = 0;
           for (let i = 0; i < values.length; i++) sumSq += values[i] * values[i];
           const mag = Math.sqrt(sumSq) || 1.0;
           embeddings.push(values.map((v: number) => parseFloat((v / mag).toFixed(6))));
         } else {
-          throw new Error('No embedding values returned');
+          throw new Error('NO_EMBEDDINGS_RETURNED');
         }
-      } catch {
-        // Fallback normalized 768 vector
-        embeddings.push(generateFallbackVector(text));
+      } catch (err: any) {
+        // Real Gemini embedding failure must report error, never fake production fallback
+        throw new Error(`GEMINI_EMBEDDING_UNAVAILABLE: ${err?.message || 'Embedding service unavailable'}`);
       }
     }
     return {
@@ -298,8 +295,8 @@ export class FakeGeminiProvider implements GeminiProvider {
   async embed(texts: string[]) {
     return {
       dimension: 768,
-      modelVersion: 'gemini-embedding-test',
-      embeddings: texts.map(t => generateFallbackVector(t))
+      modelVersion: 'gemini-embedding-2-mock',
+      embeddings: texts.map(t => generateTestDeterministicVector(t))
     };
   }
 
@@ -308,7 +305,7 @@ export class FakeGeminiProvider implements GeminiProvider {
   }
 }
 
-function generateFallbackVector(text: string): number[] {
+export function generateTestDeterministicVector(text: string): number[] {
   const vec = new Float32Array(768);
   const hash = crypto.createHash('sha256').update(text).digest();
   for (let i = 0; i < 768; i++) {
@@ -398,11 +395,14 @@ export function createServer(config?: Partial<ServerConfig>) {
   const port = config?.port || parseInt(process.env.PORT || '8081', 10);
   const geminiApiKey = config?.geminiApiKey ?? (process.env.GEMINI_API_KEY || '');
   const geminiModel = config?.geminiModel || process.env.GEMINI_MODEL || 'gemini-3.8-flash';
-  const geminiEmbeddingModel = config?.geminiEmbeddingModel || process.env.GEMINI_EMBEDDING_MODEL || 'text-embedding-004';
+  const rawEmbeddingModel = config?.geminiEmbeddingModel || process.env.GEMINI_EMBEDDING_MODEL;
+  const geminiEmbeddingModel = (rawEmbeddingModel && rawEmbeddingModel !== 'text-embedding-004') ? rawEmbeddingModel : 'gemini-embedding-2';
   const maxBodyBytes = config?.maxBodyBytes || 2 * 1024 * 1024; // 2 MB
   const requestTimeoutMs = config?.requestTimeoutMs || 30000;
+  const sessionSigningSecret = config?.sessionSigningSecret || process.env.SESSION_SIGNING_SECRET || 'personal-library-session-signing-secret';
+  const deviceEnrollmentSecret = config?.deviceEnrollmentSecret ?? (process.env.DEVICE_ENROLLMENT_SECRET || '');
 
-  const registry = new DeviceRegistry(config?.dbPath || path.join(__dirname, '../data/devices.json'));
+  const registry = new DeviceRegistry(sessionSigningSecret, deviceEnrollmentSecret);
 
   const provider: GeminiProvider = config?.customProvider || (
     geminiApiKey ? new SdkGeminiProvider(geminiApiKey, geminiModel, geminiEmbeddingModel) : new FakeGeminiProvider()
@@ -438,7 +438,9 @@ export function createServer(config?: Partial<ServerConfig>) {
         status: 'ok',
         service: 'personal-library-backend',
         version: '1.0.0',
-        hasLiveKey: Boolean(geminiApiKey)
+        hasLiveKey: Boolean(geminiApiKey),
+        geminiModel,
+        geminiEmbeddingModel
       });
     }
 
@@ -456,7 +458,7 @@ export function createServer(config?: Partial<ServerConfig>) {
     if (pathname === '/v1/auth/enroll' && req.method === 'POST') {
       try {
         const body = await parseJsonBody(req, maxBodyBytes);
-        const { deviceId, appVersion, challengeNonce } = body;
+        const { deviceId, appVersion, challengeNonce, enrollmentSecret } = body;
         if (!deviceId || typeof deviceId !== 'string') {
           return sendResponse(400, { error: 'INVALID_REQUEST', message: 'Missing deviceId' });
         }
@@ -466,15 +468,42 @@ export function createServer(config?: Partial<ServerConfig>) {
             return sendResponse(401, { error: 'INVALID_CHALLENGE', message: 'Challenge nonce expired or invalid' });
           }
         }
-        const token = registry.enroll(deviceId, appVersion || '1.0.0');
+        const { sessionToken, deviceCredential } = registry.enroll(deviceId, appVersion || '1.0.0', enrollmentSecret);
         return sendResponse(200, {
           status: 'ENROLLED',
           deviceId,
-          sessionToken: token,
+          sessionToken,
+          deviceCredential,
           expiresInSeconds: 86400
         });
       } catch (err: any) {
         return sendResponse(err.statusCode || 500, { error: err.message || 'ENROLLMENT_FAILED' });
+      }
+    }
+
+    // Session renewal: POST /v1/auth/session
+    if (pathname === '/v1/auth/session' && req.method === 'POST') {
+      try {
+        const body = await parseJsonBody(req, maxBodyBytes);
+        const { deviceId, deviceCredential, challengeNonce } = body;
+        if (!deviceId || !deviceCredential) {
+          return sendResponse(400, { error: 'INVALID_REQUEST', message: 'deviceId and deviceCredential required' });
+        }
+        if (challengeNonce) {
+          const valid = registry.verifyChallenge(deviceId, challengeNonce);
+          if (!valid) {
+            return sendResponse(401, { error: 'INVALID_CHALLENGE', message: 'Challenge nonce expired or invalid' });
+          }
+        }
+        const sessionToken = registry.renewSession(deviceId, deviceCredential);
+        return sendResponse(200, {
+          status: 'AUTHENTICATED',
+          deviceId,
+          sessionToken,
+          expiresInSeconds: 86400
+        });
+      } catch (err: any) {
+        return sendResponse(err.statusCode || 500, { error: err.message || 'AUTHENTICATION_FAILED' });
       }
     }
 

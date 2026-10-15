@@ -18,20 +18,21 @@ android {
         versionName = "1.0.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        buildConfigField("String", "DEFAULT_BACKEND_URL", "\"https://personal-library-backend-49w7.onrender.com\"")
     }
 
     signingConfigs {
         create("release") {
-            storeFile = file("${rootDir}/debug.keystore")
-            storePassword = "android"
-            keyAlias = "androiddebugkey"
-            keyPassword = "android"
-        }
-        create("debugConfig") {
-            storeFile = file("${rootDir}/debug.keystore")
-            storePassword = "android"
-            keyAlias = "androiddebugkey"
-            keyPassword = "android"
+            val keystorePath = System.getenv("RELEASE_KEYSTORE_PATH")
+            if (!keystorePath.isNullOrBlank()) {
+                val f = file(keystorePath)
+                if (f.exists()) {
+                    storeFile = f
+                    storePassword = System.getenv("RELEASE_STORE_PASSWORD") ?: ""
+                    keyAlias = System.getenv("RELEASE_KEY_ALIAS") ?: ""
+                    keyPassword = System.getenv("RELEASE_KEY_PASSWORD") ?: ""
+                }
+            }
         }
     }
 
@@ -43,10 +44,13 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
-            signingConfig = signingConfigs.getByName("release")
+            val releaseConfig = signingConfigs.getByName("release")
+            if (releaseConfig.storeFile != null && releaseConfig.storeFile!!.exists()) {
+                signingConfig = releaseConfig
+            }
         }
         debug {
-            signingConfig = signingConfigs.getByName("debugConfig")
+            // Standard Android debug signing is automatic
         }
     }
 
@@ -87,6 +91,8 @@ dependencies {
     implementation(libs.androidx.room.runtime)
     implementation(libs.androidx.room.ktx)
     "ksp"(libs.androidx.room.compiler)
+    implementation("androidx.work:work-runtime-ktx:2.10.0")
+    implementation("com.google.mlkit:text-recognition:16.0.1")
     implementation(libs.coil.compose)
     implementation(libs.retrofit)
     implementation(libs.retrofit.kotlinx.serialization)
