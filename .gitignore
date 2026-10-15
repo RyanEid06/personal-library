@@ -7,6 +7,8 @@ local.properties
 .tools/
 .superpowers/
 node_modules/
+.npm-cache/
+server/dist/
 server/.env
 server/.env.*
 !server/.env.example

@@ -145,6 +145,18 @@ describe('Personal Library Authenticated Backend (TypeScript)', () => {
     assert.strictEqual(res.body.error, 'INVALID_DEVICE_SIGNATURE');
   });
 
+  for (const missingSignature of [undefined, '', '   ']) {
+    test(`enrollment rejects absent or blank signature (${JSON.stringify(missingSignature)})`, async () => {
+      const challenge = await request('GET', `/v1/auth/challenge?deviceId=${deviceId}`);
+      const res = await request('POST', '/v1/auth/enroll', {
+        deviceId, appVersion: '1.0.0', enrollmentSecret, publicKey: pubKeyBase64,
+        challengeNonce: challenge.body.nonce, signature: missingSignature
+      });
+      assert.strictEqual(res.status, 400);
+      assert.strictEqual(res.body.error, 'SIGNATURE_REQUIRED');
+    });
+  }
+
   test('POST /v1/auth/enroll successfully enrolls device with valid ECDSA signature and returns 1800s session', async () => {
     const chRes = await request('GET', `/v1/auth/challenge?deviceId=${deviceId}`);
     const nonce = chRes.body.nonce;
@@ -219,14 +231,14 @@ describe('Personal Library Authenticated Backend (TypeScript)', () => {
   });
 
   test('POST /v1/auth/session rejects renewal when public key fingerprint does not match credential', async () => {
-    const { publicKey: otherPub } = crypto.generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
+    const { publicKey: otherPub, privateKey: otherPriv } = crypto.generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
     const otherPubB64 = otherPub.export({ type: 'spki', format: 'der' }).toString('base64');
 
     const chRes = await request('GET', `/v1/auth/challenge?deviceId=${deviceId}`);
     const nonce = chRes.body.nonce;
 
     const canonicalString = `PLIB-SESSION-V1\n${deviceId}\n${nonce}\n${deviceCredential}`;
-    const signature = signData(canonicalString);
+    const signature = crypto.sign('sha256', Buffer.from(canonicalString), otherPriv).toString('base64');
 
     const res = await request('POST', '/v1/auth/session', {
       deviceId,
@@ -236,6 +248,34 @@ describe('Personal Library Authenticated Backend (TypeScript)', () => {
       signature
     });
     assert.strictEqual(res.status, 401);
+    assert.strictEqual(res.body.error, 'DEVICE_CREDENTIAL_KEY_MISMATCH');
+  });
+
+  for (const field of ['publicKey', 'signature'] as const) {
+    for (const missing of [undefined, '', '   ']) {
+      test(`renewal rejects missing or blank ${field} (${JSON.stringify(missing)})`, async () => {
+        const challenge = await request('GET', `/v1/auth/challenge?deviceId=${deviceId}`);
+        const nonce = challenge.body.nonce;
+        const body = {
+          deviceId, deviceCredential, challengeNonce: nonce, publicKey: pubKeyBase64,
+          signature: signData(`PLIB-SESSION-V1\n${deviceId}\n${nonce}\n${deviceCredential}`)
+        };
+        body[field] = missing as string;
+        const res = await request('POST', '/v1/auth/session', body);
+        assert.strictEqual(res.status, 400);
+        assert.strictEqual(res.body.error, field === 'publicKey' ? 'PUBLIC_KEY_REQUIRED' : 'SIGNATURE_REQUIRED');
+      });
+    }
+  }
+
+  test('renewal rejects invalid signature', async () => {
+    const challenge = await request('GET', `/v1/auth/challenge?deviceId=${deviceId}`);
+    const res = await request('POST', '/v1/auth/session', {
+      deviceId, deviceCredential, challengeNonce: challenge.body.nonce,
+      publicKey: pubKeyBase64, signature: 'invalid'
+    });
+    assert.strictEqual(res.status, 401);
+    assert.strictEqual(res.body.error, 'INVALID_DEVICE_SIGNATURE');
   });
 
   test('Stateless DeviceRegistry survives server restarts without persistent disk state', () => {
@@ -243,9 +283,23 @@ describe('Personal Library Authenticated Backend (TypeScript)', () => {
     assert.strictEqual(rebootedRegistry.validateSession(deviceId, sessionToken), true);
     assert.strictEqual(rebootedRegistry.verifyDeviceCredential(deviceId, deviceCredential).valid, true);
 
-    const fresh = rebootedRegistry.renewSession(deviceId, deviceCredential, 'dummy-nonce');
+    const nonce = rebootedRegistry.createChallenge(deviceId);
+    const signature = signData(`PLIB-SESSION-V1\n${deviceId}\n${nonce}\n${deviceCredential}`);
+    const fresh = rebootedRegistry.renewSession(deviceId, deviceCredential, nonce, pubKeyBase64, signature);
     assert.ok(fresh.sessionToken);
     assert.strictEqual(rebootedRegistry.validateSession(deviceId, fresh.sessionToken), true);
+    assert.throws(() => rebootedRegistry.renewSession(deviceId, deviceCredential, nonce, pubKeyBase64, signature), /INVALID_CHALLENGE/);
+    assert.throws(() => rebootedRegistry.renewSession(deviceId, deviceCredential, 'forged', pubKeyBase64, signature), /INVALID_CHALLENGE/);
+  });
+
+  test('challenge parser rejects alternate encodings and malformed timestamp suffixes', () => {
+    const registry = new DeviceRegistry(sessionSecret, enrollmentSecret);
+    const nonce = registry.createChallenge(deviceId);
+    const [ts, random, mac] = nonce.split('.');
+    assert.strictEqual(registry.verifyAndConsumeChallenge(deviceId, `${ts}junk.${random}.${mac}`), false);
+    assert.strictEqual(registry.verifyAndConsumeChallenge(deviceId, `${ts}.${random}.${mac.toUpperCase()}`), false);
+    assert.strictEqual(registry.verifyAndConsumeChallenge(deviceId, nonce), true);
+    assert.strictEqual(registry.verifyAndConsumeChallenge(deviceId, nonce), false);
   });
 
   test('POST /v1/ai/analyze succeeds with authenticated device session and media parts', async () => {
@@ -372,5 +426,37 @@ describe('Production Server without Gemini Key or Secrets', () => {
     const body = await res.json() as any;
     assert.strictEqual(res.status, 200);
     assert.strictEqual(body.authConfigured, false);
+  });
+});
+
+describe('Request cancellation', () => {
+  test('deadline aborts the provider and responds only with a timeout', async () => {
+    let aborted = false;
+    class WaitingProvider extends FakeGeminiProvider {
+      override async analyze(_id: string, _kind: string, _text?: string, _name?: string, _parts?: unknown[], signal?: AbortSignal): Promise<any> {
+        return new Promise((_resolve, reject) => {
+          signal?.addEventListener('abort', () => { aborted = true; reject(new Error('aborted')); }, { once: true });
+        });
+      }
+    }
+    const app = createServer({
+      customProvider: new WaitingProvider(), requestTimeoutMs: 80,
+      sessionSigningSecret: 'cancellation-test-session', deviceEnrollmentSecret: 'cancellation-test-enroll'
+    });
+    await new Promise<void>(resolve => app.server.listen(0, '127.0.0.1', resolve));
+    const address = app.server.address() as any;
+    try {
+      const token = app.registry.createSessionToken('cancel-test');
+      const response = await fetch(`http://127.0.0.1:${address.port}/v1/ai/analyze`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Device-Id': 'cancel-test', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ itemId: 'synthetic', kind: 'TEXT' })
+      });
+      assert.strictEqual(response.status, 504);
+      assert.strictEqual((await response.json() as any).error, 'REQUEST_TIMEOUT');
+      assert.strictEqual(aborted, true, 'provider must be aborted before the timeout response is sent');
+    } finally {
+      app.server.closeAllConnections();
+      await new Promise<void>(resolve => app.server.close(() => resolve()));
+    }
   });
 });

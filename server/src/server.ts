@@ -20,19 +20,19 @@ export interface MediaPart {
 }
 
 export interface GeminiProvider {
-  analyze(itemId: string, kind: string, textContent?: string, originalFileName?: string, mediaParts?: MediaPart[]): Promise<{
+  analyze(itemId: string, kind: string, textContent?: string, originalFileName?: string, mediaParts?: MediaPart[], signal?: AbortSignal): Promise<{
     itemId: string;
     description: string;
     concepts: string;
     detectedDates: string[];
     coverage: string;
   }>;
-  embed(texts: string[]): Promise<{
+  embed(texts: string[], signal?: AbortSignal): Promise<{
     dimension: number;
     modelVersion: string;
     embeddings: number[][];
   }>;
-  searchPlan(query: string, knownCollections: string[], nowIso: string): Promise<{
+  searchPlan(query: string, knownCollections: string[], nowIso: string, signal?: AbortSignal): Promise<{
     query: string;
     concepts: string[];
     targetKinds: string[];
@@ -57,6 +57,7 @@ export function verifyDeviceSignature(publicKeyBase64: string, canonicalString: 
       format: 'der',
       type: 'spki'
     });
+    if (pubKey.asymmetricKeyType !== 'ec' || pubKey.asymmetricKeyDetails?.namedCurve !== 'prime256v1') return false;
     const verifier = crypto.createVerify('SHA256');
     verifier.update(Buffer.from(canonicalString, 'utf-8'));
     return verifier.verify(pubKey, Buffer.from(signatureBase64, 'base64'));
@@ -106,7 +107,7 @@ export class DeviceRegistry {
   }
 
   verifyAndConsumeChallenge(deviceId: string, nonce: string): boolean {
-    if (!nonce || typeof nonce !== 'string') return false;
+    if (typeof nonce !== 'string' || !/^\d{13}\.[0-9a-f]{32}\.[0-9a-f]{64}$/.test(nonce)) return false;
     this.cleanOldNonces();
 
     // Check replay
@@ -215,13 +216,23 @@ export class DeviceRegistry {
     }
 
     // Require and verify ECDSA signature
-    if (!publicKey || typeof publicKey !== 'string') {
+    if (typeof publicKey !== 'string' || !publicKey.trim()) {
       const err = new Error('PUBLIC_KEY_REQUIRED');
       (err as any).statusCode = 400;
       throw err;
     }
 
-    if (signature) {
+    if (typeof signature !== 'string' || !signature.trim()) {
+      const err = new Error('SIGNATURE_REQUIRED');
+      (err as any).statusCode = 400;
+      throw err;
+    }
+    if (!this.verifyAndConsumeChallenge(deviceId, challengeNonce)) {
+      const err = new Error('INVALID_CHALLENGE');
+      (err as any).statusCode = 401;
+      throw err;
+    }
+    {
       const canonicalString = `PLIB-ENROLL-V1\n${deviceId}\n${challengeNonce}\n${appVersion || '1.0.0'}\n${publicKey}`;
       const validSig = verifyDeviceSignature(publicKey, canonicalString, signature);
       if (!validSig) {
@@ -257,8 +268,22 @@ export class DeviceRegistry {
       throw err;
     }
 
-    // If signature supplied, verify proof of possession
-    if (publicKey && signature) {
+    if (typeof publicKey !== 'string' || !publicKey.trim()) {
+      const err = new Error('PUBLIC_KEY_REQUIRED');
+      (err as any).statusCode = 400;
+      throw err;
+    }
+    if (typeof signature !== 'string' || !signature.trim()) {
+      const err = new Error('SIGNATURE_REQUIRED');
+      (err as any).statusCode = 400;
+      throw err;
+    }
+    if (!this.verifyAndConsumeChallenge(deviceId, challengeNonce)) {
+      const err = new Error('INVALID_CHALLENGE');
+      (err as any).statusCode = 401;
+      throw err;
+    }
+    {
       const canonicalString = `PLIB-SESSION-V1\n${deviceId}\n${challengeNonce}\n${deviceCredential}`;
       const validSig = verifyDeviceSignature(publicKey, canonicalString, signature);
       if (!validSig) {
@@ -268,7 +293,7 @@ export class DeviceRegistry {
       }
       // Ensure public key fingerprint matches credential
       const fp = this.computePublicKeyFingerprint(publicKey);
-      if (credCheck.fingerprint !== 'legacy' && credCheck.fingerprint !== fp) {
+      if (credCheck.fingerprint !== fp) {
         const err = new Error('DEVICE_CREDENTIAL_KEY_MISMATCH');
         (err as any).statusCode = 401;
         throw err;
@@ -315,12 +340,13 @@ export class SdkGeminiProvider implements GeminiProvider {
   private embeddingModel: string;
 
   constructor(apiKey: string, model: string, embeddingModel: string) {
-    this.ai = new GoogleGenAI({ apiKey });
+    this.ai = new GoogleGenAI({ apiKey, httpOptions: { timeout: 60_000 } });
     this.model = model;
     this.embeddingModel = embeddingModel;
   }
 
-  async analyze(itemId: string, kind: string, textContent?: string, originalFileName?: string, mediaParts?: MediaPart[]) {
+  async analyze(itemId: string, kind: string, textContent?: string, originalFileName?: string, mediaParts?: MediaPart[], signal?: AbortSignal) {
+    signal?.throwIfAborted();
     const prompt = `Analyze this saved personal library item. Return JSON with 'description' (concise 1-sentence summary under 200 characters), 'concepts' (3-5 comma separated keywords), and 'detectedDates' (array of YYYY-MM-DD or empty).
 Item Type: ${kind}
 Original Filename: ${originalFileName || 'N/A'}
@@ -347,6 +373,7 @@ Text Content: ${textContent?.slice(0, 4000) || 'None provided'}
         model: this.model,
         contents,
         config: {
+          abortSignal: signal,
           responseMimeType: 'application/json',
           temperature: 0.2
         }
@@ -378,14 +405,16 @@ Text Content: ${textContent?.slice(0, 4000) || 'None provided'}
     }
   }
 
-  async embed(texts: string[]) {
+  async embed(texts: string[], signal?: AbortSignal) {
     const embeddings: number[][] = [];
     for (const text of texts) {
+      signal?.throwIfAborted();
       try {
         const response = await this.ai.models.embedContent({
           model: this.embeddingModel,
           contents: text.slice(0, 8192),
           config: {
+            abortSignal: signal,
             outputDimensionality: 768
           }
         });
@@ -416,7 +445,8 @@ Text Content: ${textContent?.slice(0, 4000) || 'None provided'}
     };
   }
 
-  async searchPlan(query: string, knownCollections: string[], nowIso: string) {
+  async searchPlan(query: string, knownCollections: string[], nowIso: string, signal?: AbortSignal) {
+    signal?.throwIfAborted();
     const prompt = `Convert this search query into a structured retrieval plan.
 Query: "${query.slice(0, 500)}"
 Known collections: ${JSON.stringify(knownCollections.slice(0, 50))}
@@ -433,6 +463,7 @@ Return JSON with:
         model: this.model,
         contents: prompt,
         config: {
+          abortSignal: signal,
           responseMimeType: 'application/json',
           temperature: 0.1
         }
@@ -466,6 +497,7 @@ Return JSON with:
         dateRange: { startIso, endIso }
       };
     } catch {
+      signal?.throwIfAborted();
       return parseLocalSearchPlan(query);
     }
   }
@@ -637,6 +669,7 @@ export function createServer(config?: Partial<ServerConfig>) {
   }
 
   const server = http.createServer(async (req, res) => {
+    const controller = new AbortController();
     const startTime = Date.now();
     const reqId = crypto.randomUUID();
     const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
@@ -646,7 +679,7 @@ export function createServer(config?: Partial<ServerConfig>) {
     res.setHeader('Content-Type', 'application/json');
 
     function sendResponse(statusCode: number, data: any) {
-      if (res.writableEnded) return;
+      if (res.writableEnded || res.destroyed) return;
       const durationMs = Date.now() - startTime;
       res.writeHead(statusCode);
       res.end(JSON.stringify(data));
@@ -655,11 +688,17 @@ export function createServer(config?: Partial<ServerConfig>) {
 
     const timer = setTimeout(() => {
       if (!res.writableEnded) {
+        controller.abort(new Error('REQUEST_TIMEOUT'));
         sendResponse(504, { error: 'REQUEST_TIMEOUT', message: 'Request exceeded execution deadline' });
       }
     }, requestTimeoutMs);
 
     res.on('finish', () => clearTimeout(timer));
+    res.on('close', () => {
+      clearTimeout(timer);
+      if (!res.writableEnded) controller.abort(new Error('CLIENT_DISCONNECTED'));
+    });
+    req.on('aborted', () => controller.abort(new Error('CLIENT_DISCONNECTED')));
 
     if (pathname === '/health' && req.method === 'GET') {
       return sendResponse(200, {
@@ -703,11 +742,6 @@ export function createServer(config?: Partial<ServerConfig>) {
         if (!challengeNonce || typeof challengeNonce !== 'string') {
           return sendResponse(400, { error: 'CHALLENGE_REQUIRED', message: 'challengeNonce is mandatory' });
         }
-        const validChallenge = registry.verifyAndConsumeChallenge(deviceId, challengeNonce);
-        if (!validChallenge) {
-          return sendResponse(401, { error: 'INVALID_CHALLENGE', message: 'Challenge nonce expired, invalid, or replayed' });
-        }
-
         const { sessionToken, deviceCredential, expiresInSeconds } = registry.enroll(
           deviceId,
           appVersion || '1.0.0',
@@ -739,11 +773,6 @@ export function createServer(config?: Partial<ServerConfig>) {
         if (!challengeNonce || typeof challengeNonce !== 'string') {
           return sendResponse(400, { error: 'CHALLENGE_REQUIRED', message: 'challengeNonce is mandatory' });
         }
-        const validChallenge = registry.verifyAndConsumeChallenge(deviceId, challengeNonce);
-        if (!validChallenge) {
-          return sendResponse(401, { error: 'INVALID_CHALLENGE', message: 'Challenge nonce expired, invalid, or replayed' });
-        }
-
         const { sessionToken, expiresInSeconds } = registry.renewSession(
           deviceId,
           deviceCredential,
@@ -839,7 +868,8 @@ export function createServer(config?: Partial<ServerConfig>) {
           }
         }
 
-        const result = await provider.analyze(itemId, kind, textContent, originalFileName, mediaParts);
+        controller.signal.throwIfAborted();
+        const result = await provider.analyze(itemId, kind, textContent, originalFileName, mediaParts, controller.signal);
         return sendResponse(200, result);
       } catch (err: any) {
         return sendResponse(err.statusCode || 500, { error: err.message || 'ANALYSIS_FAILED' });
@@ -862,7 +892,8 @@ export function createServer(config?: Partial<ServerConfig>) {
             return sendResponse(400, { error: 'TEXT_TOO_LONG', message: 'Max 8192 characters per embedding text' });
           }
         }
-        const result = await provider.embed(texts);
+        controller.signal.throwIfAborted();
+        const result = await provider.embed(texts, controller.signal);
         return sendResponse(200, result);
       } catch (err: any) {
         return sendResponse(err.statusCode || 500, { error: err.message || 'EMBED_FAILED' });
@@ -880,7 +911,8 @@ export function createServer(config?: Partial<ServerConfig>) {
         const result = await provider.searchPlan(
           query,
           Array.isArray(knownCollections) ? knownCollections : [],
-          nowIso || new Date().toISOString()
+          nowIso || new Date().toISOString(),
+          controller.signal
         );
         return sendResponse(200, result);
       } catch (err: any) {
