@@ -66,8 +66,9 @@ android {
 }
 
 secrets {
-    propertiesFileName = ".env"
-    defaultPropertiesFileName = ".env.example"
+    propertiesFileName = "secrets.properties"
+    defaultPropertiesFileName = "secrets.defaults.properties"
+    ignoreList.add(".*")
 }
 
 dependencies {

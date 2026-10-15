@@ -38,7 +38,7 @@ fun SearchScreen(
     val searchQuery by viewModel.searchQuery.collectAsState()
     val aiResults by viewModel.aiSearchResults.collectAsState()
     val isAiSearching by viewModel.isAiSearching.collectAsState()
-    val filteredItems = viewModel.getFilteredItems()
+    val filteredItems by viewModel.localSearchResults.collectAsState()
     val collections by viewModel.collections.collectAsState()
     val selectedKind by viewModel.selectedKind.collectAsState()
 

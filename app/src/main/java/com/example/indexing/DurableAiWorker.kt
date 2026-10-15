@@ -4,6 +4,8 @@ import android.content.Context
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import com.example.ai.AiGateway
+import com.example.ai.AiGatewayException
+import com.example.data.AnalysisJobEntity
 import com.example.data.LibraryRepository
 import com.example.data.SearchDocumentEntity
 import kotlinx.coroutines.Dispatchers
@@ -28,46 +30,94 @@ class DurableAiWorker(
         // If item is trashed, do not process
         if (item.isTrash) return@withContext Result.success()
 
-        // Check if item or its collections are excluded from AI
+        // Check exclusions
         val colIds = repository.dao.getCollectionIdsForItem(itemId)
         val excludedCols = prefs.getStringSet("excluded_collections", emptySet()) ?: emptySet()
         val excludedItems = prefs.getStringSet("excluded_items", emptySet()) ?: emptySet()
         if (excludedItems.contains(itemId) || colIds.any { excludedCols.contains(it) }) {
-            repository.dao.updateItem(item.copy(aiStatus = "EXCLUDED"))
+            repository.dao.updateAiStatus(itemId, "EXCLUDED")
+            repository.dao.insertOrUpdateAnalysisJob(
+                AnalysisJobEntity(
+                    itemId = itemId,
+                    status = "EXCLUDED",
+                    updatedAt = System.currentTimeMillis()
+                )
+            )
             return@withContext Result.success()
         }
 
         val aiGateway = AiGateway(applicationContext)
 
         try {
-            // Update status to ANALYZING
-            repository.dao.updateItem(item.copy(aiStatus = "ANALYZING"))
+            // Check pairing state before attempting network calls
+            if (!aiGateway.identityManager.isPaired) {
+                repository.dao.updateAiStatus(itemId, "NEEDS_RETRY")
+                repository.dao.insertOrUpdateAnalysisJob(
+                    AnalysisJobEntity(
+                        itemId = itemId,
+                        status = "NEEDS_RETRY",
+                        lastErrorClass = "UNPAIRED",
+                        lastErrorTime = System.currentTimeMillis(),
+                        updatedAt = System.currentTimeMillis()
+                    )
+                )
+                return@withContext Result.failure()
+            }
+
+            // Update status to ANALYZING and record job progress
+            repository.dao.updateAiStatus(itemId, "ANALYZING")
+            repository.dao.insertOrUpdateAnalysisJob(
+                AnalysisJobEntity(
+                    itemId = itemId,
+                    expectedContentVersion = item.localIndexVersion,
+                    indexVersion = item.localIndexVersion,
+                    status = "PROCESSING",
+                    attempts = runAttemptCount + 1,
+                    updatedAt = System.currentTimeMillis()
+                )
+            )
+
+            val textForAnalysis = buildString {
+                if (item.content.isNotBlank()) append(item.content)
+                if (!item.extractedText.isNullOrBlank()) {
+                    if (isNotEmpty()) append("\n\n")
+                    append(item.extractedText)
+                }
+            }
 
             val analysis = aiGateway.analyze(
                 itemId = item.id,
                 kind = item.kind,
-                textContent = item.content,
+                textContent = textForAnalysis.ifBlank { null },
                 originalFileName = item.originalFileName
             )
 
-            repository.dao.updateItem(
-                item.copy(
-                    aiDescription = analysis.description,
-                    aiConcepts = analysis.concepts,
-                    aiStatus = "READY"
-                )
+            // Targeted update of AI-only fields to avoid overwriting user edits in-flight
+            repository.dao.updateAiMetadata(
+                id = item.id,
+                aiDescription = analysis.description,
+                aiConcepts = analysis.concepts,
+                aiStatus = "READY"
             )
 
-            // Persist 768-D normalized embedding vector from gemini-embedding-2 locally
-            val textToEmbed = "${item.title}. ${item.content}. ${analysis.description}. ${analysis.concepts}"
+            // Embed with gemini-embedding-2 (768-D)
+            val textToEmbed = buildString {
+                append(item.title).append(". ")
+                if (item.content.isNotBlank()) append(item.content).append(". ")
+                if (!item.extractedText.isNullOrBlank()) append(item.extractedText).append(". ")
+                append(analysis.description).append(". ")
+                append(analysis.concepts)
+            }.trim().take(4000)
+
             val vectors = aiGateway.embed(listOf(textToEmbed))
             val vector = vectors.firstOrNull()
-            if (vector != null) {
+            if (vector != null && vector.size == 768) {
                 val vectorStr = vector.joinToString(",")
                 repository.dao.insertSearchDocument(
                     SearchDocumentEntity(
                         id = "doc_${item.id}",
                         itemId = item.id,
+                        chunkIndex = 0,
                         textContent = textToEmbed,
                         embedding = vectorStr,
                         embeddingDimension = 768,
@@ -77,16 +127,40 @@ class DurableAiWorker(
                 )
             }
 
-            // Sync with FTS virtual table
-            repository.dao.rebuildFts()
+            repository.dao.insertOrUpdateAnalysisJob(
+                AnalysisJobEntity(
+                    itemId = itemId,
+                    expectedContentVersion = item.localIndexVersion,
+                    indexVersion = item.localIndexVersion,
+                    status = "COMPLETED",
+                    attempts = runAttemptCount + 1,
+                    updatedAt = System.currentTimeMillis()
+                )
+            )
 
             Result.success()
         } catch (e: Exception) {
-            e.printStackTrace()
-            if (runAttemptCount < 3) {
+            val isPermanent = e is AiGatewayException.UnconfiguredException ||
+                e is AiGatewayException.UnpairedException
+
+            val status = if (isPermanent || runAttemptCount >= 3) "NEEDS_RETRY" else "QUEUED"
+            repository.dao.updateAiStatus(itemId, status)
+            repository.dao.insertOrUpdateAnalysisJob(
+                AnalysisJobEntity(
+                    itemId = itemId,
+                    expectedContentVersion = item.localIndexVersion,
+                    indexVersion = item.localIndexVersion,
+                    status = status,
+                    attempts = runAttemptCount + 1,
+                    lastErrorClass = e::class.java.simpleName,
+                    lastErrorTime = System.currentTimeMillis(),
+                    updatedAt = System.currentTimeMillis()
+                )
+            )
+
+            if (!isPermanent && runAttemptCount < 3) {
                 Result.retry()
             } else {
-                repository.dao.updateItem(item.copy(aiStatus = "NEEDS_RETRY"))
                 Result.failure()
             }
         }

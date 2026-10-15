@@ -37,7 +37,7 @@ fun LibraryScreen(
     onOpenAddDialog: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val items = viewModel.getFilteredItems()
+    val items by viewModel.localSearchResults.collectAsState()
     val collections by viewModel.collections.collectAsState()
     val selectedKind by viewModel.selectedKind.collectAsState()
     val selectedColId by viewModel.selectedCollectionId.collectAsState()

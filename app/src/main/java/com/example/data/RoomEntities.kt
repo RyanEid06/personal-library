@@ -16,10 +16,14 @@ data class ItemEntity(
     val sourceDate: Long? = null,
     val reminderTime: Long? = null,
     val isReminderDone: Boolean = false,
+    val isReminderExact: Boolean = true,
     val contentHash: String? = null,
     val originalFileName: String? = null,
     val mimeType: String? = null,
     val fileSizeBytes: Long = 0L,
+    val extractedText: String? = null,
+    val localIndexCoverage: String = "PENDING",
+    val localIndexVersion: Int = 1,
     val aiDescription: String? = null,
     val aiConcepts: String? = null,
     val aiStatus: String = "READY"
@@ -77,8 +81,21 @@ data class SearchDocumentEntity(
     val textContent: String,
     val embedding: String? = null,
     val embeddingDimension: Int = 768,
-    val modelVersion: String = "text-embedding-004",
+    val modelVersion: String = "gemini-embedding-2",
     val coverage: String = "COMPLETE"
+)
+
+@Entity(tableName = "analysis_jobs")
+data class AnalysisJobEntity(
+    @PrimaryKey val itemId: String,
+    val expectedContentVersion: Int = 1,
+    val indexVersion: Int = 1,
+    val modelVersion: String = "gemini-3.8-flash",
+    val status: String = "QUEUED",
+    val attempts: Int = 0,
+    val lastErrorClass: String? = null,
+    val lastErrorTime: Long? = null,
+    val updatedAt: Long = System.currentTimeMillis()
 )
 
 @Fts4(contentEntity = ItemEntity::class)
@@ -87,6 +104,7 @@ data class ItemFtsEntity(
     val title: String,
     val content: String,
     val originalFileName: String?,
+    val extractedText: String?,
     val aiDescription: String?,
     val aiConcepts: String?
 )
@@ -141,8 +159,20 @@ interface LibraryDao {
     @Query("DELETE FROM items WHERE id = :id")
     suspend fun deleteItemPermanently(id: String)
 
-    @Query("UPDATE items SET reminderTime = :reminderTime, isReminderDone = 0 WHERE id = :id")
-    suspend fun setReminder(id: String, reminderTime: Long?)
+    @Query("UPDATE items SET reminderTime = :reminderTime, isReminderDone = 0, isReminderExact = :isExact WHERE id = :id")
+    suspend fun setReminder(id: String, reminderTime: Long?, isExact: Boolean = true)
+
+    @Query("UPDATE items SET isReminderDone = :isDone WHERE id = :id")
+    suspend fun setReminderDone(id: String, isDone: Boolean)
+
+    @Query("UPDATE items SET extractedText = :extractedText, localIndexCoverage = :coverage, localIndexVersion = :version WHERE id = :id")
+    suspend fun updateExtractedText(id: String, extractedText: String?, coverage: String, version: Int)
+
+    @Query("UPDATE items SET aiDescription = :aiDescription, aiConcepts = :aiConcepts, aiStatus = :aiStatus WHERE id = :id")
+    suspend fun updateAiMetadata(id: String, aiDescription: String?, aiConcepts: String?, aiStatus: String)
+
+    @Query("UPDATE items SET aiStatus = :aiStatus WHERE id = :id")
+    suspend fun updateAiStatus(id: String, aiStatus: String)
 
     // Assets
     @Query("SELECT * FROM assets WHERE hash = :hash LIMIT 1")
@@ -222,6 +252,7 @@ interface LibraryDao {
             title LIKE :pattern OR
             content LIKE :pattern OR
             originalFileName LIKE :pattern OR
+            extractedText LIKE :pattern OR
             aiDescription LIKE :pattern OR
             aiConcepts LIKE :pattern
         )
@@ -236,6 +267,7 @@ interface LibraryDao {
             title LIKE :pattern OR
             content LIKE :pattern OR
             originalFileName LIKE :pattern OR
+            extractedText LIKE :pattern OR
             aiDescription LIKE :pattern OR
             aiConcepts LIKE :pattern
         )
@@ -247,8 +279,17 @@ interface LibraryDao {
     @Query("SELECT * FROM reminders WHERE isDone = 0 ORDER BY dueMillis ASC")
     suspend fun getPendingReminders(): List<ReminderEntity>
 
+    @Query("SELECT * FROM reminders WHERE itemId = :itemId LIMIT 1")
+    suspend fun getReminderByItemId(itemId: String): ReminderEntity?
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertReminder(reminder: ReminderEntity)
+
+    @Query("UPDATE reminders SET isDone = :isDone WHERE id = :id")
+    suspend fun updateReminderStatus(id: String, isDone: Boolean)
+
+    @Query("UPDATE reminders SET dueMillis = :newDueMillis WHERE id = :id")
+    suspend fun snoozeReminder(id: String, newDueMillis: Long)
 
     @Query("DELETE FROM reminders WHERE itemId = :itemId")
     suspend fun deleteReminderByItemId(itemId: String)
@@ -260,6 +301,9 @@ interface LibraryDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertSearchDocument(doc: SearchDocumentEntity)
 
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertSearchDocuments(docs: List<SearchDocumentEntity>)
+
     @Query("SELECT * FROM search_documents WHERE itemId = :itemId")
     suspend fun getSearchDocumentsForItem(itemId: String): List<SearchDocumentEntity>
 
@@ -268,6 +312,19 @@ interface LibraryDao {
 
     @Query("DELETE FROM search_documents WHERE itemId = :itemId")
     suspend fun deleteSearchDocumentsForItem(itemId: String)
+
+    // Analysis Jobs
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertOrUpdateAnalysisJob(job: AnalysisJobEntity)
+
+    @Query("SELECT * FROM analysis_jobs WHERE itemId = :itemId LIMIT 1")
+    suspend fun getAnalysisJob(itemId: String): AnalysisJobEntity?
+
+    @Query("SELECT * FROM analysis_jobs WHERE status IN ('QUEUED', 'NEEDS_RETRY') ORDER BY updatedAt ASC")
+    suspend fun getPendingAnalysisJobs(): List<AnalysisJobEntity>
+
+    @Query("DELETE FROM analysis_jobs WHERE itemId = :itemId")
+    suspend fun deleteAnalysisJob(itemId: String)
 
     @Query("INSERT INTO items_fts(items_fts) VALUES('rebuild')")
     suspend fun rebuildFts()
@@ -286,24 +343,32 @@ val DATABASE_CALLBACK = object : androidx.room.RoomDatabase.Callback() {
 
     private fun setupFts(db: androidx.sqlite.db.SupportSQLiteDatabase) {
         try {
+            db.execSQL("DROP TRIGGER IF EXISTS items_fts_insert")
+            db.execSQL("DROP TRIGGER IF EXISTS items_fts_bu")
+            db.execSQL("DROP TRIGGER IF EXISTS items_fts_au")
+            db.execSQL("DROP TRIGGER IF EXISTS items_fts_delete")
+            db.execSQL("DROP TRIGGER IF EXISTS items_fts_update")
+
             db.execSQL("""
                 CREATE TRIGGER IF NOT EXISTS items_fts_insert AFTER INSERT ON items BEGIN
-                    INSERT INTO items_fts(docid, title, content, originalFileName, aiDescription, aiConcepts)
-                    VALUES (new.rowid, new.title, new.content, new.originalFileName, new.aiDescription, new.aiConcepts);
+                    INSERT INTO items_fts(docid, title, content, originalFileName, extractedText, aiDescription, aiConcepts)
+                    VALUES (new.rowid, new.title, new.content, new.originalFileName, new.extractedText, new.aiDescription, new.aiConcepts);
                 END;
             """.trimIndent())
             db.execSQL("""
-                CREATE TRIGGER IF NOT EXISTS items_fts_delete AFTER DELETE ON items BEGIN
-                    INSERT INTO items_fts(items_fts, docid, title, content, originalFileName, aiDescription, aiConcepts)
-                    VALUES ('delete', old.rowid, old.title, old.content, old.originalFileName, old.aiDescription, old.aiConcepts);
+                CREATE TRIGGER IF NOT EXISTS items_fts_bu BEFORE UPDATE ON items BEGIN
+                    DELETE FROM items_fts WHERE docid = old.rowid;
                 END;
             """.trimIndent())
             db.execSQL("""
-                CREATE TRIGGER IF NOT EXISTS items_fts_update AFTER UPDATE ON items BEGIN
-                    INSERT INTO items_fts(items_fts, docid, title, content, originalFileName, aiDescription, aiConcepts)
-                    VALUES ('delete', old.rowid, old.title, old.content, old.originalFileName, old.aiDescription, old.aiConcepts);
-                    INSERT INTO items_fts(docid, title, content, originalFileName, aiDescription, aiConcepts)
-                    VALUES (new.rowid, new.title, new.content, new.originalFileName, new.aiDescription, new.aiConcepts);
+                CREATE TRIGGER IF NOT EXISTS items_fts_au AFTER UPDATE ON items BEGIN
+                    INSERT INTO items_fts(docid, title, content, originalFileName, extractedText, aiDescription, aiConcepts)
+                    VALUES (new.rowid, new.title, new.content, new.originalFileName, new.extractedText, new.aiDescription, new.aiConcepts);
+                END;
+            """.trimIndent())
+            db.execSQL("""
+                CREATE TRIGGER IF NOT EXISTS items_fts_delete BEFORE DELETE ON items BEGIN
+                    DELETE FROM items_fts WHERE docid = old.rowid;
                 END;
             """.trimIndent())
             db.execSQL("INSERT INTO items_fts(items_fts) VALUES('rebuild')")
@@ -330,6 +395,42 @@ val MIGRATION_1_2 = object : androidx.room.migration.Migration(1, 2) {
     }
 }
 
+val MIGRATION_2_3 = object : androidx.room.migration.Migration(2, 3) {
+    override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE items ADD COLUMN extractedText TEXT DEFAULT NULL")
+        db.execSQL("ALTER TABLE items ADD COLUMN localIndexCoverage TEXT NOT NULL DEFAULT 'PENDING'")
+        db.execSQL("ALTER TABLE items ADD COLUMN localIndexVersion INTEGER NOT NULL DEFAULT 1")
+        db.execSQL("ALTER TABLE items ADD COLUMN isReminderExact INTEGER NOT NULL DEFAULT 1")
+
+        db.execSQL("""
+            CREATE TABLE IF NOT EXISTS analysis_jobs (
+                itemId TEXT NOT NULL PRIMARY KEY,
+                expectedContentVersion INTEGER NOT NULL,
+                indexVersion INTEGER NOT NULL,
+                modelVersion TEXT NOT NULL,
+                status TEXT NOT NULL,
+                attempts INTEGER NOT NULL,
+                lastErrorClass TEXT,
+                lastErrorTime INTEGER,
+                updatedAt INTEGER NOT NULL
+            )
+        """.trimIndent())
+
+        db.execSQL("DROP TABLE IF EXISTS items_fts")
+        db.execSQL("""
+            CREATE VIRTUAL TABLE IF NOT EXISTS items_fts USING FTS4(
+                title TEXT NOT NULL,
+                content TEXT NOT NULL,
+                originalFileName TEXT,
+                extractedText TEXT,
+                aiDescription TEXT,
+                aiConcepts TEXT,
+                content=items
+            )
+        """.trimIndent())
+    }
+}
+
 @Database(
     entities = [
         ItemEntity::class,
@@ -338,9 +439,10 @@ val MIGRATION_1_2 = object : androidx.room.migration.Migration(1, 2) {
         ItemCollectionCrossRef::class,
         ReminderEntity::class,
         ItemFtsEntity::class,
-        SearchDocumentEntity::class
+        SearchDocumentEntity::class,
+        AnalysisJobEntity::class
     ],
-    version = 2,
+    version = 3,
     exportSchema = false
 )
 abstract class LibraryRoomDatabase : RoomDatabase() {

@@ -200,13 +200,15 @@ object WhatsAppExportParser {
         val month: Int
         val day: Int
 
-        if (num1 <= 12 && num2 <= 12 && num1 != num2) {
-            // Ambiguous! Both could be month or day
-            if (specifiedOrder == null) {
+        if (num1 <= 12 && num2 <= 12) {
+            if (num1 == num2) {
+                // Not ambiguous: day and month are identical (e.g. 10/10/2026)
+                day = num1
+                month = num2
+            } else if (specifiedOrder == null) {
                 // NEVER GUESS ambiguous dates!
                 return Pair(null, true)
-            }
-            if (specifiedOrder == DateOrder.DAY_FIRST) {
+            } else if (specifiedOrder == DateOrder.DAY_FIRST) {
                 day = num1
                 month = num2
             } else {

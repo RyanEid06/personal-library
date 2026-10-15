@@ -9,6 +9,7 @@ import com.example.data.CollectionEntity
 import com.example.data.ItemEntity
 import com.example.data.ItemWithCollections
 import com.example.data.LibraryRepository
+import com.example.indexing.LocalIndexer
 import com.example.model.*
 import com.example.reminder.ReminderScheduler
 import com.example.security.AppLockManager
@@ -16,12 +17,13 @@ import com.personallibrary.core.backup.RestorePreview
 import com.personallibrary.core.migration.DateOrder
 import com.personallibrary.core.model.SemanticVectorMath
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.io.InputStream
+import java.time.Instant
 import java.util.Calendar
 
 data class SemanticSearchResult(
@@ -30,12 +32,14 @@ data class SemanticSearchResult(
     val score: Float
 )
 
+@OptIn(FlowPreview::class)
 class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     val repository = LibraryRepository(application)
     val appLockManager = AppLockManager(application)
-    private val reminderScheduler = ReminderScheduler(application)
-    private val aiGateway = AiGateway(application)
+    val reminderScheduler = ReminderScheduler(application)
+    val aiGateway = AiGateway(application)
+    val localIndexer = LocalIndexer(application, repository)
 
     private val _items = MutableStateFlow<List<ItemWithCollections>>(emptyList())
     val items: StateFlow<List<ItemWithCollections>> = _items.asStateFlow()
@@ -61,8 +65,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _dateFilter = MutableStateFlow(DateFilter.ALL_TIME)
     val dateFilter: StateFlow<DateFilter> = _dateFilter.asStateFlow()
 
+    private val _customDateStart = MutableStateFlow<Long?>(null)
+    val customDateStart: StateFlow<Long?> = _customDateStart.asStateFlow()
+
+    private val _customDateEnd = MutableStateFlow<Long?>(null)
+    val customDateEnd: StateFlow<Long?> = _customDateEnd.asStateFlow()
+
     private val _searchQuery = MutableStateFlow("")
     val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
+
+    // Real FTS search result state
+    private val _localSearchResults = MutableStateFlow<List<ItemWithCollections>>(emptyList())
+    val localSearchResults: StateFlow<List<ItemWithCollections>> = _localSearchResults.asStateFlow()
 
     private val _aiSearchResults = MutableStateFlow<List<SemanticSearchResult>>(emptyList())
     val aiSearchResults: StateFlow<List<SemanticSearchResult>> = _aiSearchResults.asStateFlow()
@@ -79,6 +93,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _isBatchMode = MutableStateFlow(false)
     val isBatchMode: StateFlow<Boolean> = _isBatchMode.asStateFlow()
 
+    private val _isBackendPaired = MutableStateFlow(aiGateway.identityManager.isPaired)
+    val isBackendPaired: StateFlow<Boolean> = _isBackendPaired.asStateFlow()
+
+    private val _lastSuccessfulBackup = MutableStateFlow<Long?>(repository.getLastSuccessfulBackupTime())
+    val lastSuccessfulBackup: StateFlow<Long?> = _lastSuccessfulBackup.asStateFlow()
+
     init {
         // Enforce 30-day automatic Trash expiry on startup
         viewModelScope.launch(Dispatchers.IO) {
@@ -90,6 +110,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             repository.observeActiveItemsWithCollections().collect {
                 _items.value = it
                 updateStorageStats()
+                refreshFilteredResults()
             }
         }
 
@@ -106,6 +127,86 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 _trashItems.value = it
                 updateStorageStats()
             }
+        }
+
+        // Debounced FTS local search flow
+        viewModelScope.launch {
+            _searchQuery
+                .debounce(150)
+                .collect {
+                    refreshFilteredResults()
+                }
+        }
+    }
+
+    private fun refreshFilteredResults() {
+        viewModelScope.launch(Dispatchers.IO) {
+            val query = _searchQuery.value.trim()
+            val rawList = if (query.isBlank()) {
+                _items.value
+            } else {
+                repository.searchWithCollections(query)
+            }
+
+            val kind = _selectedKind.value
+            val colId = _selectedCollectionId.value
+            val dateF = _dateFilter.value
+            val sort = _sortOrder.value
+            val customStart = _customDateStart.value
+            val customEnd = _customDateEnd.value
+
+            val calendar = Calendar.getInstance()
+            val currentYear = calendar.get(Calendar.YEAR)
+            val currentMonth = calendar.get(Calendar.MONTH)
+
+            val filtered = rawList.asSequence()
+                .filter { itemWithCols ->
+                    val item = itemWithCols.item
+                    kind == null || item.kind == kind.name
+                }
+                .filter { itemWithCols ->
+                    val item = itemWithCols.item
+                    val colIds = itemWithCols.collections.map { it.id }
+                    when (colId) {
+                        null -> true
+                        "computed_favorites" -> item.isFavorite
+                        "computed_unfiled" -> colIds.isEmpty()
+                        "computed_due" -> item.reminderTime != null && !item.isReminderDone
+                        else -> colIds.contains(colId)
+                    }
+                }
+                .filter { itemWithCols ->
+                    val item = itemWithCols.item
+                    when (dateF) {
+                        DateFilter.ALL_TIME -> true
+                        DateFilter.THIS_MONTH -> {
+                            calendar.timeInMillis = item.createdAt
+                            calendar.get(Calendar.YEAR) == currentYear && calendar.get(Calendar.MONTH) == currentMonth
+                        }
+                        DateFilter.THIS_YEAR -> {
+                            calendar.timeInMillis = item.createdAt
+                            calendar.get(Calendar.YEAR) == currentYear
+                        }
+                        DateFilter.CUSTOM -> {
+                            val time = item.createdAt
+                            (customStart == null || time >= customStart) &&
+                                (customEnd == null || time <= customEnd)
+                        }
+                    }
+                }
+                .sortedWith { a, b ->
+                    val itemA = a.item
+                    val itemB = b.item
+                    when (sort) {
+                        SortOrder.SAVED_NEWEST -> itemB.createdAt.compareTo(itemA.createdAt)
+                        SortOrder.SAVED_OLDEST -> itemA.createdAt.compareTo(itemB.createdAt)
+                        SortOrder.SOURCE_NEWEST -> (itemB.sourceDate ?: itemB.createdAt).compareTo(itemA.sourceDate ?: itemA.createdAt)
+                        SortOrder.TITLE_AZ -> itemA.title.compareTo(itemB.title, true)
+                    }
+                }
+                .toList()
+
+            _localSearchResults.value = filtered
         }
     }
 
@@ -128,27 +229,50 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         )
     }
 
-    fun selectKind(kind: ItemKind?) { _selectedKind.value = kind }
-    fun selectCollection(colId: String?) { _selectedCollectionId.value = colId }
-    fun setSortOrder(order: SortOrder) { _sortOrder.value = order }
-    fun setDateFilter(filter: DateFilter) { _dateFilter.value = filter }
+    fun selectKind(kind: ItemKind?) {
+        _selectedKind.value = kind
+        refreshFilteredResults()
+    }
+
+    fun selectCollection(colId: String?) {
+        _selectedCollectionId.value = colId
+        refreshFilteredResults()
+    }
+
+    fun setSortOrder(order: SortOrder) {
+        _sortOrder.value = order
+        refreshFilteredResults()
+    }
+
+    fun setDateFilter(filter: DateFilter) {
+        _dateFilter.value = filter
+        refreshFilteredResults()
+    }
+
+    fun setCustomDateRange(startMillis: Long?, endMillis: Long?) {
+        _customDateStart.value = startMillis
+        _customDateEnd.value = endMillis
+        _dateFilter.value = DateFilter.CUSTOM
+        refreshFilteredResults()
+    }
 
     fun setSearchQuery(query: String) {
         _searchQuery.value = query
         if (query.isBlank()) _aiSearchResults.value = emptyList()
+        refreshFilteredResults()
     }
 
     fun createNote(title: String, content: String, collectionIds: List<String>) {
         viewModelScope.launch(Dispatchers.IO) {
             val item = repository.createNote(title, content, collectionIds)
-            enrichItem(item)
+            localIndexer.indexItem(item)
         }
     }
 
     fun saveLink(url: String, title: String, note: String, collectionIds: List<String>) {
         viewModelScope.launch(Dispatchers.IO) {
             val item = repository.saveLink(url, title, note, collectionIds)
-            enrichItem(item)
+            localIndexer.indexItem(item)
         }
     }
 
@@ -160,40 +284,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val name = uri.lastPathSegment ?: "file_${System.currentTimeMillis()}"
                 resolver.openInputStream(uri)?.use { stream ->
                     val item = repository.captureStream(stream, name, mime, explicitSticker, collectionIds)
-                    enrichItem(item)
+                    localIndexer.indexItem(item)
                 }
-            }
-        }
-    }
-
-    private fun enrichItem(item: ItemEntity) {
-        viewModelScope.launch(Dispatchers.IO) {
-            val res = aiGateway.analyze(item.id, item.kind, item.content, item.originalFileName)
-            repository.dao.updateItem(
-                item.copy(
-                    aiDescription = res.description,
-                    aiConcepts = res.concepts,
-                    aiStatus = "READY"
-                )
-            )
-
-            // Persist 768-dim normalized embedding vector locally in Room
-            val textToEmbed = "${item.title}. ${item.content}. ${res.description}. ${res.concepts}"
-            val vectors = aiGateway.embed(listOf(textToEmbed))
-            val vector = vectors.firstOrNull()
-            if (vector != null) {
-                val vectorStr = vector.joinToString(",")
-                repository.dao.insertSearchDocument(
-                    com.example.data.SearchDocumentEntity(
-                        id = "doc_${item.id}",
-                        itemId = item.id,
-                        textContent = textToEmbed,
-                        embedding = vectorStr,
-                        embeddingDimension = 768,
-                        modelVersion = "text-embedding-004",
-                        coverage = res.coverage
-                    )
-                )
             }
         }
     }
@@ -206,54 +298,79 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val cols = _collections.value.map { it.name }
             val plan = aiGateway.getSearchPlan(query, cols)
 
-            // Generate query embedding once online
-            val queryVectors = aiGateway.embed(listOf(query))
+            // Generate query embedding once online with gemini-embedding-2
+            val queryVectors = try {
+                aiGateway.embed(listOf(query))
+            } catch (_: Exception) {
+                emptyList()
+            }
             val queryVec = queryVectors.firstOrNull()
 
-            // Load all pre-stored embeddings locally from Room database
-            val storedDocs = repository.dao.getAllSearchDocuments().associateBy { it.itemId }
+            // Group all stored search documents by item to support multi-chunk indexing
+            val allDocs = repository.dao.getAllSearchDocuments()
+            val docsByItem = allDocs.groupBy { it.itemId }
 
             val results = mutableListOf<SemanticSearchResult>()
 
+            // Apply search plan filters
+            val startMillis = plan.dateRange.startIso?.let {
+                try { Instant.parse(it).toEpochMilli() } catch (_: Exception) { null }
+            }
+            val endMillis = plan.dateRange.endIso?.let {
+                try { Instant.parse(it).toEpochMilli() } catch (_: Exception) { null }
+            }
+
             for (itemWithCols in active) {
                 val item = itemWithCols.item
-                var score = 0f
+
+                // 1. Target kind filter
+                if (plan.targetKinds.isNotEmpty() && !plan.targetKinds.contains(item.kind)) {
+                    continue
+                }
+
+                // 2. Date range filter
+                if (startMillis != null && item.createdAt < startMillis) continue
+                if (endMillis != null && item.createdAt > endMillis) continue
+
+                var bestSim = 0f
+                var bestChunkIndex = 0
                 val explanations = mutableListOf<String>()
 
-                // 1. Vector similarity from stored local embedding (fast local float math)
-                val storedDoc = storedDocs[item.id]
-                if (queryVec != null && storedDoc?.embedding != null) {
-                    try {
-                        val itemVec = storedDoc.embedding.split(",").map { it.toFloat() }.toFloatArray()
-                        val sim = SemanticVectorMath.cosineSimilarity(queryVec, itemVec)
-                        if (sim > 0.35f) {
-                            score += sim * 10f
-                            explanations.add("Semantic concept match (similarity %.2f)".format(sim))
-                        }
-                    } catch (_: Exception) {
+                // 3. Multi-chunk local cosine similarity scan
+                val itemDocs = docsByItem[item.id] ?: emptyList()
+                for (doc in itemDocs) {
+                    if (queryVec != null && doc.embedding != null && doc.embeddingDimension == 768 && doc.modelVersion == "gemini-embedding-2") {
+                        try {
+                            val chunkVec = doc.embedding.split(",").map { it.toFloat() }.toFloatArray()
+                            val sim = SemanticVectorMath.cosineSimilarity(queryVec, chunkVec)
+                            if (sim > bestSim) {
+                                bestSim = sim
+                                bestChunkIndex = doc.chunkIndex
+                            }
+                        } catch (_: Exception) {}
                     }
                 }
 
-                // 2. Search Plan concepts match
-                val itemTextLower = "${item.title} ${item.content} ${item.aiDescription ?: ""} ${item.aiConcepts ?: ""}".lowercase()
+                var score = 0f
+                if (bestSim > 0.30f) {
+                    score += bestSim * 10f
+                    explanations.add("Semantic similarity %.2f (chunk #%d)".format(bestSim, bestChunkIndex))
+                }
+
+                // 4. Concepts matching
+                val itemTextLower = "${item.title} ${item.content} ${item.extractedText ?: ""} ${item.aiDescription ?: ""} ${item.aiConcepts ?: ""}".lowercase()
                 for (c in plan.concepts) {
                     if (itemTextLower.contains(c.lowercase())) {
                         score += 3f
-                        explanations.add("Matched concept '$c'")
+                        explanations.add("Concept '$c'")
                     }
-                }
-
-                // 3. Target kind filter
-                if (plan.targetKinds.isNotEmpty() && plan.targetKinds.contains(item.kind)) {
-                    score += 2f
-                    explanations.add("Filtered by ${item.kind.lowercase()} type")
                 }
 
                 if (score > 0f) {
                     results.add(
                         SemanticSearchResult(
                             item = itemWithCols,
-                            explanation = explanations.distinct().take(2).joinToString(" • "),
+                            explanation = explanations.distinct().take(3).joinToString(" • "),
                             score = score
                         )
                     )
@@ -287,7 +404,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun deletePermanently(id: String) {
         viewModelScope.launch(Dispatchers.IO) {
-            repository.deleteItemPermanently(id)
+            repository.deletePermanently(id)
         }
     }
 
@@ -297,14 +414,31 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun setReminder(id: String, timeMillis: Long?) {
+    fun setReminder(id: String, timeMillis: Long?, isExact: Boolean = true) {
         viewModelScope.launch(Dispatchers.IO) {
             val item = repository.dao.getItemById(id) ?: return@launch
-            repository.setReminder(id, timeMillis)
+            repository.setReminder(id, timeMillis, isExact)
             if (timeMillis != null) {
                 reminderScheduler.schedule(id, item.title, timeMillis)
             } else {
                 reminderScheduler.cancel(id)
+            }
+        }
+    }
+
+    fun completeReminder(id: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            repository.completeReminder(id)
+            reminderScheduler.cancel(id)
+        }
+    }
+
+    fun snoozeReminder(id: String, newDueMillis: Long) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val item = repository.dao.getItemById(id)
+            repository.snoozeReminder(id, newDueMillis)
+            if (item != null) {
+                reminderScheduler.schedule(id, item.title, newDueMillis)
             }
         }
     }
@@ -320,6 +454,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             repository.deleteCollection(collectionId)
             if (_selectedCollectionId.value == collectionId) {
                 _selectedCollectionId.value = null
+                refreshFilteredResults()
             }
         }
     }
@@ -363,8 +498,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    suspend fun pairBackend(enrollmentSecret: String): Boolean {
+        return withContext(Dispatchers.IO) {
+            val success = aiGateway.enrollWithSecret(enrollmentSecret)
+            _isBackendPaired.value = success
+            success
+        }
+    }
+
+    fun unpairBackend() {
+        aiGateway.identityManager.clearPairing()
+        _isBackendPaired.value = false
+    }
+
     suspend fun exportEncryptedBackup(uri: Uri, passphrase: CharArray): Boolean {
-        return repository.exportEncryptedBackup(uri, passphrase)
+        val success = repository.exportEncryptedBackup(uri, passphrase)
+        if (success) {
+            _lastSuccessfulBackup.value = repository.getLastSuccessfulBackupTime()
+        }
+        return success
     }
 
     suspend fun inspectBackup(uri: Uri, passphrase: CharArray): RestorePreview? {
@@ -375,8 +527,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         return repository.commitRestore(preview)
     }
 
-    suspend fun importWhatsAppMigration(chatText: String, dateOrder: DateOrder?): Pair<Int, Int> {
-        return repository.importWhatsAppMigration(chatText, dateOrder)
+    suspend fun importWhatsAppMigration(
+        chatText: String,
+        dateOrder: DateOrder?,
+        attachments: Map<String, InputStream> = emptyMap()
+    ): Pair<Int, Int> {
+        val res = repository.importWhatsAppMigration(chatText, dateOrder, attachments)
+        // Enqueue local indexing for imported items
+        val active = repository.dao.getAllActiveItems()
+        for (item in active.filter { it.aiStatus == "PENDING" }) {
+            localIndexer.indexItem(item)
+        }
+        return res
     }
 
     fun clearCache() {
@@ -392,69 +554,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun getFilteredItems(): List<ItemWithCollections> {
-        val all = _items.value
-        val kind = _selectedKind.value
-        val colId = _selectedCollectionId.value
-        val dateF = _dateFilter.value
-        val sort = _sortOrder.value
-        val query = _searchQuery.value.trim()
-
-        val calendar = Calendar.getInstance()
-        val currentYear = calendar.get(Calendar.YEAR)
-        val currentMonth = calendar.get(Calendar.MONTH)
-
-        return all.asSequence()
-            .filter { itemWithCols ->
-                val item = itemWithCols.item
-                kind == null || item.kind == kind.name
-            }
-            .filter { itemWithCols ->
-                val item = itemWithCols.item
-                val colIds = itemWithCols.collections.map { it.id }
-                when (colId) {
-                    null -> true
-                    "computed_favorites" -> item.isFavorite
-                    "computed_unfiled" -> colIds.isEmpty()
-                    "computed_due" -> item.reminderTime != null && !item.isReminderDone
-                    else -> colIds.contains(colId)
-                }
-            }
-            .filter { itemWithCols ->
-                val item = itemWithCols.item
-                when (dateF) {
-                    DateFilter.ALL_TIME -> true
-                    DateFilter.THIS_MONTH -> {
-                        calendar.timeInMillis = item.createdAt
-                        calendar.get(Calendar.YEAR) == currentYear && calendar.get(Calendar.MONTH) == currentMonth
-                    }
-                    DateFilter.THIS_YEAR -> {
-                        calendar.timeInMillis = item.createdAt
-                        calendar.get(Calendar.YEAR) == currentYear
-                    }
-                    DateFilter.CUSTOM -> true
-                }
-            }
-            .filter { itemWithCols ->
-                val item = itemWithCols.item
-                if (query.isBlank()) true
-                else {
-                    item.title.contains(query, true) ||
-                    item.content.contains(query, true) ||
-                    (item.originalFileName ?: "").contains(query, true) ||
-                    (item.aiDescription ?: "").contains(query, true) ||
-                    (item.aiConcepts ?: "").contains(query, true)
-                }
-            }
-            .sortedWith { a, b ->
-                val itemA = a.item
-                val itemB = b.item
-                when (sort) {
-                    SortOrder.SAVED_NEWEST -> itemB.createdAt.compareTo(itemA.createdAt)
-                    SortOrder.SAVED_OLDEST -> itemA.createdAt.compareTo(itemB.createdAt)
-                    SortOrder.SOURCE_NEWEST -> (itemB.sourceDate ?: itemB.createdAt).compareTo(itemA.sourceDate ?: itemA.createdAt)
-                    SortOrder.TITLE_AZ -> itemA.title.compareTo(itemB.title, true)
-                }
-            }
-            .toList()
+        return _localSearchResults.value
     }
 }

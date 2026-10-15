@@ -112,9 +112,13 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
         }
     }
 
-    override fun onStart() {
-        super.onStart()
-        viewModel.appLockManager.lock()
+    private var lastHandledIntentHash: Int = 0
+
+    override fun onStop() {
+        super.onStop()
+        if (!isChangingConfigurations) {
+            viewModel.appLockManager.lock()
+        }
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -125,46 +129,68 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
 
     private fun handleIntent(intent: Intent?) {
         if (intent == null) return
-        val action = intent.action
-        val type = intent.type
+        val action = intent.action ?: return
+        if (action != Intent.ACTION_SEND && action != Intent.ACTION_SEND_MULTIPLE) return
 
-        if (Intent.ACTION_SEND == action && type != null) {
-            val text = intent.getStringExtra(Intent.EXTRA_TEXT)
-            val uri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        // Prevent duplicate processing of the same intent on configuration change
+        val intentHash = System.identityHashCode(intent)
+        if (intentHash == lastHandledIntentHash) return
+        lastHandledIntentHash = intentHash
+
+        val type = intent.type ?: "application/octet-stream"
+        val text = intent.getStringExtra(Intent.EXTRA_TEXT)
+
+        val uris = mutableListOf<String>()
+
+        // 1. ClipData items (standard, robust modern Android capture)
+        val clipData = intent.clipData
+        if (clipData != null) {
+            for (i in 0 until clipData.itemCount) {
+                val clipUri = clipData.getItemAt(i).uri
+                if (clipUri != null && !uris.contains(clipUri.toString())) {
+                    uris.add(clipUri.toString())
+                }
+            }
+        }
+
+        // 2. EXTRA_STREAM single send
+        if (action == Intent.ACTION_SEND) {
+            val streamUri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
             } else {
                 @Suppress("DEPRECATION")
                 intent.getParcelableExtra(Intent.EXTRA_STREAM) as? Uri
             }
-
-            val uris = if (uri != null) listOf(uri.toString()) else emptyList()
-            if (text != null || uris.isNotEmpty()) {
-                viewModel.setIncomingShare(
-                    SharePayload(
-                        text = text,
-                        uris = uris,
-                        mimeType = type
-                    )
-                )
+            if (streamUri != null && !uris.contains(streamUri.toString())) {
+                uris.add(streamUri.toString())
             }
-        } else if (Intent.ACTION_SEND_MULTIPLE == action && type != null) {
-            val uris = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        }
+
+        // 3. EXTRA_STREAM multiple send
+        if (action == Intent.ACTION_SEND_MULTIPLE) {
+            val streamUris = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 intent.getParcelableArrayListExtra(Intent.EXTRA_STREAM, Uri::class.java)
             } else {
                 @Suppress("DEPRECATION")
                 intent.getParcelableArrayListExtra(Intent.EXTRA_STREAM)
-            }?.map { it.toString() } ?: emptyList()
-
-            val text = intent.getStringExtra(Intent.EXTRA_TEXT)
-            if (uris.isNotEmpty() || text != null) {
-                viewModel.setIncomingShare(
-                    SharePayload(
-                        text = text,
-                        uris = uris,
-                        mimeType = type
-                    )
-                )
             }
+            if (streamUris != null) {
+                for (u in streamUris) {
+                    if (u != null && !uris.contains(u.toString())) {
+                        uris.add(u.toString())
+                    }
+                }
+            }
+        }
+
+        if (text != null || uris.isNotEmpty()) {
+            viewModel.setIncomingShare(
+                SharePayload(
+                    text = text,
+                    uris = uris,
+                    mimeType = type
+                )
+            )
         }
     }
 }
@@ -365,7 +391,6 @@ fun MainAppScaffold(
             onQueryConfirmed = { query ->
                 viewModel.setSearchQuery(query)
                 currentDestination = AppDestination.SEARCH
-                viewModel.triggerAiSearch(query)
             }
         )
     }

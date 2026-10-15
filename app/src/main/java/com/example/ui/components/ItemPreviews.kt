@@ -232,3 +232,47 @@ fun ItemAudioPreview(item: ItemEntity, blobFile: File?) {
         }
     }
 }
+
+@Composable
+fun ItemTextPreview(item: ItemEntity, blobFile: File?) {
+    if (blobFile == null || !blobFile.exists()) return
+
+    val textPreview by produceState<String?>(null, blobFile.absolutePath) {
+        value = withContext(Dispatchers.IO) {
+            try {
+                val buffer = CharArray(10000)
+                blobFile.bufferedReader().use { reader ->
+                    val read = reader.read(buffer)
+                    if (read > 0) String(buffer, 0, read) else ""
+                }
+            } catch (_: Exception) {
+                null
+            }
+        }
+    }
+
+    if (!textPreview.isNullOrBlank()) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(max = 200.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+            shape = RoundedCornerShape(8.dp)
+        ) {
+            Column(modifier = Modifier.padding(12.dp)) {
+                Text(
+                    text = "File Content Preview",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = textPreview!!,
+                    style = MaterialTheme.typography.bodySmall,
+                    maxLines = 8
+                )
+            }
+        }
+    }
+}
+

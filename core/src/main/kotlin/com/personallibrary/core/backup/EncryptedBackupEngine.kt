@@ -7,7 +7,9 @@ import kotlinx.serialization.json.Json
 import java.io.*
 import java.nio.file.Files
 import java.nio.file.Path
+import java.security.MessageDigest
 import java.security.SecureRandom
+import java.util.Arrays
 import java.util.zip.ZipEntry
 import java.util.zip.ZipInputStream
 import java.util.zip.ZipOutputStream
@@ -44,10 +46,12 @@ data class BackupItemRecord(
     val sourceDate: Long?,
     val reminderTime: Long?,
     val isReminderDone: Boolean,
+    val isReminderExact: Boolean = true,
     val contentHash: String?,
     val originalFileName: String?,
     val mimeType: String?,
     val fileSizeBytes: Long,
+    val extractedText: String? = null,
     val aiDescription: String?,
     val aiConcepts: String?,
     val aiStatus: String
@@ -74,7 +78,8 @@ data class BackupReminderRecord(
     val itemId: String,
     val title: String,
     val dueMillis: Long,
-    val isDone: Boolean
+    val isDone: Boolean,
+    val isExact: Boolean = true
 )
 
 @Serializable
@@ -82,7 +87,9 @@ data class BackupAssetRecord(
     val hash: String,
     val relativePath: String,
     val sizeBytes: Long,
-    val mimeType: String
+    val mimeType: String,
+    val originalName: String? = null,
+    val kind: String? = null
 )
 
 data class RestorePreview(
@@ -104,6 +111,12 @@ class EncryptedBackupEngine {
         private const val GCM_TAG_LENGTH_BITS = 128
         private const val PBKDF2_ITERATIONS = 65536
         private const val KEY_LENGTH_BITS = 256
+
+        // Hard security limits for backup extraction
+        private const val MAX_MANIFEST_BYTES = 10 * 1024 * 1024L // 10 MB
+        private const val MAX_TOTAL_UNCOMPRESSED_BYTES = 500 * 1024 * 1024L // 500 MB
+        private const val MAX_SINGLE_ENTRY_BYTES = 200 * 1024 * 1024L // 200 MB
+        private const val MAX_ZIP_ENTRIES = 20_000
     }
 
     private val json = Json {
@@ -111,10 +124,6 @@ class EncryptedBackupEngine {
         ignoreUnknownKeys = true
     }
 
-    /**
-     * Exports entire library into a portable, password-encrypted archive stream.
-     * Uses PBKDF2 + AES-256-GCM.
-     */
     fun exportArchive(
         outputStream: OutputStream,
         passphrase: CharArray,
@@ -147,7 +156,9 @@ class EncryptedBackupEngine {
                 zipOut.closeEntry()
 
                 // Write asset files
+                val seenHashes = mutableSetOf<String>()
                 for (asset in manifest.assets) {
+                    if (!seenHashes.add(asset.hash)) continue
                     val file = assetResolver(asset.hash)
                     if (file != null && file.exists()) {
                         zipOut.putNextEntry(ZipEntry("assets/${asset.hash}"))
@@ -162,10 +173,6 @@ class EncryptedBackupEngine {
         }
     }
 
-    /**
-     * Inspects, authenticates, and decrypts an archive into a temporary staging directory.
-     * Throws SecurityException on wrong password, tampering, or path traversal.
-     */
     fun inspectAndStage(
         inputStream: InputStream,
         passphrase: CharArray,
@@ -195,18 +202,32 @@ class EncryptedBackupEngine {
         cipher.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(GCM_TAG_LENGTH_BITS, iv))
 
         val stagingDir = Files.createTempDirectory(stagingRoot, "restore_stage_").toFile()
+        val stagingPath = stagingDir.toPath().toAbsolutePath().normalize()
 
         try {
             var manifest: BackupManifest? = null
+            var totalStagedBytes = 0L
+            var entryCount = 0
+            val seenEntries = mutableSetOf<String>()
+
             CipherInputStream(inputStream, cipher).use { cipherIn ->
                 ZipInputStream(BufferedInputStream(cipherIn)).use { zipIn ->
                     var entry = zipIn.nextEntry
                     while (entry != null) {
-                        val entryName = entry.name
+                        entryCount++
+                        if (entryCount > MAX_ZIP_ENTRIES) {
+                            throw SecurityException("Backup contains too many entries (exceeds $MAX_ZIP_ENTRIES)")
+                        }
 
-                        // Guard against zip path traversal
+                        val entryName = entry.name
+                        if (!seenEntries.add(entryName)) {
+                            throw SecurityException("Duplicate zip entry detected: $entryName")
+                        }
+
+                        // Strict path traversal defense: canonical/normalized path check
                         val targetFile = File(stagingDir, entryName)
-                        if (!targetFile.canonicalPath.startsWith(stagingDir.canonicalPath)) {
+                        val targetPath = targetFile.toPath().toAbsolutePath().normalize()
+                        if (!targetPath.startsWith(stagingPath)) {
                             throw SecurityException("Malicious zip entry path traversal: $entryName")
                         }
 
@@ -214,12 +235,34 @@ class EncryptedBackupEngine {
 
                         if (entryName == "manifest.json") {
                             val baos = ByteArrayOutputStream()
-                            zipIn.copyTo(baos)
+                            var manifestBytesCount = 0L
+                            val buffer = ByteArray(8192)
+                            var read: Int
+                            while (zipIn.read(buffer).also { read = it } != -1) {
+                                manifestBytesCount += read
+                                if (manifestBytesCount > MAX_MANIFEST_BYTES) {
+                                    throw SecurityException("Manifest exceeds size limit of $MAX_MANIFEST_BYTES bytes")
+                                }
+                                baos.write(buffer, 0, read)
+                            }
                             val manifestJson = baos.toString(Charsets.UTF_8)
                             manifest = json.decodeFromString<BackupManifest>(manifestJson)
                         } else {
+                            var entryBytesCount = 0L
                             FileOutputStream(targetFile).use { fos ->
-                                zipIn.copyTo(fos)
+                                val buffer = ByteArray(8192)
+                                var read: Int
+                                while (zipIn.read(buffer).also { read = it } != -1) {
+                                    entryBytesCount += read
+                                    totalStagedBytes += read
+                                    if (entryBytesCount > MAX_SINGLE_ENTRY_BYTES) {
+                                        throw SecurityException("Archive entry $entryName exceeds maximum entry limit")
+                                    }
+                                    if (totalStagedBytes > MAX_TOTAL_UNCOMPRESSED_BYTES) {
+                                        throw SecurityException("Total uncompressed size exceeds limit of $MAX_TOTAL_UNCOMPRESSED_BYTES bytes")
+                                    }
+                                    fos.write(buffer, 0, read)
+                                }
                             }
                         }
                         zipIn.closeEntry()
@@ -233,14 +276,28 @@ class EncryptedBackupEngine {
                 throw IllegalArgumentException("Backup archive is corrupted: manifest.json is missing")
             }
 
-            val duplicateCount = manifest!!.items.count { existingItemIds.contains(it.id) }
+            // Verify staged assets against manifest declarations (SHA-256 and size)
+            for (asset in manifest.assets) {
+                val assetFile = File(stagingDir, "assets/${asset.hash}")
+                if (assetFile.exists()) {
+                    if (assetFile.length() != asset.sizeBytes) {
+                        throw SecurityException("Asset size mismatch for ${asset.hash}: expected ${asset.sizeBytes}, got ${assetFile.length()}")
+                    }
+                    val actualHash = sha256(assetFile)
+                    if (!actualHash.equals(asset.hash, ignoreCase = true)) {
+                        throw SecurityException("Asset SHA-256 checksum mismatch for ${asset.hash}: computed $actualHash")
+                    }
+                }
+            }
+
+            val duplicateCount = manifest.items.count { existingItemIds.contains(it.id) }
 
             return RestorePreview(
-                manifest = manifest!!,
+                manifest = manifest,
                 stagingDir = stagingDir,
-                totalItems = manifest!!.items.size,
-                totalCollections = manifest!!.collections.size,
-                totalAssets = manifest!!.assets.size,
+                totalItems = manifest.items.size,
+                totalCollections = manifest.collections.size,
+                totalAssets = manifest.assets.size,
                 existingDuplicateCount = duplicateCount
             )
         } catch (e: Exception) {
@@ -252,10 +309,24 @@ class EncryptedBackupEngine {
         }
     }
 
+    private fun sha256(file: File): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        file.inputStream().use { input ->
+            val buf = ByteArray(8192)
+            var read: Int
+            while (input.read(buf).also { read = it } != -1) {
+                digest.update(buf, 0, read)
+            }
+        }
+        return digest.digest().joinToString("") { "%02x".format(it) }
+    }
+
     private fun deriveKey(passphrase: CharArray, salt: ByteArray): SecretKeySpec {
         val factory = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256")
         val spec = PBEKeySpec(passphrase, salt, PBKDF2_ITERATIONS, KEY_LENGTH_BITS)
         val keyBytes = factory.generateSecret(spec).encoded
-        return SecretKeySpec(keyBytes, "AES")
+        val keySpec = SecretKeySpec(keyBytes, "AES")
+        Arrays.fill(keyBytes, 0.toByte())
+        return keySpec
     }
 }

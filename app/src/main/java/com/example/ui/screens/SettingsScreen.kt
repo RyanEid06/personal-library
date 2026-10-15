@@ -1,5 +1,6 @@
 package com.example.ui.screens
 
+import android.content.Context
 import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -9,6 +10,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Chat
+import androidx.compose.material.icons.automirrored.filled.Input
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
@@ -19,13 +22,17 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
 import com.example.ui.MainViewModel
 import com.example.ui.components.EncryptedBackupPassphraseDialog
 import com.example.ui.components.WhatsAppMigrationDialog
 import com.personallibrary.core.backup.RestorePreview
 import kotlinx.coroutines.launch
+import java.text.SimpleDateFormat
+import java.util.*
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -37,6 +44,12 @@ fun SettingsScreen(
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
     val stats by viewModel.storageStats.collectAsState()
+    val isPaired by viewModel.isBackendPaired.collectAsState()
+    val lastBackup by viewModel.lastSuccessfulBackup.collectAsState()
+
+    val prefs = remember { context.getSharedPreferences("personal_library_settings", Context.MODE_PRIVATE) }
+    var pauseAi by remember { mutableStateOf(prefs.getBoolean("ai_paused", false)) }
+    var wifiOnly by remember { mutableStateOf(prefs.getBoolean("ai_wifi_only", true)) }
 
     var showMigrationDialog by remember { mutableStateOf(false) }
     var showExportPassphraseDialog by remember { mutableStateOf(false) }
@@ -46,6 +59,10 @@ fun SettingsScreen(
     var pendingRestoreUri by remember { mutableStateOf<Uri?>(null) }
     var restorePreviewState by remember { mutableStateOf<RestorePreview?>(null) }
     var showRestorePreviewDialog by remember { mutableStateOf(false) }
+
+    var showPairingDialog by remember { mutableStateOf(false) }
+    var pairingSecretInput by remember { mutableStateOf("") }
+    var isPairingInProgress by remember { mutableStateOf(false) }
 
     var isLockEnabled by remember { mutableStateOf(viewModel.appLockManager.isLockEnabled()) }
 
@@ -118,33 +135,36 @@ fun SettingsScreen(
         val newItems = (preview.manifest.items.size - preview.existingDuplicateCount).coerceAtLeast(0)
         AlertDialog(
             onDismissRequest = {
-                preview.stagingDir.deleteRecursively()
                 showRestorePreviewDialog = false
                 restorePreviewState = null
-                pendingRestoreUri = null
             },
-            title = { Text("Restore Backup Inspection") },
+            title = { Text("Restore Archive Preview") },
             text = {
-                Column {
-                    Text("Verified encrypted backup integrity:\n", fontWeight = FontWeight.SemiBold)
-                    Text("• Total items in archive: ${preview.manifest.items.size}")
-                    Text("• New items to restore: $newItems")
-                    Text("• Duplicate items skipped: ${preview.existingDuplicateCount}")
-                    Text("• Collections in backup: ${preview.manifest.collections.size}")
-                    Text("• Managed assets: ${preview.manifest.assets.size}")
-                    Spacer(modifier = Modifier.height(10.dp))
-                    Text("Proceed with restoring records into your local personal library?", style = MaterialTheme.typography.bodySmall)
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("• Total Items: ${preview.totalItems}")
+                    Text("• Collections: ${preview.totalCollections}")
+                    Text("• Attached Blobs: ${preview.totalAssets}")
+                    Text("• Existing Duplicates: ${preview.existingDuplicateCount} (will be preserved/skipped)")
+                    Text("• New Items to Restore: $newItems")
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        "Restoring will safely import items, blobs, and collections. All data is verified before committing.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
             },
             confirmButton = {
                 Button(
                     onClick = {
-                        coroutineScope.launch {
-                            val count = viewModel.commitRestore(preview)
-                            showRestorePreviewDialog = false
-                            restorePreviewState = null
-                            pendingRestoreUri = null
-                            Toast.makeText(context, "Successfully restored $count items into library", Toast.LENGTH_LONG).show()
+                        val target = restorePreviewState
+                        showRestorePreviewDialog = false
+                        restorePreviewState = null
+                        if (target != null) {
+                            coroutineScope.launch {
+                                val count = viewModel.commitRestore(target)
+                                Toast.makeText(context, "Restored $count items successfully", Toast.LENGTH_LONG).show()
+                            }
                         }
                     },
                     modifier = Modifier.testTag("confirm_restore_button")
@@ -155,10 +175,8 @@ fun SettingsScreen(
             dismissButton = {
                 TextButton(
                     onClick = {
-                        preview.stagingDir.deleteRecursively()
                         showRestorePreviewDialog = false
                         restorePreviewState = null
-                        pendingRestoreUri = null
                     }
                 ) {
                     Text("Cancel")
@@ -167,14 +185,84 @@ fun SettingsScreen(
         )
     }
 
+    if (showPairingDialog) {
+        Dialog(onDismissRequest = { if (!isPairingInProgress) showPairingDialog = false }) {
+            Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.surface,
+                modifier = Modifier.fillMaxWidth().padding(16.dp)
+            ) {
+                Column(modifier = Modifier.padding(20.dp)) {
+                    Text("Pair Backend AI", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "Enter the Device Enrollment Secret configured on your backend to establish cryptographic Keystore identity pairing. The secret is never saved to disk.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(14.dp))
+                    OutlinedTextField(
+                        value = pairingSecretInput,
+                        onValueChange = { pairingSecretInput = it },
+                        label = { Text("Enrollment Secret") },
+                        visualTransformation = PasswordVisualTransformation(),
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth().testTag("enrollment_secret_input")
+                    )
+                    Spacer(modifier = Modifier.height(20.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End
+                    ) {
+                        TextButton(
+                            onClick = { showPairingDialog = false },
+                            enabled = !isPairingInProgress
+                        ) {
+                            Text("Cancel")
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Button(
+                            onClick = {
+                                isPairingInProgress = true
+                                coroutineScope.launch {
+                                    val success = viewModel.pairBackend(pairingSecretInput.trim())
+                                    isPairingInProgress = false
+                                    pairingSecretInput = ""
+                                    if (success) {
+                                        showPairingDialog = false
+                                        Toast.makeText(context, "Device paired successfully with backend", Toast.LENGTH_SHORT).show()
+                                    } else {
+                                        Toast.makeText(context, "Pairing failed. Check secret or backend connectivity.", Toast.LENGTH_LONG).show()
+                                    }
+                                }
+                            },
+                            enabled = pairingSecretInput.isNotBlank() && !isPairingInProgress,
+                            modifier = Modifier.testTag("submit_pair_button")
+                        ) {
+                            if (isPairingInProgress) {
+                                CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                                Spacer(modifier = Modifier.width(6.dp))
+                            }
+                            Text("Pair Device")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     if (showMigrationDialog) {
         WhatsAppMigrationDialog(
             onDismiss = { showMigrationDialog = false },
             onImport = { chatText, dateOrder ->
                 coroutineScope.launch {
                     val (imported, ambiguous) = viewModel.importWhatsAppMigration(chatText, dateOrder)
-                    val ambiguousMsg = if (ambiguous > 0) " ($ambiguous ambiguous dates flagged)" else ""
-                    Toast.makeText(context, "Imported $imported messages into 'Random Links'$ambiguousMsg", Toast.LENGTH_LONG).show()
+                    val msg = if (ambiguous > 0) {
+                        "Imported $imported items. $ambiguous dates were ambiguous and preserved as unparseable to avoid guessing."
+                    } else {
+                        "Imported $imported items successfully."
+                    }
+                    Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
                 }
             }
         )
@@ -186,7 +274,7 @@ fun SettingsScreen(
             TopAppBar(
                 title = {
                     Text(
-                        text = "Settings & Storage",
+                        text = "Settings & Portability",
                         style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.Bold
                     )
@@ -217,7 +305,7 @@ fun SettingsScreen(
 
                     Spacer(modifier = Modifier.height(14.dp))
 
-                    StorageStatRow("Original Files", formatBytes(stats.originalsBytes))
+                    StorageStatRow("Original Files (Deduplicated)", formatBytes(stats.originalsBytes))
                     StorageStatRow("Cache & Previews", formatBytes(stats.cacheBytes))
                     StorageStatRow("Trash", formatBytes(stats.trashBytes))
                     StorageStatRow("Active Items", "${stats.totalItems} items")
@@ -243,6 +331,131 @@ fun SettingsScreen(
                 }
             }
 
+            // Backend AI Pairing Card
+            Card(
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+            ) {
+                Column(modifier = Modifier.padding(18.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                if (isPaired) Icons.Filled.CheckCircle else Icons.Filled.CloudOff,
+                                contentDescription = null,
+                                tint = if (isPaired) Color(0xFF10B981) else MaterialTheme.colorScheme.outline
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Backend AI Pairing", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                        }
+
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = if (isPaired) Color(0xFF10B981).copy(alpha = 0.15f) else MaterialTheme.colorScheme.surfaceVariant
+                        ) {
+                            Text(
+                                text = if (isPaired) "Paired" else "Not Paired",
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.SemiBold,
+                                color = if (isPaired) Color(0xFF047857) else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "Endpoint: ${viewModel.aiGateway.backendBaseUrl}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.outline
+                    )
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End
+                    ) {
+                        if (isPaired) {
+                            OutlinedButton(
+                                onClick = {
+                                    viewModel.unpairBackend()
+                                    Toast.makeText(context, "Device unpaired", Toast.LENGTH_SHORT).show()
+                                }
+                            ) {
+                                Text("Unpair")
+                            }
+                            Spacer(modifier = Modifier.width(8.dp))
+                        }
+                        Button(
+                            onClick = { showPairingDialog = true },
+                            modifier = Modifier.testTag("pair_backend_button")
+                        ) {
+                            Text(if (isPaired) "Reconnect" else "Pair Device")
+                        }
+                    }
+                }
+            }
+
+            // AI Controls & Automation Card
+            Card(
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+            ) {
+                Column(modifier = Modifier.padding(18.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Filled.AutoAwesome, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("AI Automation & Privacy", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Pause Background AI", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                            Text("Suspends all automatic AI analysis and embedding jobs", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline)
+                        }
+                        Switch(
+                            checked = pauseAi,
+                            onCheckedChange = {
+                                pauseAi = it
+                                prefs.edit().putBoolean("ai_paused", it).apply()
+                            }
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Wi-Fi Only for AI Network Calls", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                            Text("Require unmetered network connection for Gemini calls", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline)
+                        }
+                        Switch(
+                            checked = wifiOnly,
+                            onCheckedChange = {
+                                wifiOnly = it
+                                prefs.edit().putBoolean("ai_wifi_only", it).apply()
+                            }
+                        )
+                    }
+                }
+            }
+
             // WhatsApp Random Links Migration
             Card(
                 shape = RoundedCornerShape(16.dp),
@@ -251,7 +464,7 @@ fun SettingsScreen(
             ) {
                 Column(modifier = Modifier.padding(18.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Filled.Chat, contentDescription = null, tint = Color(0xFF10B981))
+                        Icon(Icons.AutoMirrored.Filled.Chat, contentDescription = null, tint = Color(0xFF10B981))
                         Spacer(modifier = Modifier.width(8.dp))
                         Text("WhatsApp 'Random Links' Migration", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                     }
@@ -270,7 +483,7 @@ fun SettingsScreen(
                         onClick = { showMigrationDialog = true },
                         modifier = Modifier.fillMaxWidth().testTag("open_migration_button")
                     ) {
-                        Icon(Icons.Filled.Input, contentDescription = null)
+                        Icon(Icons.AutoMirrored.Filled.Input, contentDescription = null)
                         Spacer(modifier = Modifier.width(8.dp))
                         Text("Import Chat Archive")
                     }
@@ -296,6 +509,20 @@ fun SettingsScreen(
                         text = "Export a passphrase-protected, AES-256-GCM encrypted portable backup (.plb) containing original files, metadata, collections, and reminders. Inspect archive before committing on restore.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    Spacer(modifier = Modifier.height(6.dp))
+
+                    val lastBackupText = if (lastBackup != null) {
+                        "Last successful backup: ${SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(lastBackup!!))}"
+                    } else {
+                        "Last successful backup: Never"
+                    }
+                    Text(
+                        text = lastBackupText,
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.Medium,
+                        color = MaterialTheme.colorScheme.primary
                     )
 
                     Spacer(modifier = Modifier.height(14.dp))
@@ -406,30 +633,6 @@ fun SettingsScreen(
                     ) {
                         Text("View Trash")
                     }
-                }
-            }
-
-            // AI Information Card
-            Card(
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
-            ) {
-                Column(modifier = Modifier.padding(18.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Filled.AutoAwesome, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("AI Enrichment & Gateway", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                    }
-
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    Text(
-                        text = "• Backend Gateway: Dedicated authenticated Node/TypeScript server\n• No API Keys in APK: Gemini keys remain server-side only\n• Authority: Originals, metadata, and vectors stay 100% on your device\n• Offline search: Full text search operates fully offline",
-                        style = MaterialTheme.typography.bodySmall,
-                        lineHeight = 20.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
                 }
             }
         }

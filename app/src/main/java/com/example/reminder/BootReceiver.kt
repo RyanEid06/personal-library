@@ -13,16 +13,21 @@ class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val action = intent.action
         if (action == Intent.ACTION_BOOT_COMPLETED || action == Intent.ACTION_TIMEZONE_CHANGED || action == Intent.ACTION_TIME_CHANGED) {
+            val pending = goAsync()
             val repository = LibraryRepository(context)
             val scheduler = ReminderScheduler(context)
 
             CoroutineScope(Dispatchers.IO).launch {
-                val pending = repository.dao.getPendingReminders()
-                val now = System.currentTimeMillis()
-                for (rem in pending) {
-                    if (rem.dueMillis > now) {
-                        scheduler.schedule(rem.itemId, rem.title, rem.dueMillis)
+                try {
+                    val pendingReminders = repository.dao.getPendingReminders()
+                    val now = System.currentTimeMillis()
+                    for (rem in pendingReminders) {
+                        if (rem.dueMillis > now) {
+                            scheduler.schedule(rem.itemId, rem.title, rem.dueMillis, rem.isExact)
+                        }
                     }
+                } finally {
+                    pending.finish()
                 }
             }
         }

@@ -148,18 +148,39 @@ fun ItemDetailsDialog(
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            // Main Preview
-            if (blobFile != null && (item.kind == "PHOTO" || item.kind == "STICKER")) {
-                AsyncImage(
-                    model = blobFile,
-                    contentDescription = item.title,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(240.dp)
-                        .clip(RoundedCornerShape(12.dp)),
-                    contentScale = ContentScale.Fit
-                )
-                Spacer(modifier = Modifier.height(14.dp))
+            // Main Preview Dispatcher
+            when {
+                blobFile != null && (item.kind == "PHOTO" || item.kind == "STICKER" || item.kind == "GIF") -> {
+                    AsyncImage(
+                        model = blobFile,
+                        contentDescription = item.title,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(240.dp)
+                            .clip(RoundedCornerShape(12.dp)),
+                        contentScale = ContentScale.Fit
+                    )
+                    Spacer(modifier = Modifier.height(14.dp))
+                }
+                blobFile != null && item.kind == "DOCUMENT" -> {
+                    val mime = (item.mimeType ?: "").lowercase()
+                    val ext = (item.originalFileName ?: "").substringAfterLast('.', "").lowercase()
+                    if (mime == "application/pdf" || ext == "pdf") {
+                        ItemPdfPreview(item, blobFile)
+                        Spacer(modifier = Modifier.height(14.dp))
+                    } else {
+                        ItemTextPreview(item, blobFile)
+                        Spacer(modifier = Modifier.height(14.dp))
+                    }
+                }
+                blobFile != null && item.kind == "AUDIO" -> {
+                    ItemAudioPreview(item, blobFile)
+                    Spacer(modifier = Modifier.height(14.dp))
+                }
+                blobFile != null && (item.kind == "TEXT" || (item.mimeType ?: "").startsWith("text/")) -> {
+                    ItemTextPreview(item, blobFile)
+                    Spacer(modifier = Modifier.height(14.dp))
+                }
             }
 
             Text(
@@ -170,7 +191,7 @@ fun ItemDetailsDialog(
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            // Content body / URL / extracted text
+            // Content body / URL / author text
             if (item.content.isNotBlank()) {
                 Surface(
                     color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
@@ -198,6 +219,49 @@ fun ItemDetailsDialog(
                                 Icon(Icons.Outlined.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
                                 Spacer(modifier = Modifier.width(4.dp))
                                 Text("Copy Text")
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Extracted text (OCR or PDF machine extraction)
+            if (!item.extractedText.isNullOrBlank()) {
+                Spacer(modifier = Modifier.height(10.dp))
+                Surface(
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(14.dp)) {
+                        Text(
+                            text = "Extracted Text (OCR / Document Index)",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = item.extractedText!!,
+                            style = MaterialTheme.typography.bodyMedium,
+                            lineHeight = 20.sp,
+                            maxLines = 12
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.End
+                        ) {
+                            TextButton(
+                                onClick = {
+                                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                    clipboard.setPrimaryClip(ClipData.newPlainText("Extracted text", item.extractedText))
+                                    Toast.makeText(context, "Extracted text copied", Toast.LENGTH_SHORT).show()
+                                }
+                            ) {
+                                Icon(Icons.Outlined.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Copy Extracted Text")
                             }
                         }
                     }

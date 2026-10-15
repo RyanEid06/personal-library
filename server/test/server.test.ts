@@ -81,12 +81,41 @@ describe('Personal Library Authenticated Backend (TypeScript)', () => {
     assert.strictEqual(typeof res.body.nonce, 'string');
   });
 
-  test('POST /v1/auth/enroll successfully enrolls device and returns session token and device credential', async () => {
-    // 1. Get challenge
+  test('POST /v1/auth/enroll rejects missing challengeNonce', async () => {
+    const res = await request('POST', '/v1/auth/enroll', {
+      deviceId,
+      appVersion: '1.0.0',
+      enrollmentSecret
+    });
+    assert.strictEqual(res.status, 400);
+    assert.strictEqual(res.body.error, 'CHALLENGE_REQUIRED');
+  });
+
+  test('POST /v1/auth/enroll rejects missing or wrong enrollment secret', async () => {
     const chRes = await request('GET', `/v1/auth/challenge?deviceId=${deviceId}`);
     const nonce = chRes.body.nonce;
 
-    // 2. Enroll with challenge and enrollment secret
+    // Missing secret
+    const resMissing = await request('POST', '/v1/auth/enroll', {
+      deviceId,
+      challengeNonce: nonce
+    });
+    assert.strictEqual(resMissing.status, 401);
+
+    // Wrong secret
+    const chRes2 = await request('GET', `/v1/auth/challenge?deviceId=${deviceId}`);
+    const resWrong = await request('POST', '/v1/auth/enroll', {
+      deviceId,
+      challengeNonce: chRes2.body.nonce,
+      enrollmentSecret: 'wrong-secret'
+    });
+    assert.strictEqual(resWrong.status, 401);
+  });
+
+  test('POST /v1/auth/enroll successfully enrolls device and returns session token and device credential', async () => {
+    const chRes = await request('GET', `/v1/auth/challenge?deviceId=${deviceId}`);
+    const nonce = chRes.body.nonce;
+
     const res = await request('POST', '/v1/auth/enroll', {
       deviceId,
       appVersion: '1.0.0',
@@ -101,6 +130,26 @@ describe('Personal Library Authenticated Backend (TypeScript)', () => {
     deviceCredential = res.body.deviceCredential;
   });
 
+  test('POST /v1/auth/enroll rejects challenge nonce replay', async () => {
+    const chRes = await request('GET', `/v1/auth/challenge?deviceId=${deviceId}`);
+    const nonce = chRes.body.nonce;
+
+    const res1 = await request('POST', '/v1/auth/enroll', {
+      deviceId,
+      challengeNonce: nonce,
+      enrollmentSecret
+    });
+    assert.strictEqual(res1.status, 200);
+
+    // Replaying same nonce
+    const res2 = await request('POST', '/v1/auth/enroll', {
+      deviceId,
+      challengeNonce: nonce,
+      enrollmentSecret
+    });
+    assert.strictEqual(res2.status, 401);
+  });
+
   test('POST /v1/auth/session renews session token using device credential', async () => {
     const chRes = await request('GET', `/v1/auth/challenge?deviceId=${deviceId}`);
     const nonce = chRes.body.nonce;
@@ -113,17 +162,14 @@ describe('Personal Library Authenticated Backend (TypeScript)', () => {
     assert.strictEqual(res.status, 200);
     assert.strictEqual(res.body.status, 'AUTHENTICATED');
     assert.ok(res.body.sessionToken);
-    // Use renewed session token
     sessionToken = res.body.sessionToken;
   });
 
   test('Stateless DeviceRegistry survives server restarts without persistent disk state', () => {
-    // Create completely fresh registry instance simulating cold start/reboot with same secret
     const rebootedRegistry = new DeviceRegistry(sessionSecret, enrollmentSecret);
     assert.strictEqual(rebootedRegistry.validateSession(deviceId, sessionToken), true);
     assert.strictEqual(rebootedRegistry.verifyDeviceCredential(deviceId, deviceCredential), true);
 
-    // Can issue new sessions on rebooted instance
     const freshToken = rebootedRegistry.renewSession(deviceId, deviceCredential);
     assert.ok(freshToken);
     assert.strictEqual(rebootedRegistry.validateSession(deviceId, freshToken), true);
@@ -167,7 +213,6 @@ describe('Personal Library Authenticated Backend (TypeScript)', () => {
     assert.strictEqual(res.body.embeddings.length, 2);
     assert.strictEqual(res.body.embeddings[0].length, 768);
 
-    // Verify vector magnitude is normalized
     const v = res.body.embeddings[0];
     const mag = Math.sqrt(v.reduce((sum: number, x: number) => sum + x * x, 0));
     assert.ok(Math.abs(mag - 1.0) < 0.05, `Vector magnitude ${mag} should be approx 1.0`);
@@ -213,8 +258,21 @@ describe('Personal Library Authenticated Backend (TypeScript)', () => {
     }
   });
 
-  test('POST /v1/auth/revoke invalidates device and session', async () => {
+  test('POST /v1/auth/revoke rejects unauthenticated call with 401', async () => {
     const revRes = await request('POST', '/v1/auth/revoke', { deviceId });
+    assert.strictEqual(revRes.status, 401);
+  });
+
+  test('POST /v1/auth/revoke invalidates device and session when authenticated', async () => {
+    const revRes = await request(
+      'POST',
+      '/v1/auth/revoke',
+      { deviceId },
+      {
+        'X-Device-Id': deviceId,
+        'Authorization': `Bearer ${sessionToken}`
+      }
+    );
     assert.strictEqual(revRes.status, 200);
 
     // Subsequent authenticated request fails with 401
@@ -228,5 +286,56 @@ describe('Personal Library Authenticated Backend (TypeScript)', () => {
       }
     );
     assert.strictEqual(testRes.status, 401);
+  });
+});
+
+describe('Production Server without Gemini Key', () => {
+  let server: http.Server;
+  let baseUrl: string;
+
+  before(async () => {
+    // No customProvider, no geminiApiKey
+    const app = createServer({
+      geminiApiKey: '',
+      deviceEnrollmentSecret: ''
+    });
+    server = app.server;
+    await new Promise<void>(resolve => {
+      server.listen(0, '127.0.0.1', () => {
+        const addr = server.address() as any;
+        baseUrl = `http://127.0.0.1:${addr.port}`;
+        resolve();
+      });
+    });
+  });
+
+  after(done => server.close(done));
+
+  test('Returns 503 BACKEND_UNCONFIGURED on AI endpoints without fake fallback', async () => {
+    // 1. Get challenge
+    const chRes = await fetch(`${baseUrl}/v1/auth/challenge?deviceId=test-prod-device`);
+    const { nonce } = await chRes.json() as any;
+
+    // 2. Enroll
+    const enRes = await fetch(`${baseUrl}/v1/auth/enroll`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ deviceId: 'test-prod-device', challengeNonce: nonce })
+    });
+    const { sessionToken } = await enRes.json() as any;
+
+    // 3. AI analyze should return 503
+    const aiRes = await fetch(`${baseUrl}/v1/ai/analyze`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Device-Id': 'test-prod-device',
+        'Authorization': `Bearer ${sessionToken}`
+      },
+      body: JSON.stringify({ itemId: 'item_1', kind: 'TEXT', textContent: 'hello' })
+    });
+    assert.strictEqual(aiRes.status, 503);
+    const errBody = await aiRes.json() as any;
+    assert.strictEqual(errBody.error, 'BACKEND_UNCONFIGURED');
   });
 });

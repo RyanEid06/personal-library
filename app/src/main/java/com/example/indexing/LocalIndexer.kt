@@ -2,6 +2,7 @@ package com.example.indexing
 
 import android.content.Context
 import androidx.work.*
+import com.example.data.AnalysisJobEntity
 import com.example.data.ItemEntity
 import com.example.data.LibraryRepository
 import com.personallibrary.core.ExtractedText
@@ -17,13 +18,17 @@ class LocalIndexer(
     suspend fun indexItem(item: ItemEntity): ExtractedText = withContext(Dispatchers.IO) {
         val hash = item.contentHash
         if (hash == null) {
-            // Text or link note
-            return@withContext ExtractedText(item.content, "complete")
+            // Text note or link: content is already owner text, no separate blob extraction needed
+            val coverage = "COMPLETE"
+            repository.dao.updateExtractedText(item.id, null, coverage, item.localIndexVersion)
+            enqueueDurableAiJob(item.id)
+            return@withContext ExtractedText(item.content, coverage)
         }
 
         val blobFile = repository.getBlobFile(hash)
         if (blobFile == null || !blobFile.exists()) {
-            return@withContext ExtractedText("", "unsupported")
+            repository.dao.updateExtractedText(item.id, null, "UNSUPPORTED", item.localIndexVersion)
+            return@withContext ExtractedText("", "UNSUPPORTED")
         }
 
         val mime = (item.mimeType ?: "").lowercase()
@@ -40,30 +45,45 @@ class LocalIndexer(
                 }
                 mime == "application/pdf" || ext == "pdf" -> {
                     AndroidTextExtractor.pdf(blobFile) { progress ->
-                        // Checkpoint save partial progress for restart safety
+                        // Checkpoint save partial progress into extractedText WITHOUT destroying owner content
                         val current = repository.dao.getItemById(item.id)
                         if (current != null && progress.text.isNotBlank()) {
-                            repository.dao.updateItem(current.copy(content = progress.text))
-                            repository.dao.rebuildFts()
+                            repository.dao.updateExtractedText(
+                                item.id,
+                                progress.text,
+                                progress.coverage,
+                                item.localIndexVersion
+                            )
                         }
                     }
                 }
-                else -> ExtractedText("", "unsupported")
+                else -> ExtractedText("", "UNSUPPORTED")
             }
         } catch (_: Exception) {
-            ExtractedText("", "failed")
+            ExtractedText("", "FAILED")
         }
 
-        // If new text extracted, update item content for FTS searching
-        if (extracted.text.isNotBlank()) {
-            val updated = item.copy(
-                content = extracted.text
+        // Store extracted text in dedicated extractedText column, NEVER overwriting owner content!
+        val newVersion = item.localIndexVersion + 1
+        repository.dao.updateExtractedText(
+            item.id,
+            extracted.text.ifBlank { null },
+            extracted.coverage,
+            newVersion
+        )
+
+        // Record durable analysis job
+        repository.dao.insertOrUpdateAnalysisJob(
+            AnalysisJobEntity(
+                itemId = item.id,
+                expectedContentVersion = newVersion,
+                indexVersion = newVersion,
+                status = "QUEUED",
+                updatedAt = System.currentTimeMillis()
             )
-            repository.dao.updateItem(updated)
-            repository.dao.rebuildFts()
-        }
+        )
 
-        // Enqueue durable background AI job with WorkManager
+        // Enqueue background AI job with WorkManager
         enqueueDurableAiJob(item.id)
 
         extracted
@@ -71,11 +91,14 @@ class LocalIndexer(
 
     fun enqueueDurableAiJob(itemId: String) {
         val prefs = context.getSharedPreferences("personal_library_settings", Context.MODE_PRIVATE)
-        val wifiOnly = prefs.getBoolean("ai_wifi_only", true)
         val pauseAi = prefs.getBoolean("ai_paused", false)
-
         if (pauseAi) return
 
+        // Check if item or its collections are excluded
+        val excludedItems = prefs.getStringSet("excluded_items", emptySet()) ?: emptySet()
+        if (excludedItems.contains(itemId)) return
+
+        val wifiOnly = prefs.getBoolean("ai_wifi_only", true)
         val networkType = if (wifiOnly) NetworkType.UNMETERED else NetworkType.CONNECTED
         val constraints = Constraints.Builder()
             .setRequiredNetworkType(networkType)

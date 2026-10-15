@@ -11,6 +11,7 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
@@ -56,7 +57,7 @@ fun TypeFilterChipStrip(
                 onClick = { onKindSelected(null) },
                 label = { Text("All") },
                 leadingIcon = {
-                    Icon(Icons.Filled.List, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Icon(Icons.AutoMirrored.Filled.List, contentDescription = null, modifier = Modifier.size(16.dp))
                 },
                 modifier = Modifier.testTag("filter_chip_all")
             )

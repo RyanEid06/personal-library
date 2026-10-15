@@ -84,6 +84,20 @@ class WhatsAppExportParserTest {
             assertEquals(result1.messages[i].importKey, result2.messages[i].importKey)
         }
     }
+
+    @Test
+    fun testEqualMonthAndDayDateNotAmbiguous() {
+        // 10/10/2026 has equal day and month (10 and 10), so both orders yield Oct 10. Must NOT be marked ambiguous!
+        val chat = """
+            10/10/2026, 12:00 - Ryan: Test message on tenth of October
+        """.trimIndent()
+
+        val result = WhatsAppExportParser.parse(chat, dateOrder = null, timeZone = TimeZone.getTimeZone("UTC"))
+        val msg = result.messages.first()
+
+        assertFalse("10/10/2026 must not be ambiguous", msg.isDateAmbiguous)
+        assertNotNull("10/10/2026 must have a parsed timestamp", msg.parsedTimestamp)
+    }
 }
 
 class EncryptedBackupTest {
@@ -102,7 +116,7 @@ class EncryptedBackupTest {
         val sampleBytes = "Fake image binary data 123456789".toByteArray()
         assetFile.writeBytes(sampleBytes)
 
-        val hash = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        val hash = "1b645fd236f1ba230790cf5c22e20440e1e54ebe017ae02f1387ef712e0f35ac"
 
         val manifest = BackupManifest(
             items = listOf(

@@ -9,6 +9,7 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
@@ -223,7 +224,7 @@ fun CreateCollectionDialog(
     val iconOptions = listOf(
         "folder" to Icons.Filled.Folder,
         "school" to Icons.Filled.School,
-        "chat" to Icons.Filled.Chat,
+        "chat" to Icons.AutoMirrored.Filled.Chat,
         "star" to Icons.Filled.Star,
         "mood" to Icons.Filled.Mood,
         "work" to Icons.Filled.Work,
@@ -330,7 +331,7 @@ fun CreateCollectionDialog(
 fun parseIconName(name: String): ImageVector {
     return when (name) {
         "school" -> Icons.Filled.School
-        "chat" -> Icons.Filled.Chat
+        "chat" -> Icons.AutoMirrored.Filled.Chat
         "star" -> Icons.Filled.Star
         "mood" -> Icons.Filled.Mood
         "work" -> Icons.Filled.Work
