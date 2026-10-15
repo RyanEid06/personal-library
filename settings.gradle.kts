@@ -20,4 +20,5 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "Personal Library"
+include(":core")
 include(":app")

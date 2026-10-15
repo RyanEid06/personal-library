@@ -4,47 +4,47 @@ import android.app.Application
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.ai.AiEnrichmentResult
-import com.example.ai.GeminiService
-import com.example.ai.SearchResultItem
-import com.example.migration.WhatsAppMigrationParser
-import com.example.model.CollectionItem
-import com.example.model.DateFilter
-import com.example.model.ItemKind
-import com.example.model.LibraryItem
-import com.example.model.SharePayload
-import com.example.model.SortOrder
-import com.example.model.StorageStats
+import com.example.ai.AiGateway
+import com.example.data.CollectionEntity
+import com.example.data.ItemEntity
+import com.example.data.ItemWithCollections
+import com.example.data.LibraryRepository
+import com.example.model.*
 import com.example.reminder.ReminderScheduler
-import com.example.storage.AssetManager
-import com.example.storage.BackupManager
-import com.example.storage.LibraryDatabaseHelper
-import com.example.storage.RestoreSummary
+import com.example.security.AppLockManager
+import com.personallibrary.core.backup.RestorePreview
+import com.personallibrary.core.migration.DateOrder
+import com.personallibrary.core.model.SemanticVectorMath
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
 import java.util.Calendar
-import java.util.UUID
+
+data class SemanticSearchResult(
+    val item: ItemWithCollections,
+    val explanation: String,
+    val score: Float
+)
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
 
-    private val dbHelper = LibraryDatabaseHelper(application)
-    private val assetManager = AssetManager(application)
-    private val backupManager = BackupManager(application, dbHelper)
+    val repository = LibraryRepository(application)
+    val appLockManager = AppLockManager(application)
     private val reminderScheduler = ReminderScheduler(application)
-    private val geminiService = GeminiService()
+    private val aiGateway = AiGateway(application)
 
-    private val _items = MutableStateFlow<List<LibraryItem>>(emptyList())
-    val items: StateFlow<List<LibraryItem>> = _items.asStateFlow()
+    private val _items = MutableStateFlow<List<ItemWithCollections>>(emptyList())
+    val items: StateFlow<List<ItemWithCollections>> = _items.asStateFlow()
 
-    private val _collections = MutableStateFlow<List<CollectionItem>>(emptyList())
-    val collections: StateFlow<List<CollectionItem>> = _collections.asStateFlow()
+    private val _collections = MutableStateFlow<List<CollectionEntity>>(emptyList())
+    val collections: StateFlow<List<CollectionEntity>> = _collections.asStateFlow()
 
-    private val _trashItems = MutableStateFlow<List<LibraryItem>>(emptyList())
-    val trashItems: StateFlow<List<LibraryItem>> = _trashItems.asStateFlow()
+    private val _trashItems = MutableStateFlow<List<ItemEntity>>(emptyList())
+    val trashItems: StateFlow<List<ItemEntity>> = _trashItems.asStateFlow()
 
     private val _storageStats = MutableStateFlow(StorageStats())
     val storageStats: StateFlow<StorageStats> = _storageStats.asStateFlow()
@@ -64,8 +64,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _searchQuery = MutableStateFlow("")
     val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
 
-    private val _aiSearchResults = MutableStateFlow<List<SearchResultItem>>(emptyList())
-    val aiSearchResults: StateFlow<List<SearchResultItem>> = _aiSearchResults.asStateFlow()
+    private val _aiSearchResults = MutableStateFlow<List<SemanticSearchResult>>(emptyList())
+    val aiSearchResults: StateFlow<List<SemanticSearchResult>> = _aiSearchResults.asStateFlow()
 
     private val _isAiSearching = MutableStateFlow(false)
     val isAiSearching: StateFlow<Boolean> = _isAiSearching.asStateFlow()
@@ -80,121 +80,102 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val isBatchMode: StateFlow<Boolean> = _isBatchMode.asStateFlow()
 
     init {
-        refreshAll()
-    }
-
-    fun refreshAll() {
+        // Enforce 30-day automatic Trash expiry on startup
         viewModelScope.launch(Dispatchers.IO) {
-            val loadedItems = dbHelper.getAllItems(includeTrash = false)
-            val loadedCollections = dbHelper.getAllCollections()
-            val loadedTrash = dbHelper.getTrashItems()
-            val stats = assetManager.calculateStorage(dbHelper)
+            repository.purgeExpiredTrash()
+        }
 
-            _items.value = loadedItems
-            _collections.value = loadedCollections
-            _trashItems.value = loadedTrash
-            _storageStats.value = stats
+        // Observe active items from Room
+        viewModelScope.launch {
+            repository.observeActiveItemsWithCollections().collect {
+                _items.value = it
+                updateStorageStats()
+            }
+        }
+
+        // Observe collections from Room
+        viewModelScope.launch {
+            repository.observeCollections().collect {
+                _collections.value = it
+            }
+        }
+
+        // Observe trash items from Room
+        viewModelScope.launch {
+            repository.observeTrashItems().collect {
+                _trashItems.value = it
+                updateStorageStats()
+            }
         }
     }
 
-    fun selectKind(kind: ItemKind?) {
-        _selectedKind.value = kind
+    private suspend fun updateStorageStats() = withContext(Dispatchers.IO) {
+        val rootDir = File(getApplication<Application>().filesDir, "storage_root")
+        val blobsDir = File(rootDir, "blobs")
+        val blobsBytes = if (blobsDir.exists()) blobsDir.walkTopDown().filter { it.isFile }.sumOf { it.length() } else 0L
+        val cacheBytes = getApplication<Application>().cacheDir.walkTopDown().filter { it.isFile }.sumOf { it.length() }
+
+        val active = _items.value
+        val trash = _trashItems.value
+        val trashBytes = trash.sumOf { it.fileSizeBytes }
+
+        _storageStats.value = StorageStats(
+            originalsBytes = blobsBytes,
+            cacheBytes = cacheBytes,
+            trashBytes = trashBytes,
+            totalItems = active.size,
+            trashedItems = trash.size
+        )
     }
 
-    fun selectCollection(collectionId: String?) {
-        _selectedCollectionId.value = collectionId
-    }
-
-    fun setSortOrder(order: SortOrder) {
-        _sortOrder.value = order
-    }
-
-    fun setDateFilter(filter: DateFilter) {
-        _dateFilter.value = filter
-    }
+    fun selectKind(kind: ItemKind?) { _selectedKind.value = kind }
+    fun selectCollection(colId: String?) { _selectedCollectionId.value = colId }
+    fun setSortOrder(order: SortOrder) { _sortOrder.value = order }
+    fun setDateFilter(filter: DateFilter) { _dateFilter.value = filter }
 
     fun setSearchQuery(query: String) {
         _searchQuery.value = query
-        if (query.isBlank()) {
-            _aiSearchResults.value = emptyList()
+        if (query.isBlank()) _aiSearchResults.value = emptyList()
+    }
+
+    fun createNote(title: String, content: String, collectionIds: List<String>) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val item = repository.createNote(title, content, collectionIds)
+            enrichItem(item)
         }
     }
 
-    fun createNote(title: String, content: String, collectionId: String?) {
+    fun saveLink(url: String, title: String, note: String, collectionIds: List<String>) {
         viewModelScope.launch(Dispatchers.IO) {
-            val id = UUID.randomUUID().toString()
-            val cleanTitle = title.ifBlank {
-                content.lines().firstOrNull()?.take(40) ?: "Untitled Note"
-            }
-            val item = LibraryItem(
-                id = id,
-                title = cleanTitle,
-                content = content,
-                kind = ItemKind.TEXT,
-                collectionId = collectionId,
-                createdAt = System.currentTimeMillis()
-            )
-            dbHelper.insertItem(item)
-            refreshAll()
-            enrichWithAi(item)
+            val item = repository.saveLink(url, title, note, collectionIds)
+            enrichItem(item)
         }
     }
 
-    fun saveLink(url: String, title: String, note: String, collectionId: String?) {
+    fun importUris(uris: List<Uri>, collectionIds: List<String>, explicitSticker: Boolean = false) {
         viewModelScope.launch(Dispatchers.IO) {
-            val id = UUID.randomUUID().toString()
-            val cleanTitle = title.ifBlank {
-                val host = Uri.parse(url).host ?: url
-                "Link: $host"
-            }
-            val item = LibraryItem(
-                id = id,
-                title = cleanTitle,
-                content = if (note.isBlank()) url else "$url\n$note",
-                kind = ItemKind.LINK,
-                collectionId = collectionId,
-                createdAt = System.currentTimeMillis()
-            )
-            dbHelper.insertItem(item)
-            refreshAll()
-            enrichWithAi(item)
-        }
-    }
-
-    fun importUris(uris: List<Uri>, collectionId: String?, explicitKind: ItemKind? = null) {
-        viewModelScope.launch(Dispatchers.IO) {
+            val resolver = getApplication<Application>().contentResolver
             for (uri in uris) {
-                val asset = assetManager.importUri(uri, explicitKind) ?: continue
-                val id = UUID.randomUUID().toString()
-                val item = LibraryItem(
-                    id = id,
-                    title = asset.fileName,
-                    content = "File: ${asset.fileName} (${formatBytes(asset.sizeBytes)})",
-                    kind = asset.kind,
-                    localFilePath = asset.localPath,
-                    originalFileName = asset.fileName,
-                    mimeType = asset.mimeType,
-                    fileSizeBytes = asset.sizeBytes,
-                    collectionId = collectionId,
-                    createdAt = System.currentTimeMillis()
-                )
-                dbHelper.insertItem(item)
-                enrichWithAi(item)
+                val mime = resolver.getType(uri) ?: "application/octet-stream"
+                val name = uri.lastPathSegment ?: "file_${System.currentTimeMillis()}"
+                resolver.openInputStream(uri)?.use { stream ->
+                    val item = repository.captureStream(stream, name, mime, explicitSticker, collectionIds)
+                    enrichItem(item)
+                }
             }
-            refreshAll()
         }
     }
 
-    private fun enrichWithAi(item: LibraryItem) {
+    private fun enrichItem(item: ItemEntity) {
         viewModelScope.launch(Dispatchers.IO) {
-            val aiResult: AiEnrichmentResult = geminiService.analyzeItem(item.title, item.content, item.kind)
-            val updated = item.copy(
-                aiDescription = aiResult.description,
-                aiConcepts = aiResult.concepts,
-                aiStatus = "READY"
+            val res = aiGateway.analyze(item.id, item.kind, item.content, item.originalFileName)
+            repository.dao.updateItem(
+                item.copy(
+                    aiDescription = res.description,
+                    aiConcepts = res.concepts,
+                    aiStatus = "READY"
+                )
             )
-            dbHelper.updateItem(updated)
-            refreshAll()
         }
     }
 
@@ -202,94 +183,127 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (query.isBlank()) return
         viewModelScope.launch(Dispatchers.IO) {
             _isAiSearching.value = true
-            val activeItems = dbHelper.getAllItems(includeTrash = false)
-            val results = geminiService.assistedSearch(query, activeItems)
-            _aiSearchResults.value = results
+            val active = _items.value
+            val cols = _collections.value.map { it.name }
+            val plan = aiGateway.getSearchPlan(query, cols)
+
+            // Generate query embedding
+            val queryVectors = aiGateway.embed(listOf(query))
+            val queryVec = queryVectors.firstOrNull()
+
+            val results = mutableListOf<SemanticSearchResult>()
+
+            for (itemWithCols in active) {
+                val item = itemWithCols.item
+                var score = 0f
+                val explanations = mutableListOf<String>()
+
+                // 1. Vector similarity if embeddings exist
+                if (queryVec != null) {
+                    val itemText = "${item.title} ${item.content} ${item.aiDescription ?: ""} ${item.aiConcepts ?: ""}"
+                    val itemVec = aiGateway.embed(listOf(itemText)).firstOrNull()
+                    if (itemVec != null) {
+                        val sim = SemanticVectorMath.cosineSimilarity(queryVec, itemVec)
+                        if (sim > 0.4f) {
+                            score += sim * 10f
+                            explanations.add("Semantic concept match (similarity %.2f)".format(sim))
+                        }
+                    }
+                }
+
+                // 2. Search Plan concepts match
+                val itemTextLower = "${item.title} ${item.content} ${item.aiDescription ?: ""} ${item.aiConcepts ?: ""}".lowercase()
+                for (c in plan.concepts) {
+                    if (itemTextLower.contains(c.lowercase())) {
+                        score += 3f
+                        explanations.add("Matched concept '$c'")
+                    }
+                }
+
+                // 3. Target kind filter
+                if (plan.targetKinds.isNotEmpty() && plan.targetKinds.contains(item.kind)) {
+                    score += 2f
+                    explanations.add("Filtered by ${item.kind.lowercase()} type")
+                }
+
+                if (score > 0f) {
+                    results.add(
+                        SemanticSearchResult(
+                            item = itemWithCols,
+                            explanation = explanations.distinct().take(2).joinToString(" • "),
+                            score = score
+                        )
+                    )
+                }
+            }
+
+            _aiSearchResults.value = results.sortedByDescending { it.score }
             _isAiSearching.value = false
         }
     }
 
     fun toggleFavorite(id: String) {
         viewModelScope.launch(Dispatchers.IO) {
-            val item = dbHelper.getItem(id) ?: return@launch
-            dbHelper.setFavorite(id, !item.isFavorite)
-            refreshAll()
+            val item = repository.dao.getItemById(id) ?: return@launch
+            repository.setFavorite(id, !item.isFavorite)
         }
     }
 
     fun moveToTrash(id: String) {
         viewModelScope.launch(Dispatchers.IO) {
-            dbHelper.moveToTrash(id)
+            repository.moveToTrash(id)
             reminderScheduler.cancel(id)
-            refreshAll()
         }
     }
 
     fun restoreFromTrash(id: String) {
         viewModelScope.launch(Dispatchers.IO) {
-            dbHelper.restoreFromTrash(id)
-            refreshAll()
+            repository.restoreFromTrash(id)
         }
     }
 
-    fun permanentDelete(id: String) {
+    fun deletePermanently(id: String) {
         viewModelScope.launch(Dispatchers.IO) {
-            val filePath = dbHelper.permanentDelete(id)
-            assetManager.deleteFile(filePath)
-            refreshAll()
+            repository.deleteItemPermanently(id)
         }
     }
 
     fun emptyTrash() {
         viewModelScope.launch(Dispatchers.IO) {
-            val paths = dbHelper.emptyTrash()
-            for (path in paths) {
-                assetManager.deleteFile(path)
-            }
-            refreshAll()
+            repository.emptyTrash()
         }
     }
 
     fun setReminder(id: String, timeMillis: Long?) {
         viewModelScope.launch(Dispatchers.IO) {
-            dbHelper.setReminder(id, timeMillis)
-            val item = dbHelper.getItem(id) ?: return@launch
+            repository.dao.setReminder(id, timeMillis)
+            val item = repository.dao.getItemById(id) ?: return@launch
             if (timeMillis != null) {
                 reminderScheduler.schedule(id, item.title, timeMillis)
             } else {
                 reminderScheduler.cancel(id)
             }
-            refreshAll()
         }
     }
 
     fun createCollection(name: String, icon: String, color: String) {
         viewModelScope.launch(Dispatchers.IO) {
-            val col = CollectionItem(
-                id = "col_${UUID.randomUUID().toString().take(8)}",
-                name = name.trim(),
-                iconName = icon,
-                colorHex = color
-            )
-            dbHelper.insertCollection(col)
-            refreshAll()
+            repository.createCollection(name, icon, color)
         }
     }
 
     fun deleteCollection(collectionId: String) {
         viewModelScope.launch(Dispatchers.IO) {
-            dbHelper.deleteCollection(collectionId)
+            repository.deleteCollection(collectionId)
             if (_selectedCollectionId.value == collectionId) {
                 _selectedCollectionId.value = null
             }
-            refreshAll()
         }
     }
 
-    fun setItemCollection(itemId: String, collectionId: String?) {
+    fun setItemCollections(itemId: String, collectionIds: List<String>) {
         viewModelScope.launch(Dispatchers.IO) {
-            dbHelper.updateCollection(itemId, collectionId)
-            refreshAll()
+            repository.setItemCollections(itemId, collectionIds)
         }
     }
 
@@ -309,87 +323,44 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val ids = _selectedItemIds.value
         viewModelScope.launch(Dispatchers.IO) {
             for (id in ids) {
-                dbHelper.moveToTrash(id)
+                repository.moveToTrash(id)
                 reminderScheduler.cancel(id)
             }
             clearSelection()
-            refreshAll()
         }
     }
 
-    fun batchAssignCollection(collectionId: String?) {
+    fun batchAssignCollection(collectionId: String) {
         val ids = _selectedItemIds.value
         viewModelScope.launch(Dispatchers.IO) {
             for (id in ids) {
-                dbHelper.updateCollection(id, collectionId)
+                repository.dao.insertItemCollectionCrossRef(com.example.data.ItemCollectionCrossRef(id, collectionId))
             }
             clearSelection()
-            refreshAll()
         }
     }
 
-    fun importWhatsAppChat(chatText: String, onDone: (Int) -> Unit) {
-        viewModelScope.launch(Dispatchers.IO) {
-            val result = WhatsAppMigrationParser.parse(chatText)
-            // Ensure Random Links collection exists
-            val existingCols = dbHelper.getAllCollections()
-            var randomLinksCol = existingCols.find { it.name.equals("Random Links", true) }
-            if (randomLinksCol == null) {
-                randomLinksCol = CollectionItem(
-                    id = "col_random_links",
-                    name = "Random Links",
-                    iconName = "chat",
-                    colorHex = "#10B981"
-                )
-                dbHelper.insertCollection(randomLinksCol)
-            }
-
-            var count = 0
-            for (msg in result.parsedItems) {
-                val title = when {
-                    msg.extractedUrl != null -> {
-                        val host = Uri.parse(msg.extractedUrl).host ?: "Link"
-                        "Link from ${msg.sender ?: "WhatsApp"}: $host"
-                    }
-                    msg.attachmentFileName != null -> msg.attachmentFileName
-                    else -> msg.rawText.take(40).replace("\n", " ")
-                }
-
-                val item = LibraryItem(
-                    id = UUID.randomUUID().toString(),
-                    title = title,
-                    content = msg.rawText,
-                    kind = msg.detectedKind,
-                    collectionId = randomLinksCol.id,
-                    sourceDate = msg.dateMillis,
-                    createdAt = System.currentTimeMillis(),
-                    originalFileName = msg.attachmentFileName,
-                    aiStatus = "READY"
-                )
-                dbHelper.insertItem(item)
-                count++
-            }
-            refreshAll()
-            withContext(Dispatchers.Main) {
-                onDone(count)
-            }
-        }
+    suspend fun exportEncryptedBackup(uri: Uri, passphrase: CharArray): Boolean {
+        return repository.exportEncryptedBackup(uri, passphrase)
     }
 
-    fun exportBackup(destinationUri: Uri): Boolean {
-        return backupManager.exportBackup(destinationUri)
+    suspend fun inspectBackup(uri: Uri, passphrase: CharArray): RestorePreview? {
+        return repository.inspectBackup(uri, passphrase)
     }
 
-    fun restoreBackup(sourceUri: Uri): RestoreSummary? {
-        val summary = backupManager.restoreBackup(sourceUri)
-        if (summary != null) refreshAll()
-        return summary
+    suspend fun commitRestore(preview: RestorePreview): Int {
+        return repository.commitRestore(preview)
+    }
+
+    suspend fun importWhatsAppMigration(chatText: String, dateOrder: DateOrder?): Pair<Int, Int> {
+        return repository.importWhatsAppMigration(chatText, dateOrder)
     }
 
     fun clearCache() {
         viewModelScope.launch(Dispatchers.IO) {
-            assetManager.clearCache()
-            refreshAll()
+            getApplication<Application>().cacheDir.deleteRecursively()
+            getApplication<Application>().cacheDir.mkdirs()
+            updateStorageStats()
         }
     }
 
@@ -397,7 +368,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _incomingShare.value = payload
     }
 
-    fun getFilteredItems(): List<LibraryItem> {
+    fun getFilteredItems(): List<ItemWithCollections> {
         val all = _items.value
         val kind = _selectedKind.value
         val colId = _selectedCollectionId.value
@@ -410,22 +381,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val currentMonth = calendar.get(Calendar.MONTH)
 
         return all.asSequence()
-            .filter { item ->
-                // Kind filter
-                kind == null || item.kind == kind
+            .filter { itemWithCols ->
+                val item = itemWithCols.item
+                kind == null || item.kind == kind.name
             }
-            .filter { item ->
-                // Collection filter
+            .filter { itemWithCols ->
+                val item = itemWithCols.item
+                val colIds = itemWithCols.collections.map { it.id }
                 when (colId) {
                     null -> true
                     "computed_favorites" -> item.isFavorite
-                    "computed_unfiled" -> item.collectionId == null
+                    "computed_unfiled" -> colIds.isEmpty()
                     "computed_due" -> item.reminderTime != null && !item.isReminderDone
-                    else -> item.collectionId == colId
+                    else -> colIds.contains(colId)
                 }
             }
-            .filter { item ->
-                // Date filter
+            .filter { itemWithCols ->
+                val item = itemWithCols.item
                 when (dateF) {
                     DateFilter.ALL_TIME -> true
                     DateFilter.THIS_MONTH -> {
@@ -439,8 +411,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     DateFilter.CUSTOM -> true
                 }
             }
-            .filter { item ->
-                // Query filter
+            .filter { itemWithCols ->
+                val item = itemWithCols.item
                 if (query.isBlank()) true
                 else {
                     item.title.contains(query, true) ||
@@ -451,21 +423,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
             .sortedWith { a, b ->
+                val itemA = a.item
+                val itemB = b.item
                 when (sort) {
-                    SortOrder.SAVED_NEWEST -> b.createdAt.compareTo(a.createdAt)
-                    SortOrder.SAVED_OLDEST -> a.createdAt.compareTo(b.createdAt)
-                    SortOrder.SOURCE_NEWEST -> (b.sourceDate ?: b.createdAt).compareTo(a.sourceDate ?: a.createdAt)
-                    SortOrder.TITLE_AZ -> a.title.compareTo(b.title, true)
+                    SortOrder.SAVED_NEWEST -> itemB.createdAt.compareTo(itemA.createdAt)
+                    SortOrder.SAVED_OLDEST -> itemA.createdAt.compareTo(itemB.createdAt)
+                    SortOrder.SOURCE_NEWEST -> (itemB.sourceDate ?: itemB.createdAt).compareTo(itemA.sourceDate ?: itemA.createdAt)
+                    SortOrder.TITLE_AZ -> itemA.title.compareTo(itemB.title, true)
                 }
             }
             .toList()
-    }
-
-    private fun formatBytes(bytes: Long): String {
-        return when {
-            bytes >= 1024 * 1024 -> String.format("%.1f MB", bytes / (1024.0 * 1024.0))
-            bytes >= 1024 -> String.format("%.1f KB", bytes / 1024.0)
-            else -> "$bytes B"
-        }
     }
 }

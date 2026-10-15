@@ -1,18 +1,14 @@
 package com.example.ui.components
 
-import android.content.ClipData
-import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -33,9 +29,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.FileProvider
 import coil.compose.AsyncImage
-import com.example.model.CollectionItem
-import com.example.model.ItemKind
-import com.example.model.LibraryItem
+import com.example.data.CollectionEntity
+import com.example.data.ItemEntity
+import com.example.data.ItemWithCollections
+import com.personallibrary.core.model.ItemKind
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.*
@@ -59,7 +56,7 @@ fun TypeFilterChipStrip(
                 onClick = { onKindSelected(null) },
                 label = { Text("All") },
                 leadingIcon = {
-                    Icon(Icons.Filled.AllInclusive, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Icon(Icons.Filled.List, contentDescription = null, modifier = Modifier.size(16.dp))
                 },
                 modifier = Modifier.testTag("filter_chip_all")
             )
@@ -70,7 +67,7 @@ fun TypeFilterChipStrip(
                 onClick = { onKindSelected(kind) },
                 label = { Text(kind.displayName) },
                 leadingIcon = {
-                    Icon(getKindIcon(kind), contentDescription = null, modifier = Modifier.size(16.dp))
+                    Icon(getKindIcon(kind.name), contentDescription = null, modifier = Modifier.size(16.dp))
                 },
                 modifier = Modifier.testTag("filter_chip_${kind.name.lowercase()}")
             )
@@ -78,47 +75,52 @@ fun TypeFilterChipStrip(
     }
 }
 
-fun getKindIcon(kind: ItemKind): ImageVector {
-    return when (kind) {
-        ItemKind.PHOTO -> Icons.Filled.PhotoLibrary
-        ItemKind.STICKER -> Icons.Filled.SentimentVerySatisfied
-        ItemKind.VIDEO -> Icons.Filled.VideoLibrary
-        ItemKind.AUDIO -> Icons.Filled.Audiotrack
-        ItemKind.TEXT -> Icons.Filled.Notes
-        ItemKind.LINK -> Icons.Filled.Link
-        ItemKind.DOCUMENT -> Icons.Filled.Description
-        ItemKind.FILE -> Icons.Filled.FolderZip
+fun getKindIcon(kindStr: String): ImageVector {
+    return when (kindStr) {
+        "PHOTO" -> Icons.Filled.Photo
+        "STICKER" -> Icons.Filled.Face
+        "VIDEO" -> Icons.Filled.PlayArrow
+        "AUDIO" -> Icons.Filled.Notifications
+        "TEXT" -> Icons.Filled.Edit
+        "LINK" -> Icons.Filled.Share
+        "DOCUMENT" -> Icons.Filled.Info
+        else -> Icons.Filled.Folder
     }
 }
 
-fun getKindColor(kind: ItemKind): Color {
-    return when (kind) {
-        ItemKind.PHOTO -> Color(0xFF3B82F6)
-        ItemKind.STICKER -> Color(0xFFEC4899)
-        ItemKind.VIDEO -> Color(0xFFEF4444)
-        ItemKind.AUDIO -> Color(0xFF8B5CF6)
-        ItemKind.TEXT -> Color(0xFF10B981)
-        ItemKind.LINK -> Color(0xFF06B6D4)
-        ItemKind.DOCUMENT -> Color(0xFFF59E0B)
-        ItemKind.FILE -> Color(0xFF6B7280)
+fun getKindColor(kindStr: String): Color {
+    return when (kindStr) {
+        "PHOTO" -> Color(0xFF3B82F6)
+        "STICKER" -> Color(0xFFEC4899)
+        "VIDEO" -> Color(0xFFEF4444)
+        "AUDIO" -> Color(0xFF8B5CF6)
+        "TEXT" -> Color(0xFF10B981)
+        "LINK" -> Color(0xFF06B6D4)
+        "DOCUMENT" -> Color(0xFFF59E0B)
+        else -> Color(0xFF6B7280)
     }
 }
 
 @Composable
 fun ItemCard(
-    item: LibraryItem,
+    itemWithCols: ItemWithCollections,
+    fileResolver: (hash: String) -> File?,
     onClick: () -> Unit,
     onFavoriteToggle: () -> Unit,
     onDelete: () -> Unit,
     isSelectMode: Boolean = false,
     isSelected: Boolean = false,
     onSelectToggle: () -> Unit = {},
-    collectionName: String? = null,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val item = itemWithCols.item
     val kindColor = getKindColor(item.kind)
     val dateFormatter = remember { SimpleDateFormat("MMM d, yyyy", Locale.getDefault()) }
+
+    val blobFile = remember(item.contentHash) {
+        item.contentHash?.let { fileResolver(it) }
+    }
 
     Card(
         modifier = modifier
@@ -134,13 +136,16 @@ fun ItemCard(
         shape = RoundedCornerShape(14.dp)
     ) {
         Column(modifier = Modifier.padding(14.dp)) {
-            // Header: Type badge, collection tag, and actions
+            // Header: Type badge and Collections
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(
+                    modifier = Modifier.weight(1f),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                     if (isSelectMode) {
                         Checkbox(
                             checked = isSelected,
@@ -165,7 +170,7 @@ fun ItemCard(
                             )
                             Spacer(modifier = Modifier.width(4.dp))
                             Text(
-                                text = item.kind.displayName,
+                                text = item.kind,
                                 color = kindColor,
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.Bold
@@ -173,18 +178,23 @@ fun ItemCard(
                         }
                     }
 
-                    if (collectionName != null) {
+                    // Many-to-many collections pills
+                    if (itemWithCols.collections.isNotEmpty()) {
                         Spacer(modifier = Modifier.width(6.dp))
-                        Surface(
-                            color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.5f),
-                            shape = RoundedCornerShape(6.dp)
-                        ) {
-                            Text(
-                                text = collectionName,
-                                color = MaterialTheme.colorScheme.onSecondaryContainer,
-                                fontSize = 11.sp,
-                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp)
-                            )
+                        LazyRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            items(itemWithCols.collections) { col ->
+                                Surface(
+                                    color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.5f),
+                                    shape = RoundedCornerShape(6.dp)
+                                ) {
+                                    Text(
+                                        text = col.name,
+                                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                        fontSize = 11.sp,
+                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp)
+                                    )
+                                }
+                            }
                         }
                     }
                 }
@@ -192,7 +202,7 @@ fun ItemCard(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     if (item.reminderTime != null) {
                         Icon(
-                            imageVector = Icons.Filled.Alarm,
+                            imageVector = Icons.Filled.Notifications,
                             contentDescription = "Reminder set",
                             tint = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.size(18.dp).padding(end = 4.dp)
@@ -203,7 +213,7 @@ fun ItemCard(
                         modifier = Modifier.size(32.dp).testTag("fav_button_${item.id}")
                     ) {
                         Icon(
-                            imageVector = if (item.isFavorite) Icons.Filled.Star else Icons.Outlined.StarBorder,
+                            imageVector = if (item.isFavorite) Icons.Filled.Star else Icons.Outlined.Star,
                             contentDescription = if (item.isFavorite) "Favorited" else "Favorite",
                             tint = if (item.isFavorite) Color(0xFFF59E0B) else MaterialTheme.colorScheme.outline
                         )
@@ -213,10 +223,10 @@ fun ItemCard(
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            // Visual Thumbnail or Icon Preview
-            if (item.localFilePath != null && (item.kind == ItemKind.PHOTO || item.kind == ItemKind.STICKER)) {
+            // Visual Thumbnail
+            if (blobFile != null && (item.kind == "PHOTO" || item.kind == "STICKER")) {
                 AsyncImage(
-                    model = File(item.localFilePath),
+                    model = blobFile,
                     contentDescription = item.title,
                     modifier = Modifier
                         .fillMaxWidth()
@@ -237,7 +247,7 @@ fun ItemCard(
             )
 
             // Content snippet
-            if (item.content.isNotBlank() && item.kind != ItemKind.PHOTO && item.kind != ItemKind.STICKER) {
+            if (item.content.isNotBlank() && item.kind != "PHOTO" && item.kind != "STICKER") {
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
                     text = item.content,
@@ -248,7 +258,7 @@ fun ItemCard(
                 )
             }
 
-            // AI Description snippet if available
+            // AI Description snippet
             if (!item.aiDescription.isNullOrBlank()) {
                 Spacer(modifier = Modifier.height(6.dp))
                 Row(
@@ -259,7 +269,7 @@ fun ItemCard(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Icon(
-                        Icons.Filled.AutoAwesome,
+                        Icons.Filled.Info,
                         contentDescription = "AI Concept",
                         tint = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.size(13.dp)
@@ -278,7 +288,7 @@ fun ItemCard(
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            // Footer: Date and Share / Delete actions
+            // Footer
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
@@ -293,9 +303,7 @@ fun ItemCard(
 
                 Row {
                     IconButton(
-                        onClick = {
-                            shareItem(context, item)
-                        },
+                        onClick = { shareItemEntity(context, item, blobFile) },
                         modifier = Modifier.size(28.dp).testTag("share_btn_${item.id}")
                     ) {
                         Icon(
@@ -322,32 +330,29 @@ fun ItemCard(
     }
 }
 
-fun shareItem(context: Context, item: LibraryItem) {
+fun shareItemEntity(context: Context, item: ItemEntity, file: File?) {
     try {
-        if (item.localFilePath != null) {
-            val file = File(item.localFilePath)
-            if (file.exists()) {
-                val uri = FileProvider.getUriForFile(
-                    context,
-                    "${context.packageName}.fileprovider",
-                    file
-                )
-                val intent = Intent(Intent.ACTION_SEND).apply {
-                    type = item.mimeType ?: "*/*"
-                    putExtra(Intent.EXTRA_STREAM, uri)
-                    putExtra(Intent.EXTRA_SUBJECT, item.title)
-                    if (item.content.isNotBlank()) {
-                        putExtra(Intent.EXTRA_TEXT, item.content)
-                    }
-                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        if (file != null && file.exists()) {
+            val uri = FileProvider.getUriForFile(
+                context,
+                "${context.packageName}.fileprovider",
+                file
+            )
+            val intent = Intent(Intent.ACTION_SEND).apply {
+                type = item.mimeType ?: "*/*"
+                putExtra(Intent.EXTRA_STREAM, uri)
+                putExtra(Intent.EXTRA_SUBJECT, item.title)
+                if (item.content.isNotBlank()) {
+                    putExtra(Intent.EXTRA_TEXT, item.content)
                 }
-                context.startActivity(Intent.createChooser(intent, "Share ${item.title}"))
-                return
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
+            context.startActivity(Intent.createChooser(intent, "Share ${item.title}"))
+            return
         }
 
         // Text or Link share
-        val shareText = if (item.kind == ItemKind.LINK) item.content else "${item.title}\n\n${item.content}"
+        val shareText = if (item.kind == "LINK") item.content else "${item.title}\n\n${item.content}"
         val intent = Intent(Intent.ACTION_SEND).apply {
             type = "text/plain"
             putExtra(Intent.EXTRA_SUBJECT, item.title)
@@ -359,30 +364,27 @@ fun shareItem(context: Context, item: LibraryItem) {
     }
 }
 
-fun openItemExternally(context: Context, item: LibraryItem) {
+fun openItemEntityExternally(context: Context, item: ItemEntity, file: File?) {
     try {
-        if (item.kind == ItemKind.LINK) {
+        if (item.kind == "LINK") {
             val url = if (item.content.startsWith("http")) item.content.lines().first() else "https://${item.content.lines().first()}"
             val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
             context.startActivity(intent)
             return
         }
 
-        if (item.localFilePath != null) {
-            val file = File(item.localFilePath)
-            if (file.exists()) {
-                val uri = FileProvider.getUriForFile(
-                    context,
-                    "${context.packageName}.fileprovider",
-                    file
-                )
-                val intent = Intent(Intent.ACTION_VIEW).apply {
-                    setDataAndType(uri, item.mimeType ?: "*/*")
-                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                }
-                context.startActivity(intent)
-                return
+        if (file != null && file.exists()) {
+            val uri = FileProvider.getUriForFile(
+                context,
+                "${context.packageName}.fileprovider",
+                file
+            )
+            val intent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, item.mimeType ?: "*/*")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
+            context.startActivity(intent)
+            return
         }
 
         Toast.makeText(context, "No external application can open this item", Toast.LENGTH_SHORT).show()

@@ -1,0 +1,11 @@
+{
+  "name": "personal-library-backend",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Authenticated Personal Library AI Proxy",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test test/*.test.js"
+  }
+}

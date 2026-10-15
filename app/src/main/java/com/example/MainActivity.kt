@@ -24,6 +24,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import com.example.data.ItemWithCollections
 import com.example.model.LibraryItem
 import com.example.model.SharePayload
 import com.example.reminder.ReminderReceiver
@@ -125,7 +126,7 @@ fun MainAppScaffold(
     intentTargetItemId: String?
 ) {
     var currentDestination by remember { mutableStateOf(AppDestination.LIBRARY) }
-    var activeDetailItem by remember { mutableStateOf<LibraryItem?>(null) }
+    var activeDetailItem by remember { mutableStateOf<ItemWithCollections?>(null) }
     var showAddDialog by remember { mutableStateOf(false) }
     var showVoiceSearchDialog by remember { mutableStateOf(false) }
 
@@ -136,7 +137,7 @@ fun MainAppScaffold(
     // Handle launch from notification
     LaunchedEffect(intentTargetItemId, allItems) {
         if (intentTargetItemId != null && activeDetailItem == null) {
-            val item = allItems.find { it.id == intentTargetItemId }
+            val item = allItems.find { it.item.id == intentTargetItemId }
             if (item != null) {
                 activeDetailItem = item
             }
@@ -244,21 +245,24 @@ fun MainAppScaffold(
 
     // Modal: Item Details Bottom Sheet
     if (activeDetailItem != null) {
-        val currentItem = allItems.find { it.id == activeDetailItem!!.id } ?: activeDetailItem!!
+        val currentItem = allItems.find { it.item.id == activeDetailItem!!.item.id } ?: activeDetailItem!!
         ItemDetailsDialog(
-            item = currentItem,
+            itemWithCols = currentItem,
+            fileResolver = { hash ->
+                viewModel.repository.assetStore.getBlobFile(hash)
+            },
             collections = collections,
             onDismiss = { activeDetailItem = null },
-            onFavoriteToggle = { viewModel.toggleFavorite(currentItem.id) },
+            onFavoriteToggle = { viewModel.toggleFavorite(currentItem.item.id) },
             onDelete = {
-                viewModel.moveToTrash(currentItem.id)
+                viewModel.moveToTrash(currentItem.item.id)
                 activeDetailItem = null
             },
-            onCollectionChange = { newColId ->
-                viewModel.setItemCollection(currentItem.id, newColId)
+            onCollectionsChange = { newColIds ->
+                viewModel.setItemCollections(currentItem.item.id, newColIds)
             },
             onSetReminder = { timeMillis ->
-                viewModel.setReminder(currentItem.id, timeMillis)
+                viewModel.setReminder(currentItem.item.id, timeMillis)
             }
         )
     }

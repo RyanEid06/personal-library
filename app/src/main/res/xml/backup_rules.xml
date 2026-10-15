@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<full-backup-content>
+    <!-- Exclude managed originals/blobs from Auto Backup to prevent cloud leakage and quota overflow -->
+    <exclude domain="file" path="storage_root" />
+    <exclude domain="file" path="originals" />
+    <exclude domain="file" path="blobs" />
+</full-backup-content>

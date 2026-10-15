@@ -19,6 +19,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.data.ItemWithCollections
 import com.example.model.CollectionItem
 import com.example.model.DateFilter
 import com.example.model.ItemKind
@@ -32,7 +33,7 @@ import com.example.ui.components.TypeFilterChipStrip
 @Composable
 fun LibraryScreen(
     viewModel: MainViewModel,
-    onOpenItemDetail: (LibraryItem) -> Unit,
+    onOpenItemDetail: (ItemWithCollections) -> Unit,
     onOpenVoiceSearch: () -> Unit,
     onOpenSettings: () -> Unit,
     onOpenAddDialog: () -> Unit,
@@ -276,17 +277,16 @@ fun LibraryScreen(
                     }
                 }
             } else {
-                items(items, key = { it.id }) { item ->
-                    val colName = collections.find { it.id == item.collectionId }?.name
+                items(items, key = { it.item.id }) { itemWithCols ->
                     ItemCard(
-                        item = item,
-                        onClick = { onOpenItemDetail(item) },
-                        onFavoriteToggle = { viewModel.toggleFavorite(item.id) },
-                        onDelete = { viewModel.moveToTrash(item.id) },
+                        itemWithCols = itemWithCols,
+                        fileResolver = { hash -> viewModel.repository.assetStore.getBlobFile(hash) },
+                        onClick = { onOpenItemDetail(itemWithCols) },
+                        onFavoriteToggle = { viewModel.toggleFavorite(itemWithCols.item.id) },
+                        onDelete = { viewModel.moveToTrash(itemWithCols.item.id) },
                         isSelectMode = isBatchMode,
-                        isSelected = selectedItemIds.contains(item.id),
-                        onSelectToggle = { viewModel.toggleSelection(item.id) },
-                        collectionName = colName,
+                        isSelected = selectedItemIds.contains(itemWithCols.item.id),
+                        onSelectToggle = { viewModel.toggleSelection(itemWithCols.item.id) },
                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
                     )
                 }

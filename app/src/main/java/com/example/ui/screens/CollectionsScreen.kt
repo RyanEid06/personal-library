@@ -36,9 +36,9 @@ fun CollectionsScreen(
     val collections by viewModel.collections.collectAsState()
     val allItems by viewModel.items.collectAsState()
 
-    val favoritesCount = allItems.count { it.isFavorite }
-    val unfiledCount = allItems.count { it.collectionId == null }
-    val dueCount = allItems.count { it.reminderTime != null && !it.isReminderDone }
+    val favoritesCount = allItems.count { it.item.isFavorite }
+    val unfiledCount = allItems.count { it.collections.isEmpty() }
+    val dueCount = allItems.count { it.item.reminderTime != null && !it.item.isReminderDone }
 
     var showCreateDialog by remember { mutableStateOf(false) }
 
@@ -122,7 +122,7 @@ fun CollectionsScreen(
 
             // User Collections
             items(collections, key = { it.id }) { col ->
-                val count = allItems.count { it.collectionId == col.id }
+                val count = allItems.count { itemWithCols -> itemWithCols.collections.any { it.id == col.id } }
                 var showDeleteConfirm by remember { mutableStateOf(false) }
 
                 if (showDeleteConfirm) {

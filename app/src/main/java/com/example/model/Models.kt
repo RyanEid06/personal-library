@@ -2,16 +2,7 @@ package com.example.model
 
 import kotlinx.serialization.Serializable
 
-enum class ItemKind(val displayName: String) {
-    PHOTO("Photos"),
-    STICKER("Stickers"),
-    VIDEO("Videos"),
-    AUDIO("Audio"),
-    TEXT("Notes & Text"),
-    LINK("Links"),
-    DOCUMENT("Documents"),
-    FILE("Other Files")
-}
+typealias ItemKind = com.personallibrary.core.model.ItemKind
 
 @Serializable
 data class LibraryItem(

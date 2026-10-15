@@ -13,7 +13,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -29,14 +28,16 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import coil.compose.AsyncImage
-import com.example.model.CollectionItem
-import com.example.model.ItemKind
-import com.example.model.LibraryItem
+import com.example.data.CollectionEntity
+import com.example.data.ItemEntity
+import com.example.data.ItemWithCollections
 import com.example.model.SharePayload
+import com.personallibrary.core.migration.DateOrder
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.*
@@ -44,17 +45,23 @@ import java.util.*
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ItemDetailsDialog(
-    item: LibraryItem,
-    collections: List<CollectionItem>,
+    itemWithCols: ItemWithCollections,
+    fileResolver: (hash: String) -> File?,
+    collections: List<CollectionEntity>,
     onDismiss: () -> Unit,
     onFavoriteToggle: () -> Unit,
     onDelete: () -> Unit,
-    onCollectionChange: (String?) -> Unit,
+    onCollectionsChange: (List<String>) -> Unit,
     onSetReminder: (Long?) -> Unit
 ) {
     val context = LocalContext.current
+    val item = itemWithCols.item
     val scrollState = rememberScrollState()
     val dateFormatter = remember { SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()) }
+
+    val blobFile = remember(item.contentHash) {
+        item.contentHash?.let { fileResolver(it) }
+    }
 
     var showReminderPicker by remember { mutableStateOf(false) }
 
@@ -109,7 +116,7 @@ fun ItemDetailsDialog(
                     shape = RoundedCornerShape(8.dp)
                 ) {
                     Text(
-                        text = item.kind.displayName,
+                        text = item.kind,
                         color = getKindColor(item.kind),
                         fontWeight = FontWeight.Bold,
                         fontSize = 12.sp,
@@ -120,13 +127,13 @@ fun ItemDetailsDialog(
                 Row {
                     IconButton(onClick = onFavoriteToggle) {
                         Icon(
-                            if (item.isFavorite) Icons.Filled.Star else Icons.Outlined.StarBorder,
+                            if (item.isFavorite) Icons.Filled.Star else Icons.Outlined.Star,
                             contentDescription = "Favorite",
                             tint = if (item.isFavorite) Color(0xFFF59E0B) else MaterialTheme.colorScheme.outline
                         )
                     }
                     IconButton(onClick = {
-                        shareItem(context, item)
+                        shareItemEntity(context, item, blobFile)
                     }) {
                         Icon(Icons.Outlined.Share, contentDescription = "Share")
                     }
@@ -142,9 +149,9 @@ fun ItemDetailsDialog(
             Spacer(modifier = Modifier.height(12.dp))
 
             // Main Preview
-            if (item.localFilePath != null && (item.kind == ItemKind.PHOTO || item.kind == ItemKind.STICKER)) {
+            if (blobFile != null && (item.kind == "PHOTO" || item.kind == "STICKER")) {
                 AsyncImage(
-                    model = File(item.localFilePath),
+                    model = blobFile,
                     contentDescription = item.title,
                     modifier = Modifier
                         .fillMaxWidth()
@@ -205,23 +212,23 @@ fun ItemDetailsDialog(
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 Button(
-                    onClick = { openItemExternally(context, item) },
+                    onClick = { openItemEntityExternally(context, item, blobFile) },
                     modifier = Modifier.weight(1f).testTag("dialog_open_button")
                 ) {
                     Icon(
-                        if (item.kind == ItemKind.LINK) Icons.Filled.OpenInBrowser else Icons.Filled.OpenInNew,
+                        if (item.kind == "LINK") Icons.Filled.OpenInBrowser else Icons.Filled.OpenInNew,
                         contentDescription = null,
                         modifier = Modifier.size(18.dp)
                     )
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text(if (item.kind == ItemKind.LINK) "Open Link" else "Open File")
+                    Text(if (item.kind == "LINK") "Open Link" else "Open File")
                 }
 
                 OutlinedButton(
                     onClick = { showReminderPicker = true },
                     modifier = Modifier.weight(1f).testTag("dialog_remind_button")
                 ) {
-                    Icon(Icons.Filled.Alarm, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Icon(Icons.Filled.Notifications, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(if (item.reminderTime != null) "Edit Reminder" else "Remind Me")
                 }
@@ -238,7 +245,7 @@ fun ItemDetailsDialog(
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Filled.NotificationImportant, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
+                        Icon(Icons.Filled.Notifications, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
                             text = "Due: ${dateFormatter.format(Date(item.reminderTime))}",
@@ -255,45 +262,45 @@ fun ItemDetailsDialog(
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Collection selection
-            Text("Collection", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+            // Multi-Collection Memberships (Many-to-Many!)
+            Text("Collection Memberships", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
             Spacer(modifier = Modifier.height(6.dp))
-            var collectionMenuExpanded by remember { mutableStateOf(false) }
-            val currentCollection = collections.find { it.id == item.collectionId }
 
-            Box(modifier = Modifier.fillMaxWidth()) {
-                OutlinedCard(
-                    onClick = { collectionMenuExpanded = true },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(12.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(currentCollection?.name ?: "Unfiled (None)")
-                        Icon(Icons.Filled.ArrowDropDown, contentDescription = null)
-                    }
-                }
-                DropdownMenu(
-                    expanded = collectionMenuExpanded,
-                    onDismissRequest = { collectionMenuExpanded = false }
-                ) {
-                    DropdownMenuItem(
-                        text = { Text("None (Unfiled)") },
-                        onClick = {
-                            onCollectionChange(null)
-                            collectionMenuExpanded = false
-                        }
-                    )
+            val currentAssignedIds = remember(itemWithCols) {
+                mutableStateListOf<String>().apply { addAll(itemWithCols.collections.map { it.id }) }
+            }
+
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f), RoundedCornerShape(8.dp))
+                    .padding(8.dp)
+            ) {
+                if (collections.isEmpty()) {
+                    Text("No collections created yet", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline)
+                } else {
                     for (col in collections) {
-                        DropdownMenuItem(
-                            text = { Text(col.name) },
-                            onClick = {
-                                onCollectionChange(col.id)
-                                collectionMenuExpanded = false
-                            }
-                        )
+                        val isChecked = currentAssignedIds.contains(col.id)
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    if (isChecked) currentAssignedIds.remove(col.id) else currentAssignedIds.add(col.id)
+                                    onCollectionsChange(currentAssignedIds.toList())
+                                }
+                                .padding(vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Checkbox(
+                                checked = isChecked,
+                                onCheckedChange = { checked ->
+                                    if (checked) currentAssignedIds.add(col.id) else currentAssignedIds.remove(col.id)
+                                    onCollectionsChange(currentAssignedIds.toList())
+                                }
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(col.name, style = MaterialTheme.typography.bodyMedium)
+                        }
                     }
                 }
             }
@@ -312,6 +319,9 @@ fun ItemDetailsDialog(
             if (!item.aiConcepts.isNullOrBlank()) {
                 DetailRow("Key Concepts", item.aiConcepts)
             }
+            if (item.contentHash != null) {
+                DetailRow("Content Hash", item.contentHash.take(16) + "...")
+            }
             if (item.originalFileName != null) {
                 DetailRow("Original Name", item.originalFileName)
             }
@@ -329,36 +339,38 @@ fun ItemDetailsDialog(
 }
 
 @Composable
-fun DetailRow(label: String, value: String) {
+private fun DetailRow(label: String, value: String) {
     Row(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 3.dp),
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
-        Text(text = label, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline)
-        Spacer(modifier = Modifier.width(16.dp))
-        Text(text = value, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
+        Text(label, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(modifier = Modifier.width(8.dp))
+        Text(value, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
     }
 }
 
 @Composable
 fun AddContentDialog(
-    collections: List<CollectionItem>,
+    collections: List<CollectionEntity>,
     onDismiss: () -> Unit,
-    onCreateNote: (String, String, String?) -> Unit,
-    onSaveLink: (String, String, String, String?) -> Unit,
-    onImportFiles: (List<Uri>, String?) -> Unit
+    onCreateNote: (String, String, List<String>) -> Unit,
+    onSaveLink: (String, String, String, List<String>) -> Unit,
+    onImportFiles: (List<Uri>, List<String>) -> Unit
 ) {
     var selectedTab by remember { mutableStateOf(0) } // 0: Note, 1: Link, 2: Files
     var title by remember { mutableStateOf("") }
     var content by remember { mutableStateOf("") }
     var url by remember { mutableStateOf("") }
-    var selectedCollectionId by remember { mutableStateOf<String?>(null) }
+    val selectedCollectionIds = remember { mutableStateListOf<String>() }
 
     val filePicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetMultipleContents()
     ) { uris: List<Uri> ->
         if (uris.isNotEmpty()) {
-            onImportFiles(uris, selectedCollectionId)
+            onImportFiles(uris, selectedCollectionIds.toList())
             onDismiss()
         }
     }
@@ -439,7 +451,7 @@ fun AddContentDialog(
                     }
                     2 -> {
                         Text(
-                            text = "Import photos, screenshots, voice notes, stickers, PDFs, or files from your device into local storage.",
+                            text = "Import photos, screenshots, voice notes, stickers, PDFs, or files into content-addressed managed storage.",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -448,7 +460,7 @@ fun AddContentDialog(
                             onClick = { filePicker.launch("*/*") },
                             modifier = Modifier.fillMaxWidth().testTag("select_files_button")
                         ) {
-                            Icon(Icons.Filled.FolderOpen, contentDescription = null)
+                            Icon(Icons.Filled.Folder, contentDescription = null)
                             Spacer(modifier = Modifier.width(8.dp))
                             Text("Choose Files from Device")
                         }
@@ -457,34 +469,28 @@ fun AddContentDialog(
 
                 Spacer(modifier = Modifier.height(14.dp))
 
-                // Collection selector
-                var colMenuOpen by remember { mutableStateOf(false) }
-                val currentColName = collections.find { it.id == selectedCollectionId }?.name ?: "Unfiled (None)"
-                Box(modifier = Modifier.fillMaxWidth()) {
-                    OutlinedCard(
-                        onClick = { colMenuOpen = true },
-                        modifier = Modifier.fillMaxWidth()
+                // Many-to-many collection selection
+                Text("Assign to Collections:", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
+                Spacer(modifier = Modifier.height(6.dp))
+                for (col in collections) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                if (selectedCollectionIds.contains(col.id)) selectedCollectionIds.remove(col.id)
+                                else selectedCollectionIds.add(col.id)
+                            }
+                            .padding(vertical = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth().padding(10.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text("Collection: $currentColName", style = MaterialTheme.typography.bodyMedium)
-                            Icon(Icons.Filled.ArrowDropDown, contentDescription = null)
-                        }
-                    }
-                    DropdownMenu(expanded = colMenuOpen, onDismissRequest = { colMenuOpen = false }) {
-                        DropdownMenuItem(
-                            text = { Text("None (Unfiled)") },
-                            onClick = { selectedCollectionId = null; colMenuOpen = false }
+                        Checkbox(
+                            checked = selectedCollectionIds.contains(col.id),
+                            onCheckedChange = { checked ->
+                                if (checked) selectedCollectionIds.add(col.id) else selectedCollectionIds.remove(col.id)
+                            }
                         )
-                        for (c in collections) {
-                            DropdownMenuItem(
-                                text = { Text(c.name) },
-                                onClick = { selectedCollectionId = c.id; colMenuOpen = false }
-                            )
-                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(col.name, style = MaterialTheme.typography.bodyMedium)
                     }
                 }
 
@@ -500,7 +506,7 @@ fun AddContentDialog(
                         Button(
                             onClick = {
                                 if (content.isNotBlank()) {
-                                    onCreateNote(title, content, selectedCollectionId)
+                                    onCreateNote(title, content, selectedCollectionIds.toList())
                                     onDismiss()
                                 }
                             },
@@ -513,7 +519,7 @@ fun AddContentDialog(
                         Button(
                             onClick = {
                                 if (url.isNotBlank()) {
-                                    onSaveLink(url, title, content, selectedCollectionId)
+                                    onSaveLink(url, title, content, selectedCollectionIds.toList())
                                     onDismiss()
                                 }
                             },
@@ -532,12 +538,13 @@ fun AddContentDialog(
 @Composable
 fun SharePreviewDialog(
     payload: SharePayload,
-    collections: List<CollectionItem>,
+    collections: List<CollectionEntity>,
     onDismiss: () -> Unit,
-    onConfirmSave: (String?) -> Unit
+    onConfirmSave: (List<String>) -> Unit
 ) {
-    var selectedCollectionId by remember {
-        mutableStateOf(collections.find { it.name.equals("Random Links", true) }?.id)
+    val selectedCollectionIds = remember {
+        val randomLinks = collections.find { it.name.equals("Random Links", true) }
+        if (randomLinks != null) mutableStateListOf(randomLinks.id) else mutableStateListOf()
     }
 
     Dialog(onDismissRequest = onDismiss) {
@@ -565,7 +572,7 @@ fun SharePreviewDialog(
                 Spacer(modifier = Modifier.height(12.dp))
 
                 Text(
-                    text = "Personal Library received content from another app. Save it locally to your library:",
+                    text = "Personal Library received content from another app. Save it locally into your library:",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -597,33 +604,25 @@ fun SharePreviewDialog(
 
                 Spacer(modifier = Modifier.height(14.dp))
 
-                Text("Target Collection:", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
+                Text("Target Collections:", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
                 Spacer(modifier = Modifier.height(4.dp))
 
-                var colMenuOpen by remember { mutableStateOf(false) }
-                val currentName = collections.find { it.id == selectedCollectionId }?.name ?: "Unfiled"
-                Box(modifier = Modifier.fillMaxWidth()) {
-                    OutlinedCard(onClick = { colMenuOpen = true }, modifier = Modifier.fillMaxWidth()) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth().padding(10.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(currentName)
-                            Icon(Icons.Filled.ArrowDropDown, contentDescription = null)
-                        }
-                    }
-                    DropdownMenu(expanded = colMenuOpen, onDismissRequest = { colMenuOpen = false }) {
-                        DropdownMenuItem(
-                            text = { Text("Unfiled") },
-                            onClick = { selectedCollectionId = null; colMenuOpen = false }
+                for (col in collections) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().clickable {
+                            if (selectedCollectionIds.contains(col.id)) selectedCollectionIds.remove(col.id)
+                            else selectedCollectionIds.add(col.id)
+                        },
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Checkbox(
+                            checked = selectedCollectionIds.contains(col.id),
+                            onCheckedChange = { checked ->
+                                if (checked) selectedCollectionIds.add(col.id) else selectedCollectionIds.remove(col.id)
+                            }
                         )
-                        for (c in collections) {
-                            DropdownMenuItem(
-                                text = { Text(c.name) },
-                                onClick = { selectedCollectionId = c.id; colMenuOpen = false }
-                            )
-                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(col.name, style = MaterialTheme.typography.bodyMedium)
                     }
                 }
 
@@ -636,7 +635,7 @@ fun SharePreviewDialog(
                     TextButton(onClick = onDismiss) { Text("Discard") }
                     Spacer(modifier = Modifier.width(8.dp))
                     Button(
-                        onClick = { onConfirmSave(selectedCollectionId) },
+                        onClick = { onConfirmSave(selectedCollectionIds.toList()) },
                         modifier = Modifier.testTag("save_share_button")
                     ) {
                         Text("Save to Library")
@@ -648,11 +647,15 @@ fun SharePreviewDialog(
 }
 
 @Composable
-fun WhatsAppMigrationDialog(
+fun EncryptedBackupPassphraseDialog(
+    title: String,
+    actionButtonText: String,
     onDismiss: () -> Unit,
-    onImport: (String) -> Unit
+    onConfirm: (CharArray) -> Unit
 ) {
-    var chatText by remember { mutableStateOf("") }
+    var passphrase by remember { mutableStateOf("") }
+    var confirmPassphrase by remember { mutableStateOf("") }
+    val isExport = actionButtonText.contains("Export", ignoreCase = true)
 
     Dialog(onDismissRequest = onDismiss) {
         Surface(
@@ -661,6 +664,78 @@ fun WhatsAppMigrationDialog(
             modifier = Modifier.fillMaxWidth().padding(16.dp)
         ) {
             Column(modifier = Modifier.padding(20.dp)) {
+                Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = if (isExport) "Enter a passphrase to encrypt your backup with AES-256-GCM authenticated encryption."
+                    else "Enter the passphrase used to encrypt this backup archive.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                Spacer(modifier = Modifier.height(14.dp))
+
+                OutlinedTextField(
+                    value = passphrase,
+                    onValueChange = { passphrase = it },
+                    label = { Text("Backup Passphrase") },
+                    visualTransformation = PasswordVisualTransformation(),
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth().testTag("backup_passphrase_input")
+                )
+
+                if (isExport) {
+                    Spacer(modifier = Modifier.height(10.dp))
+                    OutlinedTextField(
+                        value = confirmPassphrase,
+                        onValueChange = { confirmPassphrase = it },
+                        label = { Text("Confirm Passphrase") },
+                        visualTransformation = PasswordVisualTransformation(),
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth().testTag("backup_confirm_passphrase_input")
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(20.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End
+                ) {
+                    TextButton(onClick = onDismiss) { Text("Cancel") }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    val canSubmit = if (isExport) passphrase.isNotBlank() && passphrase == confirmPassphrase else passphrase.isNotBlank()
+                    Button(
+                        onClick = {
+                            onConfirm(passphrase.toCharArray())
+                            onDismiss()
+                        },
+                        enabled = canSubmit,
+                        modifier = Modifier.testTag("submit_passphrase_button")
+                    ) {
+                        Text(actionButtonText)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun WhatsAppMigrationDialog(
+    onDismiss: () -> Unit,
+    onImport: (String, DateOrder?) -> Unit
+) {
+    var chatText by remember { mutableStateOf("") }
+    var selectedOrderOption by remember { mutableStateOf<DateOrder?>(null) } // null = Auto (strict / no guessing)
+
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            shape = RoundedCornerShape(16.dp),
+            color = MaterialTheme.colorScheme.surface,
+            modifier = Modifier.fillMaxWidth().padding(16.dp)
+        ) {
+            Column(modifier = Modifier.padding(20.dp).verticalScroll(rememberScrollState())) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(
                         Icons.Filled.Chat,
@@ -679,7 +754,7 @@ fun WhatsAppMigrationDialog(
                 Spacer(modifier = Modifier.height(10.dp))
 
                 Text(
-                    text = "Export your 'Random Links' chat from WhatsApp without media (or with text) and paste the chat content here:",
+                    text = "Export your 'Random Links' chat from WhatsApp and paste the chat content here:",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -691,8 +766,37 @@ fun WhatsAppMigrationDialog(
                     onValueChange = { chatText = it },
                     label = { Text("WhatsApp chat export text") },
                     placeholder = { Text("13/10/2026, 14:32 - Ryan: syllabus link...\n13/10/2026, 14:35 - Ryan: <Media omitted>") },
-                    modifier = Modifier.fillMaxWidth().height(160.dp).testTag("migration_chat_input")
+                    modifier = Modifier.fillMaxWidth().height(140.dp).testTag("migration_chat_input")
                 )
+
+                Spacer(modifier = Modifier.height(14.dp))
+
+                Text("Date Ambiguity Resolution:", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
+                Spacer(modifier = Modifier.height(4.dp))
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    RadioButton(
+                        selected = selectedOrderOption == null,
+                        onClick = { selectedOrderOption = null }
+                    )
+                    Text("Auto / Strict (Flag Ambiguous, No Guessing)", fontSize = 12.sp)
+                }
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    RadioButton(
+                        selected = selectedOrderOption == DateOrder.DAY_FIRST,
+                        onClick = { selectedOrderOption = DateOrder.DAY_FIRST }
+                    )
+                    Text("Day First (DD/MM/YYYY)", fontSize = 12.sp)
+                }
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    RadioButton(
+                        selected = selectedOrderOption == DateOrder.MONTH_FIRST,
+                        onClick = { selectedOrderOption = DateOrder.MONTH_FIRST }
+                    )
+                    Text("Month First (MM/DD/YYYY)", fontSize = 12.sp)
+                }
 
                 Spacer(modifier = Modifier.height(16.dp))
 
@@ -705,7 +809,7 @@ fun WhatsAppMigrationDialog(
                     Button(
                         onClick = {
                             if (chatText.isNotBlank()) {
-                                onImport(chatText)
+                                onImport(chatText, selectedOrderOption)
                                 onDismiss()
                             }
                         },
