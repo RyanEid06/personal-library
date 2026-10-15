@@ -80,6 +80,24 @@ class BackupIntegrityTest {
         assertEquals(0L, file.length())
     }
 
+    @Test fun dateOnlyReminderFieldsSurvivePortableJson() {
+        val json = Json { ignoreUnknownKeys = true }
+        val record = json.decodeFromString<BackupReminderRecord>("""{"id":"r","itemId":"i","title":"Due","dueMillis":1,"isDone":false,"isDateOnly":true,"localDate":"2026-10-25"}""")
+        val encoded = json.encodeToString(record)
+        assertTrue(encoded.contains("\"isDateOnly\":true"))
+        assertTrue(encoded.contains("\"localDate\":\"2026-10-25\""))
+        val oldRecord = json.decodeFromString<BackupReminderRecord>("""{"id":"r","itemId":"i","title":"Due","dueMillis":1,"isDone":false}""")
+        assertFalse(json.encodeToString(oldRecord).contains("\"isDateOnly\":true"))
+    }
+
+    @Test fun dateOnlyItemFieldsSurvivePortableJson() {
+        val json = Json { ignoreUnknownKeys = true }
+        val record = json.decodeFromString<BackupItemRecord>("""{"id":"i","title":"Due","content":"","kind":"TEXT","isFavorite":false,"isTrash":false,"trashTimestamp":null,"createdAt":1,"sourceDate":null,"reminderTime":1,"isReminderDone":false,"contentHash":null,"originalFileName":null,"mimeType":null,"fileSizeBytes":0,"aiDescription":null,"aiConcepts":null,"aiStatus":"PENDING","isReminderDateOnly":true,"reminderLocalDate":"2026-10-25"}""")
+        val encoded = json.encodeToString(record)
+        assertTrue(encoded.contains("\"isReminderDateOnly\":true"))
+        assertTrue(encoded.contains("\"reminderLocalDate\":\"2026-10-25\""))
+    }
+
     private fun reject(bytes: ByteArray) {
         assertThrows(SecurityException::class.java) {
             engine.inspectAndStage(bytes.inputStream(), pass, temp.root.toPath(), emptySet())

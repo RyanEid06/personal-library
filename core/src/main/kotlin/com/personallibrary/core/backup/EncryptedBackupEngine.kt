@@ -56,7 +56,9 @@ data class BackupItemRecord(
     val extractedText: String? = null,
     val aiDescription: String?,
     val aiConcepts: String?,
-    val aiStatus: String
+    val aiStatus: String,
+    val isReminderDateOnly: Boolean = false,
+    val reminderLocalDate: String? = null
 )
 
 @Serializable
@@ -81,7 +83,9 @@ data class BackupReminderRecord(
     val title: String,
     val dueMillis: Long,
     val isDone: Boolean,
-    val isExact: Boolean = true
+    val isExact: Boolean = true,
+    val isDateOnly: Boolean = false,
+    val localDate: String? = null
 )
 
 @Serializable
@@ -153,6 +157,16 @@ class EncryptedBackupEngine {
             throw IllegalArgumentException("Passphrase must be at least $MIN_PASSPHRASE_LENGTH characters long")
         }
 
+        validateManifest(manifest)
+        val resolvedAssets = manifest.assets.associate { asset ->
+            val file = assetResolver(asset.hash)
+                ?: throw IOException("Expected original is missing: ${asset.hash}")
+            if (!file.isFile || file.length() != asset.sizeBytes) {
+                throw IOException("Expected original is missing or its size changed: ${asset.hash}")
+            }
+            asset.hash to file
+        }
+
         val random = SecureRandom()
         val salt = ByteArray(SALT_LENGTH).also { random.nextBytes(it) }
         val iv = ByteArray(GCM_IV_LENGTH).also { random.nextBytes(it) }
@@ -193,11 +207,12 @@ class EncryptedBackupEngine {
 
             // Manifest
             val manifestBytes = json.encodeToString(manifest).toByteArray(Charsets.UTF_8)
+            require(manifestBytes.size <= MAX_MANIFEST_BYTES) { "Manifest exceeds backup limit" }
             archiveDos.writeInt(manifestBytes.size)
             archiveDos.write(manifestBytes)
 
             // Distinct assets
-            val distinctAssets = manifest.assets.distinctBy { it.hash.lowercase() }
+            val distinctAssets = manifest.assets
             archiveDos.writeInt(distinctAssets.size)
 
             val buffer = ByteArray(32768)
@@ -205,17 +220,22 @@ class EncryptedBackupEngine {
                 val hashBytes = hexToBytes(asset.hash)
                 archiveDos.write(hashBytes) // exact 32 bytes
 
-                val file = assetResolver(asset.hash)
-                val fileLen = if (file != null && file.exists()) file.length() else 0L
+                val file = resolvedAssets.getValue(asset.hash)
+                val fileLen = asset.sizeBytes
                 archiveDos.writeLong(fileLen)
-
-                if (fileLen > 0L && file != null) {
-                    FileInputStream(file).use { fis ->
-                        var read: Int
-                        while (fis.read(buffer).also { read = it } != -1) {
-                            archiveDos.write(buffer, 0, read)
-                        }
+                val digest = MessageDigest.getInstance("SHA-256")
+                var copied = 0L
+                FileInputStream(file).use { fis ->
+                    var read: Int
+                    while (fis.read(buffer).also { read = it } != -1) {
+                        copied += read
+                        if (copied > fileLen) throw IOException("Original changed during export: ${asset.hash}")
+                        digest.update(buffer, 0, read)
+                        archiveDos.write(buffer, 0, read)
                     }
+                }
+                if (copied != fileLen || bytesToHex(digest.digest()) != asset.hash) {
+                    throw IOException("Original checksum or size changed: ${asset.hash}")
                 }
             }
 
@@ -307,12 +327,15 @@ class EncryptedBackupEngine {
             val manifestBytes = ByteArray(manifestLen)
             archiveDis.readFully(manifestBytes)
             val manifest = json.decodeFromString<BackupManifest>(String(manifestBytes, Charsets.UTF_8))
+            validateManifest(manifest)
+            val expectedAssets = manifest.assets.associateBy { it.hash }
 
             // Read assets
             val assetCount = archiveDis.readInt()
             if (assetCount < 0 || assetCount > MAX_ASSET_COUNT) {
                 throw SecurityException("Asset count $assetCount exceeds limit")
             }
+            if (assetCount != expectedAssets.size) throw SecurityException("Manifest and framed asset counts differ")
 
             val seenHashes = mutableSetOf<String>()
             val buffer = ByteArray(32768)
@@ -328,6 +351,8 @@ class EncryptedBackupEngine {
                 }
 
                 val declaredLen = archiveDis.readLong()
+                val expected = expectedAssets[hexHash] ?: throw SecurityException("Undeclared asset $hexHash")
+                if (declaredLen != expected.sizeBytes) throw SecurityException("Manifest size mismatch for $hexHash")
                 if (declaredLen < 0 || declaredLen > MAX_SINGLE_ENTRY_BYTES) {
                     throw SecurityException("Asset $hexHash declared length $declaredLen exceeds limit")
                 }
@@ -353,13 +378,12 @@ class EncryptedBackupEngine {
                     }
                 }
 
-                if (declaredLen > 0) {
-                    val computedHash = bytesToHex(md.digest()).lowercase()
-                    if (computedHash != hexHash) {
-                        throw SecurityException("Checksum mismatch for $hexHash: computed $computedHash")
-                    }
+                val computedHash = bytesToHex(md.digest()).lowercase()
+                if (computedHash != hexHash) {
+                    throw SecurityException("Checksum mismatch for $hexHash: computed $computedHash")
                 }
             }
+            if (seenHashes != expectedAssets.keys) throw SecurityException("Manifest asset set mismatch")
 
             // Verify end marker
             val endMarker = ByteArray(ARCHIVE_END_MARKER.size)
@@ -389,6 +413,27 @@ class EncryptedBackupEngine {
             if (e is SecurityException) throw e
             if (e is IOException && e.cause is SecurityException) throw (e.cause as SecurityException)
             throw SecurityException("Invalid password or backup file has been tampered with: ${e.message}")
+        }
+    }
+
+    private fun validateManifest(manifest: BackupManifest) {
+        require(manifest.version == 1) { "Unsupported manifest version" }
+        require(manifest.assets.size <= MAX_ASSET_COUNT) { "Too many manifest assets" }
+        require(manifest.assets.map { it.hash }.toSet().size == manifest.assets.size) { "Duplicate manifest asset" }
+        var total = 0L
+        for (asset in manifest.assets) {
+            require(asset.hash.matches(Regex("[0-9a-f]{64}"))) { "Invalid SHA-256 asset hash" }
+            require(asset.sizeBytes in 0..MAX_SINGLE_ENTRY_BYTES) { "Invalid manifest asset size" }
+            total += asset.sizeBytes
+            require(total <= MAX_TOTAL_UNCOMPRESSED_BYTES) { "Manifest assets exceed size limit" }
+        }
+        val assets = manifest.assets.associateBy { it.hash }
+        require(manifest.items.map { it.id }.toSet().size == manifest.items.size) { "Duplicate item ID" }
+        require(manifest.collections.map { it.id }.toSet().size == manifest.collections.size) { "Duplicate collection ID" }
+        for (item in manifest.items) {
+            item.contentHash?.let { hash ->
+                require(assets[hash]?.sizeBytes == item.fileSizeBytes) { "Item references missing or inconsistent original" }
+            }
         }
     }
 

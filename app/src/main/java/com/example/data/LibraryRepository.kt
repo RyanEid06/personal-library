@@ -27,9 +27,9 @@ import java.io.File
 import java.io.InputStream
 import java.util.UUID
 
-class LibraryRepository(private val context: Context) {
+class LibraryRepository(private val context: Context, database: LibraryRoomDatabase? = null) {
 
-    private val db = Room.databaseBuilder(
+    private val db = database ?: Room.databaseBuilder(
         context.applicationContext,
         LibraryRoomDatabase::class.java,
         "personal_library_room.db"
