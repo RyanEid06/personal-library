@@ -86,9 +86,7 @@ object SearchQuery {
             .replace(":", " ")
             .replace("-", " ")
             .replace("+", " ")
-            .replace("OR", " ")
-            .replace("AND", " ")
-            .replace("NOT", " ")
+            .replace(Regex("\\b(OR|AND|NOT)\\b", RegexOption.IGNORE_CASE), " ")
 
         val tokens = sanitized.split("\\s+".toRegex()).filter { it.isNotBlank() }
         if (tokens.isEmpty()) return null

@@ -147,6 +147,8 @@ fun CollectionsScreen(
                     )
                 }
 
+                var excluded by remember(col.id) { mutableStateOf(viewModel.isCollectionExcludedFromAi(col.id)) }
+                Column {
                 CollectionCard(
                     title = col.name,
                     itemCount = count,
@@ -156,6 +158,11 @@ fun CollectionsScreen(
                     onLongClick = { showDeleteConfirm = true },
                     modifier = Modifier.testTag("col_card_${col.id}")
                 )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Exclude from AI", style = MaterialTheme.typography.labelSmall, modifier = Modifier.weight(1f))
+                    Switch(checked = excluded, onCheckedChange = { excluded = it; viewModel.setCollectionAiExcluded(col.id, it) })
+                }
+                }
             }
         }
     }

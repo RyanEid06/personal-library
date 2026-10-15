@@ -42,6 +42,8 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.util.*
 
+private data class ReminderChoice(val time: Long, val dateOnly: Boolean, val localDate: String?)
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ItemDetailsDialog(
@@ -52,7 +54,9 @@ fun ItemDetailsDialog(
     onFavoriteToggle: () -> Unit,
     onDelete: () -> Unit,
     onCollectionsChange: (List<String>) -> Unit,
-    onSetReminder: (Long?) -> Unit
+    onSetReminder: (Long?, Boolean, Boolean, String?) -> Unit,
+    aiExcluded: Boolean = false,
+    onAiExcludedChange: (Boolean) -> Unit = {}
 ) {
     val context = LocalContext.current
     val item = itemWithCols.item
@@ -64,34 +68,60 @@ fun ItemDetailsDialog(
     }
 
     var showReminderPicker by remember { mutableStateOf(false) }
+    var excludeAi by remember(item.id) { mutableStateOf(aiExcluded) }
+    var pendingReminder by remember { mutableStateOf<ReminderChoice?>(null) }
+    val scheduler = remember(context) { com.example.reminder.ReminderScheduler(context) }
+
+    fun commitReminder(choice: ReminderChoice) {
+        val exact = !choice.dateOnly && scheduler.canUseExactAlarms()
+        onSetReminder(choice.time, exact, choice.dateOnly, choice.localDate)
+        val message = when {
+            !scheduler.notificationsEnabled() -> "Reminder saved. Notifications are blocked; enable them in Android Settings."
+            choice.dateOnly -> "Date-only reminder saved for ${choice.localDate}. Notifications use 09:00 local time."
+            !exact -> "Reminder saved. Exact alarm access is unavailable; delivery will be approximate."
+            else -> "Reminder saved for ${dateFormatter.format(Date(choice.time))}"
+        }
+        Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+    }
+    val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
+        pendingReminder?.let { commitReminder(it) }
+        pendingReminder = null
+    }
+    fun chooseReminder(choice: ReminderChoice) {
+        if (choice.time <= System.currentTimeMillis()) {
+            Toast.makeText(context, "Choose a future reminder date or time", Toast.LENGTH_LONG).show()
+            return
+        }
+        if (android.os.Build.VERSION.SDK_INT >= 33 && androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            pendingReminder = choice
+            notificationPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+        } else commitReminder(choice)
+    }
+    fun pickDate(dateOnly: Boolean) {
+        showReminderPicker = false
+        val calendar = Calendar.getInstance()
+        DatePickerDialog(context, { _, year, month, day ->
+            val localDate = java.time.LocalDate.of(year, month + 1, day).toString()
+            if (dateOnly) {
+                chooseReminder(ReminderChoice(com.personallibrary.core.ReminderDate.atNine(localDate), true, localDate))
+            } else {
+                calendar.set(year, month, day)
+                TimePickerDialog(context, { _, hour, minute ->
+                    calendar.set(Calendar.HOUR_OF_DAY, hour)
+                    calendar.set(Calendar.MINUTE, minute)
+                    calendar.set(Calendar.SECOND, 0)
+                    calendar.set(Calendar.MILLISECOND, 0)
+                    chooseReminder(ReminderChoice(calendar.timeInMillis, false, null))
+                }, calendar.get(Calendar.HOUR_OF_DAY), calendar.get(Calendar.MINUTE), false).show()
+            }
+        }, calendar.get(Calendar.YEAR), calendar.get(Calendar.MONTH), calendar.get(Calendar.DAY_OF_MONTH)).show()
+    }
 
     if (showReminderPicker) {
-        val calendar = Calendar.getInstance()
-        DatePickerDialog(
-            context,
-            { _, year, month, dayOfMonth ->
-                calendar.set(Calendar.YEAR, year)
-                calendar.set(Calendar.MONTH, month)
-                calendar.set(Calendar.DAY_OF_MONTH, dayOfMonth)
-                TimePickerDialog(
-                    context,
-                    { _, hourOfDay, minute ->
-                        calendar.set(Calendar.HOUR_OF_DAY, hourOfDay)
-                        calendar.set(Calendar.MINUTE, minute)
-                        calendar.set(Calendar.SECOND, 0)
-                        onSetReminder(calendar.timeInMillis)
-                        showReminderPicker = false
-                        Toast.makeText(context, "Reminder set for ${dateFormatter.format(calendar.time)}", Toast.LENGTH_SHORT).show()
-                    },
-                    calendar.get(Calendar.HOUR_OF_DAY),
-                    calendar.get(Calendar.MINUTE),
-                    false
-                ).show()
-            },
-            calendar.get(Calendar.YEAR),
-            calendar.get(Calendar.MONTH),
-            calendar.get(Calendar.DAY_OF_MONTH)
-        ).show()
+        AlertDialog(onDismissRequest = { showReminderPicker = false }, title = { Text("Reminder type") },
+            text = { Text("Date-only reminders retain the calendar date and notify at 09:00 local time. Delivery may be approximate.") },
+            confirmButton = { TextButton(onClick = { pickDate(true) }) { Text("Date only") } },
+            dismissButton = { TextButton(onClick = { pickDate(false) }) { Text("Date + time") } })
     }
 
     ModalBottomSheet(
@@ -275,6 +305,13 @@ fun ItemDetailsDialog(
             Spacer(modifier = Modifier.height(16.dp))
 
             // Primary Action Buttons: Open, Remind
+            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Exclude from AI", style = MaterialTheme.typography.bodyMedium)
+                    Text("Local search and OCR remain available", style = MaterialTheme.typography.bodySmall)
+                }
+                Switch(checked = excludeAi, onCheckedChange = { excludeAi = it; onAiExcludedChange(it) })
+            }
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
@@ -316,15 +353,18 @@ fun ItemDetailsDialog(
                         Icon(Icons.Filled.Notifications, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = "Due: ${dateFormatter.format(Date(item.reminderTime))}",
+                            text = if (item.isReminderDateOnly) "Due: ${item.reminderLocalDate} (date only)" else "Due: ${dateFormatter.format(Date(item.reminderTime))}${if (!item.isReminderExact) " (approximate)" else ""}",
                             fontSize = 12.sp,
                             fontWeight = FontWeight.SemiBold,
                             color = MaterialTheme.colorScheme.onPrimaryContainer
                         )
                     }
-                    TextButton(onClick = { onSetReminder(null) }) {
+                    TextButton(onClick = { onSetReminder(null, false, false, null) }) {
                         Text("Clear", fontSize = 12.sp, color = MaterialTheme.colorScheme.error)
                     }
+                }
+                if (!scheduler.notificationsEnabled()) {
+                    Text("Notifications are blocked in Android Settings", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
                 }
             }
 

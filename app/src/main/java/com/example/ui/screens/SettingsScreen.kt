@@ -438,7 +438,7 @@ fun SettingsScreen(
                             checked = pauseAi,
                             onCheckedChange = {
                                 pauseAi = it
-                                prefs.edit().putBoolean("ai_paused", it).apply()
+                                viewModel.setAiPaused(it)
                             }
                         )
                     }

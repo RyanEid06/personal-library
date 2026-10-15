@@ -327,7 +327,7 @@ interface LibraryDao {
     @Query("SELECT * FROM analysis_jobs WHERE itemId = :itemId LIMIT 1")
     suspend fun getAnalysisJob(itemId: String): AnalysisJobEntity?
 
-    @Query("SELECT * FROM analysis_jobs WHERE status IN ('QUEUED', 'NEEDS_RETRY') ORDER BY updatedAt ASC")
+    @Query("SELECT * FROM analysis_jobs WHERE status IN ('QUEUED', 'NEEDS_RETRY', 'PROCESSING') ORDER BY updatedAt ASC")
     suspend fun getPendingAnalysisJobs(): List<AnalysisJobEntity>
 
     @Query("DELETE FROM analysis_jobs WHERE itemId = :itemId")

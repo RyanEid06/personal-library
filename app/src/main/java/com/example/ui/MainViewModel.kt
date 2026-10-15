@@ -597,9 +597,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val current = (prefs.getStringSet("excluded_items", emptySet()) ?: emptySet()).toMutableSet()
         if (excluded) current.add(itemId) else current.remove(itemId)
         prefs.edit().putStringSet("excluded_items", current).apply()
+        if (excluded) androidx.work.WorkManager.getInstance(getApplication()).cancelUniqueWork("ai_job_$itemId")
         viewModelScope.launch(Dispatchers.IO) {
             if (excluded) {
                 repository.dao.updateAiStatus(itemId, "EXCLUDED")
+                repository.dao.insertOrUpdateAnalysisJob(com.example.data.AnalysisJobEntity(itemId = itemId, status = "EXCLUDED"))
             } else {
                 repository.dao.updateAiStatus(itemId, "QUEUED")
                 val item = repository.dao.getItemById(itemId)
@@ -619,6 +621,29 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val current = (prefs.getStringSet("excluded_collections", emptySet()) ?: emptySet()).toMutableSet()
         if (excluded) current.add(colId) else current.remove(colId)
         prefs.edit().putStringSet("excluded_collections", current).apply()
+        viewModelScope.launch(Dispatchers.IO) {
+            for (item in repository.dao.getAllActiveItems()) {
+                if (colId in repository.dao.getCollectionIdsForItem(item.id)) {
+                    if (excluded) {
+                        androidx.work.WorkManager.getInstance(getApplication()).cancelUniqueWork("ai_job_${item.id}")
+                        repository.dao.updateAiStatus(item.id, "EXCLUDED")
+                        repository.dao.insertOrUpdateAnalysisJob(com.example.data.AnalysisJobEntity(itemId = item.id, status = "EXCLUDED"))
+                    } else localIndexer.indexItem(item)
+                }
+            }
+        }
+    }
+
+    fun setAiPaused(paused: Boolean) {
+        prefs.edit().putBoolean("ai_paused", paused).apply()
+        if (paused) {
+            androidx.work.WorkManager.getInstance(getApplication()).cancelAllWorkByTag("ai_enrichment")
+            viewModelScope.launch(Dispatchers.IO) {
+                for (job in repository.dao.getPendingAnalysisJobs()) {
+                    repository.dao.insertOrUpdateAnalysisJob(job.copy(status = "QUEUED"))
+                }
+            }
+        } else resumePendingAiJobs()
     }
 
     fun resumePendingAiJobs() {

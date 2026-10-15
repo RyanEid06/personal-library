@@ -340,9 +340,11 @@ fun MainAppScaffold(
             onCollectionsChange = { newColIds ->
                 viewModel.setItemCollections(currentItem.item.id, newColIds)
             },
-            onSetReminder = { timeMillis ->
-                viewModel.setReminder(currentItem.item.id, timeMillis)
-            }
+            onSetReminder = { timeMillis, isExact, isDateOnly, localDate ->
+                viewModel.setReminder(currentItem.item.id, timeMillis, isExact, isDateOnly, localDate)
+            },
+            aiExcluded = viewModel.isItemExcludedFromAi(currentItem.item.id),
+            onAiExcludedChange = { viewModel.setItemAiExcluded(currentItem.item.id, it) }
         )
     }
 

@@ -120,6 +120,10 @@ class ManagedAssetStoreTest {
 
 class SearchQueryTest {
 
+    @Test fun operatorSubstringsDoNotDestroyWordsOrUnicode() {
+        assertEquals("\"CANDOR\"* \"ORGANIC\"* \"café\"* \"كيمياء\"*", SearchQuery.fts("CANDOR ORGANIC café كيمياء"))
+    }
+
     @Test
     fun testSearchQueryFtsEscaping() {
         val query = "chemistry: \"grades\" -midterm OR 94/100"

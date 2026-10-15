@@ -62,6 +62,7 @@ class ReminderReceiver : BroadcastReceiver() {
         }
 
         // Standard alarm trigger: build and show reminder notification
+        if (!ReminderScheduler(context).notificationsEnabled()) return
         val itemTitle = intent.getStringExtra(EXTRA_ITEM_TITLE) ?: "Library Reminder"
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {

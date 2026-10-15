@@ -22,8 +22,15 @@ class BootReceiver : BroadcastReceiver() {
                     val pendingReminders = repository.dao.getPendingReminders()
                     val now = System.currentTimeMillis()
                     for (rem in pendingReminders) {
-                        if (rem.dueMillis > now) {
-                            scheduler.schedule(rem.itemId, rem.title, rem.dueMillis, rem.isExact)
+                        val due = if (rem.isDateOnly && rem.localDate != null) {
+                            try { com.personallibrary.core.ReminderDate.atNine(rem.localDate) } catch (_: java.time.DateTimeException) { continue }
+                        } else rem.dueMillis
+                        if (due != rem.dueMillis) {
+                            repository.dao.insertReminder(rem.copy(dueMillis = due))
+                            repository.dao.setReminder(rem.itemId, due, rem.isExact, rem.isDateOnly, rem.localDate)
+                        }
+                        if (due > now) {
+                            scheduler.schedule(rem.itemId, rem.title, due, rem.isExact)
                         }
                     }
                 } finally {

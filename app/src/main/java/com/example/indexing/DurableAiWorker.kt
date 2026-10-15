@@ -28,33 +28,28 @@ class DurableAiWorker(
         val itemId = inputData.getString("item_id") ?: return@withContext Result.failure()
 
         val prefs = applicationContext.getSharedPreferences("personal_library_settings", Context.MODE_PRIVATE)
-        if (prefs.getBoolean("ai_paused", false)) {
-            return@withContext Result.retry()
-        }
-
         val repository = LibraryRepository(applicationContext)
         val initialItem = repository.dao.getItemById(itemId) ?: return@withContext Result.success()
+        val expectedVersion = initialItem.localIndexVersion
 
         // If item is trashed, do not process
         if (initialItem.isTrash) return@withContext Result.success()
 
-        // Check exclusions (item or collections)
-        val colIds = repository.dao.getCollectionIdsForItem(itemId)
-        val excludedCols = prefs.getStringSet("excluded_collections", emptySet()) ?: emptySet()
-        val excludedItems = prefs.getStringSet("excluded_items", emptySet()) ?: emptySet()
-        if (excludedItems.contains(itemId) || colIds.any { excludedCols.contains(it) }) {
-            repository.dao.updateAiStatus(itemId, "EXCLUDED")
-            repository.dao.insertOrUpdateAnalysisJob(
-                AnalysisJobEntity(
-                    itemId = itemId,
-                    status = "EXCLUDED",
-                    updatedAt = System.currentTimeMillis()
-                )
-            )
-            return@withContext Result.success()
+        suspend fun mayUpload(): Boolean {
+            val colIds = repository.dao.getCollectionIdsForItem(itemId)
+            val excludedCols = prefs.getStringSet("excluded_collections", emptySet()).orEmpty()
+            val excludedItems = prefs.getStringSet("excluded_items", emptySet()).orEmpty()
+            val excluded = itemId in excludedItems || colIds.any { it in excludedCols }
+            val paused = prefs.getBoolean("ai_paused", false)
+            if (excluded || paused) {
+                val status = if (excluded) "EXCLUDED" else "QUEUED"
+                repository.dao.updateAiStatus(itemId, status)
+                repository.dao.insertOrUpdateAnalysisJob(AnalysisJobEntity(itemId = itemId, expectedContentVersion = expectedVersion, indexVersion = expectedVersion, status = status))
+                return false
+            }
+            return true
         }
-
-        val expectedVersion = initialItem.localIndexVersion
+        if (!mayUpload()) return@withContext Result.success()
         val aiGateway = AiGateway(applicationContext)
 
         try {
@@ -114,6 +109,7 @@ class DurableAiWorker(
                 }
             }
 
+            if (!mayUpload()) return@withContext Result.success()
             val analysis = aiGateway.analyze(
                 itemId = initialItem.id,
                 kind = initialItem.kind,
@@ -129,6 +125,7 @@ class DurableAiWorker(
                 // Item was edited, deleted, or trashed while AI was in-flight: discard stale results
                 return@withContext Result.success()
             }
+            if (!mayUpload()) return@withContext Result.success()
 
             // Targeted update of AI-only fields
             repository.dao.updateAiMetadata(
@@ -145,6 +142,7 @@ class DurableAiWorker(
                 val allEmbeddedDocs = mutableListOf<SearchDocumentEntity>()
                 val batchSize = 32
                 for (chunkBatch in chunks.chunked(batchSize)) {
+                    if (!mayUpload()) return@withContext Result.success()
                     val textsToEmbed = chunkBatch.map { it.text }
                     val vectors = aiGateway.embed(textsToEmbed)
                     for (i in chunkBatch.indices) {
@@ -188,6 +186,7 @@ class DurableAiWorker(
 
             Result.success()
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             val isPermanent = e is AiGatewayException.UnconfiguredException ||
                 e is AiGatewayException.UnpairedException
 

@@ -251,7 +251,10 @@ class LibraryRepository(private val context: Context, database: LibraryRoomDatab
         isDateOnly: Boolean = false,
         localDate: String? = null
     ) = withContext(Dispatchers.IO) {
-        dao.setReminder(id, timeMillis, isExact, isDateOnly, localDate)
+        val effectiveExact = isExact && ReminderScheduler(context).canUseExactAlarms()
+        val resolvedTime = if (timeMillis != null && isDateOnly) com.personallibrary.core.ReminderDate.atNine(requireNotNull(localDate)) else timeMillis
+        db.withTransaction {
+        dao.setReminder(id, resolvedTime, effectiveExact, isDateOnly, localDate)
         if (timeMillis != null) {
             val item = dao.getItemById(id)
             dao.insertReminder(
@@ -259,15 +262,16 @@ class LibraryRepository(private val context: Context, database: LibraryRoomDatab
                     id = "rem_$id",
                     itemId = id,
                     title = item?.title ?: "Reminder",
-                    dueMillis = timeMillis,
+                    dueMillis = resolvedTime!!,
                     isDone = false,
-                    isExact = isExact,
+                    isExact = effectiveExact,
                     isDateOnly = isDateOnly,
                     localDate = localDate
                 )
             )
         } else {
             dao.deleteReminderByItemId(id)
+        }
         }
     }
 
@@ -279,10 +283,8 @@ class LibraryRepository(private val context: Context, database: LibraryRoomDatab
     suspend fun snoozeReminder(id: String, newDueMillis: Long) = withContext(Dispatchers.IO) {
         val rem = dao.getReminderByItemId(id)
         val isExact = rem?.isExact ?: true
-        val isDateOnly = rem?.isDateOnly ?: false
-        val localDate = rem?.localDate
-        dao.setReminder(id, newDueMillis, isExact, isDateOnly, localDate)
-        dao.snoozeReminder("rem_$id", newDueMillis)
+        dao.setReminder(id, newDueMillis, isExact, false, null)
+        if (rem != null) dao.insertReminder(rem.copy(dueMillis = newDueMillis, isDateOnly = false, localDate = null, isDone = false))
     }
 
     suspend fun createCollection(name: String, iconName: String, colorHex: String): CollectionEntity = withContext(Dispatchers.IO) {

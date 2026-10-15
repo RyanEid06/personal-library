@@ -15,6 +15,17 @@ class LocalIndexer(
     private val context: Context,
     private val repository: LibraryRepository
 ) {
+    private suspend fun queueAnalysis(item: ItemEntity, version: Int) {
+        val prefs = context.getSharedPreferences("personal_library_settings", Context.MODE_PRIVATE)
+        val excludedItems = prefs.getStringSet("excluded_items", emptySet()).orEmpty()
+        val excludedCollections = prefs.getStringSet("excluded_collections", emptySet()).orEmpty()
+        val excluded = item.id in excludedItems || repository.dao.getCollectionIdsForItem(item.id).any { it in excludedCollections }
+        val status = if (excluded) "EXCLUDED" else "QUEUED"
+        repository.dao.updateAiStatus(item.id, status)
+        repository.dao.insertOrUpdateAnalysisJob(AnalysisJobEntity(itemId = item.id, expectedContentVersion = version, indexVersion = version, status = status))
+        if (!excluded) enqueueDurableAiJob(item.id)
+    }
+
     suspend fun indexItem(item: ItemEntity): ExtractedText = withContext(Dispatchers.IO) {
         val hash = item.contentHash
         if (hash == null) {
@@ -23,18 +34,7 @@ class LocalIndexer(
             val newVersion = item.localIndexVersion + 1
             repository.dao.updateExtractedText(item.id, null, coverage, newVersion)
 
-            // Persist durable job record before enqueuing
-            repository.dao.insertOrUpdateAnalysisJob(
-                AnalysisJobEntity(
-                    itemId = item.id,
-                    expectedContentVersion = newVersion,
-                    indexVersion = newVersion,
-                    status = "QUEUED",
-                    updatedAt = System.currentTimeMillis()
-                )
-            )
-
-            enqueueDurableAiJob(item.id)
+            queueAnalysis(item, newVersion)
             return@withContext ExtractedText(item.content, coverage)
         }
 
@@ -85,19 +85,7 @@ class LocalIndexer(
             newVersion
         )
 
-        // Record durable analysis job
-        repository.dao.insertOrUpdateAnalysisJob(
-            AnalysisJobEntity(
-                itemId = item.id,
-                expectedContentVersion = newVersion,
-                indexVersion = newVersion,
-                status = "QUEUED",
-                updatedAt = System.currentTimeMillis()
-            )
-        )
-
-        // Enqueue background AI job with WorkManager
-        enqueueDurableAiJob(item.id)
+        queueAnalysis(item, newVersion)
 
         extracted
     }
