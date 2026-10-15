@@ -1,6 +1,7 @@
 package com.example.ui
 
 import android.app.Application
+import android.content.Context
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -23,13 +24,22 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.InputStream
+import java.text.SimpleDateFormat
 import java.time.Instant
 import java.util.Calendar
+import java.util.Date
+import java.util.Locale
 
 data class SemanticSearchResult(
     val item: ItemWithCollections,
     val explanation: String,
-    val score: Float
+    val score: Float,
+    val matchingSnippet: String? = null
+)
+
+data class GroupedLibrarySection(
+    val title: String,
+    val items: List<ItemWithCollections>
 )
 
 @OptIn(FlowPreview::class)
@@ -40,6 +50,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val reminderScheduler = ReminderScheduler(application)
     val aiGateway = AiGateway(application)
     val localIndexer = LocalIndexer(application, repository)
+
+    private val prefs = application.getSharedPreferences("personal_library_settings", Context.MODE_PRIVATE)
 
     private val _items = MutableStateFlow<List<ItemWithCollections>>(emptyList())
     val items: StateFlow<List<ItemWithCollections>> = _items.asStateFlow()
@@ -65,6 +77,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _dateFilter = MutableStateFlow(DateFilter.ALL_TIME)
     val dateFilter: StateFlow<DateFilter> = _dateFilter.asStateFlow()
 
+    private val _dateBasis = MutableStateFlow(DateBasis.SAVED_DATE)
+    val dateBasis: StateFlow<DateBasis> = _dateBasis.asStateFlow()
+
+    private val _dateGrouping = MutableStateFlow(DateGrouping.NONE)
+    val dateGrouping: StateFlow<DateGrouping> = _dateGrouping.asStateFlow()
+
+    private val initialLayout = if (prefs.getString("library_layout", "LIST") == "GRID") LibraryLayout.GRID else LibraryLayout.LIST
+    private val _libraryLayout = MutableStateFlow(initialLayout)
+    val libraryLayout: StateFlow<LibraryLayout> = _libraryLayout.asStateFlow()
+
     private val _customDateStart = MutableStateFlow<Long?>(null)
     val customDateStart: StateFlow<Long?> = _customDateStart.asStateFlow()
 
@@ -74,9 +96,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _searchQuery = MutableStateFlow("")
     val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
 
-    // Real FTS search result state
+    // Filtered search results
     private val _localSearchResults = MutableStateFlow<List<ItemWithCollections>>(emptyList())
     val localSearchResults: StateFlow<List<ItemWithCollections>> = _localSearchResults.asStateFlow()
+
+    // Grouped library sections
+    private val _groupedSections = MutableStateFlow<List<GroupedLibrarySection>>(emptyList())
+    val groupedSections: StateFlow<List<GroupedLibrarySection>> = _groupedSections.asStateFlow()
 
     private val _aiSearchResults = MutableStateFlow<List<SemanticSearchResult>>(emptyList())
     val aiSearchResults: StateFlow<List<SemanticSearchResult>> = _aiSearchResults.asStateFlow()
@@ -139,6 +165,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun setLibraryLayout(layout: LibraryLayout) {
+        _libraryLayout.value = layout
+        prefs.edit().putString("library_layout", layout.name).apply()
+    }
+
+    fun setDateBasis(basis: DateBasis) {
+        _dateBasis.value = basis
+        refreshFilteredResults()
+    }
+
+    fun setDateGrouping(grouping: DateGrouping) {
+        _dateGrouping.value = grouping
+        refreshFilteredResults()
+    }
+
     private fun refreshFilteredResults() {
         viewModelScope.launch(Dispatchers.IO) {
             val query = _searchQuery.value.trim()
@@ -151,9 +192,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val kind = _selectedKind.value
             val colId = _selectedCollectionId.value
             val dateF = _dateFilter.value
+            val basis = _dateBasis.value
             val sort = _sortOrder.value
             val customStart = _customDateStart.value
             val customEnd = _customDateEnd.value
+            val grouping = _dateGrouping.value
 
             val calendar = Calendar.getInstance()
             val currentYear = calendar.get(Calendar.YEAR)
@@ -177,37 +220,114 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 .filter { itemWithCols ->
                     val item = itemWithCols.item
+                    val timestamp = if (basis == DateBasis.SOURCE_DATE) item.sourceDate else item.createdAt
+
                     when (dateF) {
                         DateFilter.ALL_TIME -> true
                         DateFilter.THIS_MONTH -> {
-                            calendar.timeInMillis = item.createdAt
-                            calendar.get(Calendar.YEAR) == currentYear && calendar.get(Calendar.MONTH) == currentMonth
+                            if (timestamp == null) false
+                            else {
+                                calendar.timeInMillis = timestamp
+                                calendar.get(Calendar.YEAR) == currentYear && calendar.get(Calendar.MONTH) == currentMonth
+                            }
                         }
                         DateFilter.THIS_YEAR -> {
-                            calendar.timeInMillis = item.createdAt
-                            calendar.get(Calendar.YEAR) == currentYear
+                            if (timestamp == null) false
+                            else {
+                                calendar.timeInMillis = timestamp
+                                calendar.get(Calendar.YEAR) == currentYear
+                            }
                         }
                         DateFilter.CUSTOM -> {
-                            val time = item.createdAt
-                            (customStart == null || time >= customStart) &&
-                                (customEnd == null || time <= customEnd)
+                            if (timestamp == null) false
+                            else {
+                                (customStart == null || timestamp >= customStart) &&
+                                    (customEnd == null || timestamp <= customEnd)
+                            }
                         }
                     }
                 }
                 .sortedWith { a, b ->
                     val itemA = a.item
                     val itemB = b.item
+                    val timeA = if (basis == DateBasis.SOURCE_DATE) (itemA.sourceDate ?: itemA.createdAt) else itemA.createdAt
+                    val timeB = if (basis == DateBasis.SOURCE_DATE) (itemB.sourceDate ?: itemB.createdAt) else itemB.createdAt
                     when (sort) {
                         SortOrder.SAVED_NEWEST -> itemB.createdAt.compareTo(itemA.createdAt)
                         SortOrder.SAVED_OLDEST -> itemA.createdAt.compareTo(itemB.createdAt)
-                        SortOrder.SOURCE_NEWEST -> (itemB.sourceDate ?: itemB.createdAt).compareTo(itemA.sourceDate ?: itemA.createdAt)
+                        SortOrder.SOURCE_NEWEST -> timeB.compareTo(timeA)
                         SortOrder.TITLE_AZ -> itemA.title.compareTo(itemB.title, true)
                     }
                 }
                 .toList()
 
             _localSearchResults.value = filtered
+
+            // Build grouped sections
+            if (grouping == DateGrouping.NONE) {
+                _groupedSections.value = listOf(GroupedLibrarySection("", filtered))
+            } else {
+                val dayFormat = SimpleDateFormat("EEEE, MMMM d, yyyy", Locale.getDefault())
+                val monthFormat = SimpleDateFormat("MMMM yyyy", Locale.getDefault())
+                val yearFormat = SimpleDateFormat("yyyy", Locale.getDefault())
+
+                val groups = mutableMapOf<String, MutableList<ItemWithCollections>>()
+                for (itemWithCols in filtered) {
+                    val ts = if (basis == DateBasis.SOURCE_DATE) itemWithCols.item.sourceDate else itemWithCols.item.createdAt
+                    val key = if (ts == null) {
+                        "No ${basis.label}"
+                    } else {
+                        val d = Date(ts)
+                        when (grouping) {
+                            DateGrouping.DAY -> dayFormat.format(d)
+                            DateGrouping.MONTH -> monthFormat.format(d)
+                            DateGrouping.YEAR -> yearFormat.format(d)
+                            DateGrouping.NONE -> ""
+                        }
+                    }
+                    groups.getOrOrPut(key) { mutableListOf() }.add(itemWithCols)
+                }
+                _groupedSections.value = groups.map { GroupedLibrarySection(it.key, it.value) }
+            }
         }
+    }
+
+    private fun <K, V> MutableMap<K, V>.getOrOrPut(key: K, defaultValue: () -> V): V {
+        return this[key] ?: run {
+            val value = defaultValue()
+            this[key] = value
+            value
+        }
+    }
+
+    fun buildMatchSnippet(item: ItemEntity, query: String): String? {
+        if (query.isBlank()) return null
+        val tokens = query.lowercase().split("\\s+".toRegex()).filter { it.length > 1 }
+        if (tokens.isEmpty()) return null
+
+        val candidates = listOfNotNull(
+            item.title,
+            item.content.takeIf { it.isNotBlank() },
+            item.originalFileName,
+            item.extractedText?.takeIf { it.isNotBlank() },
+            item.aiDescription?.takeIf { it.isNotBlank() },
+            item.aiConcepts?.takeIf { it.isNotBlank() }
+        )
+
+        for (text in candidates) {
+            val lower = text.lowercase()
+            for (token in tokens) {
+                val idx = lower.indexOf(token)
+                if (idx != -1) {
+                    val start = maxOf(0, idx - 40)
+                    val end = minOf(text.length, idx + token.length + 60)
+                    val prefix = if (start > 0) "…" else ""
+                    val suffix = if (end < text.length) "…" else ""
+                    return prefix + text.substring(start, end).replace("\n", " ").trim() + suffix
+                }
+            }
+        }
+        return null
     }
 
     private suspend fun updateStorageStats() = withContext(Dispatchers.IO) {
@@ -312,7 +432,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
             val results = mutableListOf<SemanticSearchResult>()
 
-            // Apply search plan filters
             val startMillis = plan.dateRange.startIso?.let {
                 try { Instant.parse(it).toEpochMilli() } catch (_: Exception) { null }
             }
@@ -323,20 +442,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             for (itemWithCols in active) {
                 val item = itemWithCols.item
 
-                // 1. Target kind filter
                 if (plan.targetKinds.isNotEmpty() && !plan.targetKinds.contains(item.kind)) {
                     continue
                 }
 
-                // 2. Date range filter
                 if (startMillis != null && item.createdAt < startMillis) continue
                 if (endMillis != null && item.createdAt > endMillis) continue
 
                 var bestSim = 0f
-                var bestChunkIndex = 0
+                var bestChunkText = ""
                 val explanations = mutableListOf<String>()
 
-                // 3. Multi-chunk local cosine similarity scan
                 val itemDocs = docsByItem[item.id] ?: emptyList()
                 for (doc in itemDocs) {
                     if (queryVec != null && doc.embedding != null && doc.embeddingDimension == 768 && doc.modelVersion == "gemini-embedding-2") {
@@ -345,7 +461,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             val sim = SemanticVectorMath.cosineSimilarity(queryVec, chunkVec)
                             if (sim > bestSim) {
                                 bestSim = sim
-                                bestChunkIndex = doc.chunkIndex
+                                bestChunkText = doc.textContent
                             }
                         } catch (_: Exception) {}
                     }
@@ -354,10 +470,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 var score = 0f
                 if (bestSim > 0.30f) {
                     score += bestSim * 10f
-                    explanations.add("Semantic similarity %.2f (chunk #%d)".format(bestSim, bestChunkIndex))
+                    explanations.add("Semantic similarity %.2f".format(bestSim))
                 }
 
-                // 4. Concepts matching
                 val itemTextLower = "${item.title} ${item.content} ${item.extractedText ?: ""} ${item.aiDescription ?: ""} ${item.aiConcepts ?: ""}".lowercase()
                 for (c in plan.concepts) {
                     if (itemTextLower.contains(c.lowercase())) {
@@ -367,11 +482,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
 
                 if (score > 0f) {
+                    val snippet = buildMatchSnippet(item, query) ?: bestChunkText.take(120)
                     results.add(
                         SemanticSearchResult(
                             item = itemWithCols,
                             explanation = explanations.distinct().take(3).joinToString(" • "),
-                            score = score
+                            score = score,
+                            matchingSnippet = snippet.ifBlank { null }
                         )
                     )
                 }
@@ -414,12 +531,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun setReminder(id: String, timeMillis: Long?, isExact: Boolean = true) {
+    fun setReminder(
+        id: String,
+        timeMillis: Long?,
+        isExact: Boolean = true,
+        isDateOnly: Boolean = false,
+        localDate: String? = null
+    ) {
         viewModelScope.launch(Dispatchers.IO) {
             val item = repository.dao.getItemById(id) ?: return@launch
-            repository.setReminder(id, timeMillis, isExact)
+            repository.setReminder(id, timeMillis, isExact, isDateOnly, localDate)
             if (timeMillis != null) {
-                reminderScheduler.schedule(id, item.title, timeMillis)
+                reminderScheduler.schedule(id, item.title, timeMillis, isExact)
             } else {
                 reminderScheduler.cancel(id)
             }
@@ -465,6 +588,45 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun isItemExcludedFromAi(itemId: String): Boolean {
+        val set = prefs.getStringSet("excluded_items", emptySet()) ?: emptySet()
+        return set.contains(itemId)
+    }
+
+    fun setItemAiExcluded(itemId: String, excluded: Boolean) {
+        val current = (prefs.getStringSet("excluded_items", emptySet()) ?: emptySet()).toMutableSet()
+        if (excluded) current.add(itemId) else current.remove(itemId)
+        prefs.edit().putStringSet("excluded_items", current).apply()
+        viewModelScope.launch(Dispatchers.IO) {
+            if (excluded) {
+                repository.dao.updateAiStatus(itemId, "EXCLUDED")
+            } else {
+                repository.dao.updateAiStatus(itemId, "QUEUED")
+                val item = repository.dao.getItemById(itemId)
+                if (item != null) {
+                    localIndexer.indexItem(item)
+                }
+            }
+        }
+    }
+
+    fun isCollectionExcludedFromAi(colId: String): Boolean {
+        val set = prefs.getStringSet("excluded_collections", emptySet()) ?: emptySet()
+        return set.contains(colId)
+    }
+
+    fun setCollectionAiExcluded(colId: String, excluded: Boolean) {
+        val current = (prefs.getStringSet("excluded_collections", emptySet()) ?: emptySet()).toMutableSet()
+        if (excluded) current.add(colId) else current.remove(colId)
+        prefs.edit().putStringSet("excluded_collections", current).apply()
+    }
+
+    fun resumePendingAiJobs() {
+        viewModelScope.launch(Dispatchers.IO) {
+            localIndexer.enqueuePendingAnalysisJobs()
+        }
+    }
+
     fun toggleSelection(itemId: String) {
         val current = _selectedItemIds.value.toMutableSet()
         if (current.contains(itemId)) current.remove(itemId) else current.add(itemId)
@@ -483,16 +645,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             for (id in ids) {
                 repository.moveToTrash(id)
                 reminderScheduler.cancel(id)
-            }
-            clearSelection()
-        }
-    }
-
-    fun batchAssignCollection(collectionId: String) {
-        val ids = _selectedItemIds.value
-        viewModelScope.launch(Dispatchers.IO) {
-            for (id in ids) {
-                repository.dao.insertItemCollectionCrossRef(com.example.data.ItemCollectionCrossRef(id, collectionId))
             }
             clearSelection()
         }
@@ -523,8 +675,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         return repository.inspectBackup(uri, passphrase)
     }
 
-    suspend fun commitRestore(preview: RestorePreview): Int {
-        return repository.commitRestore(preview)
+    suspend fun commitRestore(preview: RestorePreview, keepBoth: Boolean = false): Int {
+        return repository.commitRestore(preview, keepBoth)
     }
 
     suspend fun importWhatsAppMigration(
@@ -533,7 +685,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         attachments: Map<String, InputStream> = emptyMap()
     ): Pair<Int, Int> {
         val res = repository.importWhatsAppMigration(chatText, dateOrder, attachments)
-        // Enqueue local indexing for imported items
         val active = repository.dao.getAllActiveItems()
         for (item in active.filter { it.aiStatus == "PENDING" }) {
             localIndexer.indexItem(item)

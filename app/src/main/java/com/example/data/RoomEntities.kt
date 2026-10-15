@@ -17,6 +17,8 @@ data class ItemEntity(
     val reminderTime: Long? = null,
     val isReminderDone: Boolean = false,
     val isReminderExact: Boolean = true,
+    val isReminderDateOnly: Boolean = false,
+    val reminderLocalDate: String? = null,
     val contentHash: String? = null,
     val originalFileName: String? = null,
     val mimeType: String? = null,
@@ -66,7 +68,9 @@ data class ReminderEntity(
     val title: String,
     val dueMillis: Long,
     val isDone: Boolean = false,
-    val isExact: Boolean = true
+    val isExact: Boolean = true,
+    val isDateOnly: Boolean = false,
+    val localDate: String? = null
 )
 
 @Entity(
@@ -159,8 +163,8 @@ interface LibraryDao {
     @Query("DELETE FROM items WHERE id = :id")
     suspend fun deleteItemPermanently(id: String)
 
-    @Query("UPDATE items SET reminderTime = :reminderTime, isReminderDone = 0, isReminderExact = :isExact WHERE id = :id")
-    suspend fun setReminder(id: String, reminderTime: Long?, isExact: Boolean = true)
+    @Query("UPDATE items SET reminderTime = :reminderTime, isReminderDone = 0, isReminderExact = :isExact, isReminderDateOnly = :isDateOnly, reminderLocalDate = :localDate WHERE id = :id")
+    suspend fun setReminder(id: String, reminderTime: Long?, isExact: Boolean = true, isDateOnly: Boolean = false, localDate: String? = null)
 
     @Query("UPDATE items SET isReminderDone = :isDone WHERE id = :id")
     suspend fun setReminderDone(id: String, isDone: Boolean)
@@ -431,6 +435,15 @@ val MIGRATION_2_3 = object : androidx.room.migration.Migration(2, 3) {
     }
 }
 
+val MIGRATION_3_4 = object : androidx.room.migration.Migration(3, 4) {
+    override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE items ADD COLUMN isReminderDateOnly INTEGER NOT NULL DEFAULT 0")
+        db.execSQL("ALTER TABLE items ADD COLUMN reminderLocalDate TEXT DEFAULT NULL")
+        db.execSQL("ALTER TABLE reminders ADD COLUMN isDateOnly INTEGER NOT NULL DEFAULT 0")
+        db.execSQL("ALTER TABLE reminders ADD COLUMN localDate TEXT DEFAULT NULL")
+    }
+}
+
 @Database(
     entities = [
         ItemEntity::class,
@@ -442,7 +455,7 @@ val MIGRATION_2_3 = object : androidx.room.migration.Migration(2, 3) {
         SearchDocumentEntity::class,
         AnalysisJobEntity::class
     ],
-    version = 3,
+    version = 4,
     exportSchema = false
 )
 abstract class LibraryRoomDatabase : RoomDatabase() {

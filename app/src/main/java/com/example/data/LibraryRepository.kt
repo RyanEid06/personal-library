@@ -4,6 +4,8 @@ import android.content.Context
 import android.net.Uri
 import androidx.room.Room
 import androidx.room.withTransaction
+import com.example.indexing.LocalIndexer
+import com.example.reminder.ReminderScheduler
 import com.personallibrary.core.backup.BackupAssetRecord
 import com.personallibrary.core.backup.BackupCollectionRecord
 import com.personallibrary.core.backup.BackupItemRecord
@@ -31,7 +33,10 @@ class LibraryRepository(private val context: Context) {
         context.applicationContext,
         LibraryRoomDatabase::class.java,
         "personal_library_room.db"
-    ).addMigrations(MIGRATION_1_2, MIGRATION_2_3).addCallback(DATABASE_CALLBACK).build()
+    )
+        .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+        .addCallback(DATABASE_CALLBACK)
+        .build()
 
     val dao = db.libraryDao()
 
@@ -84,7 +89,7 @@ class LibraryRepository(private val context: Context) {
         val item = ItemEntity(
             id = itemId,
             title = storedAsset.originalName,
-            content = "", // Owner-authored content is empty for raw file captures, never fake placeholder!
+            content = "",
             kind = storedAsset.kind.name,
             contentHash = storedAsset.hash,
             originalFileName = storedAsset.originalName,
@@ -210,8 +215,14 @@ class LibraryRepository(private val context: Context) {
         }
     }
 
-    suspend fun setReminder(id: String, timeMillis: Long?, isExact: Boolean = true) = withContext(Dispatchers.IO) {
-        dao.setReminder(id, timeMillis, isExact)
+    suspend fun setReminder(
+        id: String,
+        timeMillis: Long?,
+        isExact: Boolean = true,
+        isDateOnly: Boolean = false,
+        localDate: String? = null
+    ) = withContext(Dispatchers.IO) {
+        dao.setReminder(id, timeMillis, isExact, isDateOnly, localDate)
         if (timeMillis != null) {
             val item = dao.getItemById(id)
             dao.insertReminder(
@@ -221,7 +232,9 @@ class LibraryRepository(private val context: Context) {
                     title = item?.title ?: "Reminder",
                     dueMillis = timeMillis,
                     isDone = false,
-                    isExact = isExact
+                    isExact = isExact,
+                    isDateOnly = isDateOnly,
+                    localDate = localDate
                 )
             )
         } else {
@@ -235,7 +248,11 @@ class LibraryRepository(private val context: Context) {
     }
 
     suspend fun snoozeReminder(id: String, newDueMillis: Long) = withContext(Dispatchers.IO) {
-        dao.setReminder(id, newDueMillis)
+        val rem = dao.getReminderByItemId(id)
+        val isExact = rem?.isExact ?: true
+        val isDateOnly = rem?.isDateOnly ?: false
+        val localDate = rem?.localDate
+        dao.setReminder(id, newDueMillis, isExact, isDateOnly, localDate)
         dao.snoozeReminder("rem_$id", newDueMillis)
     }
 
@@ -362,7 +379,6 @@ class LibraryRepository(private val context: Context) {
                 }
             }
 
-            // Persist last successful backup timestamp ONLY upon success
             val prefs = context.getSharedPreferences("personal_library_settings", Context.MODE_PRIVATE)
             prefs.edit().putLong("last_successful_backup_time", System.currentTimeMillis()).apply()
 
@@ -397,12 +413,22 @@ class LibraryRepository(private val context: Context) {
         }
     }
 
-    suspend fun commitRestore(preview: RestorePreview): Int = withContext(Dispatchers.IO) {
+    /**
+     * Commits a staged restore preview atomically:
+     * - Respects keepBoth policy (Skip Existing vs Keep Both)
+     * - When Skip Existing: existing items, memberships, and reminders remain untouched.
+     * - When Keep Both: colliders get newly allocated IDs and are imported alongside existing items.
+     * - External alarm scheduling occurs strictly AFTER database transaction succeeds.
+     * - Re-indexes newly imported items.
+     */
+    suspend fun commitRestore(preview: RestorePreview, keepBoth: Boolean = false): Int = withContext(Dispatchers.IO) {
         val existingIds = dao.getAllItemsIncludingTrash().map { it.id }.toSet()
         var importedCount = 0
+        val itemsToReindex = mutableListOf<ItemEntity>()
+        val remindersToSchedule = mutableListOf<Pair<ReminderEntity, Long>>()
 
         try {
-            // 1. Stage and import asset blobs physically into content-addressed ManagedAssetStore
+            // 1. Physically import asset blobs into ManagedAssetStore
             for (asset in preview.manifest.assets) {
                 val stagedFile = File(preview.stagingDir, "assets/${asset.hash}")
                 if (stagedFile.exists()) {
@@ -412,66 +438,93 @@ class LibraryRepository(private val context: Context) {
                 }
             }
 
-            // 2. Perform metadata installation atomically inside Room transaction
+            // Remap colliding item IDs if keepBoth is true
+            val idRemap = mutableMapOf<String, String>()
+            for (item in preview.manifest.items) {
+                if (existingIds.contains(item.id)) {
+                    if (keepBoth) {
+                        val newId = UUID.randomUUID().toString()
+                        idRemap[item.id] = newId
+                    }
+                }
+            }
+
+            // 2. Perform database transaction atomically
             db.withTransaction {
+                // Collections: insert or reuse
                 for (col in preview.manifest.collections) {
                     dao.insertCollection(CollectionEntity(col.id, col.name, col.iconName, col.colorHex, col.createdAt))
                 }
 
                 for (item in preview.manifest.items) {
-                    if (!existingIds.contains(item.id)) {
-                        dao.insertItem(
-                            ItemEntity(
-                                id = item.id,
-                                title = item.title,
-                                content = item.content,
-                                kind = item.kind.name,
-                                isFavorite = item.isFavorite,
-                                isTrash = item.isTrash,
-                                trashTimestamp = item.trashTimestamp,
-                                createdAt = item.createdAt,
-                                sourceDate = item.sourceDate,
-                                reminderTime = item.reminderTime,
-                                isReminderDone = item.isReminderDone,
-                                isReminderExact = item.isReminderExact,
-                                contentHash = item.contentHash,
-                                originalFileName = item.originalFileName,
-                                mimeType = item.mimeType,
-                                fileSizeBytes = item.fileSizeBytes,
-                                extractedText = item.extractedText,
-                                aiDescription = item.aiDescription,
-                                aiConcepts = item.aiConcepts,
-                                aiStatus = item.aiStatus
-                            )
-                        )
-                        importedCount++
+                    val isCollision = existingIds.contains(item.id)
+                    if (isCollision && !keepBoth) {
+                        // Skip Existing: preserve live item, do NOT overwrite
+                        continue
                     }
+
+                    val finalId = idRemap[item.id] ?: item.id
+                    val entity = ItemEntity(
+                        id = finalId,
+                        title = item.title,
+                        content = item.content,
+                        kind = item.kind.name,
+                        isFavorite = item.isFavorite,
+                        isTrash = item.isTrash,
+                        trashTimestamp = item.trashTimestamp,
+                        createdAt = item.createdAt,
+                        sourceDate = item.sourceDate,
+                        reminderTime = item.reminderTime,
+                        isReminderDone = item.isReminderDone,
+                        isReminderExact = item.isReminderExact,
+                        contentHash = item.contentHash,
+                        originalFileName = item.originalFileName,
+                        mimeType = item.mimeType,
+                        fileSizeBytes = item.fileSizeBytes,
+                        extractedText = item.extractedText,
+                        aiDescription = item.aiDescription,
+                        aiConcepts = item.aiConcepts,
+                        aiStatus = "PENDING" // Re-index locally after restore
+                    )
+                    dao.insertItem(entity)
+                    itemsToReindex.add(entity)
+                    importedCount++
                 }
 
+                // Memberships
                 for (mem in preview.manifest.memberships) {
-                    dao.insertItemCollectionCrossRef(ItemCollectionCrossRef(mem.itemId, mem.collectionId))
+                    val finalItemId = idRemap[mem.itemId] ?: mem.itemId
+                    // Only insert membership if item was imported or already existed
+                    if (existingIds.contains(mem.itemId) && !keepBoth && !idRemap.containsKey(mem.itemId)) {
+                        // Under Skip Existing, existing memberships are left unchanged
+                        continue
+                    }
+                    dao.insertItemCollectionCrossRef(ItemCollectionCrossRef(finalItemId, mem.collectionId))
                 }
 
-                val reminderScheduler = com.example.reminder.ReminderScheduler(context)
+                // Reminders
                 for (rem in preview.manifest.reminders) {
+                    val finalItemId = idRemap[rem.itemId] ?: rem.itemId
+                    if (existingIds.contains(rem.itemId) && !keepBoth && !idRemap.containsKey(rem.itemId)) {
+                        continue
+                    }
                     if (!rem.isDone && rem.dueMillis > System.currentTimeMillis()) {
-                        dao.insertReminder(
-                            ReminderEntity(
-                                id = rem.id,
-                                itemId = rem.itemId,
-                                title = rem.title,
-                                dueMillis = rem.dueMillis,
-                                isDone = rem.isDone,
-                                isExact = rem.isExact
-                            )
+                        val remEntity = ReminderEntity(
+                            id = "rem_$finalItemId",
+                            itemId = finalItemId,
+                            title = rem.title,
+                            dueMillis = rem.dueMillis,
+                            isDone = rem.isDone,
+                            isExact = rem.isExact
                         )
-                        reminderScheduler.schedule(rem.itemId, rem.title, rem.dueMillis)
+                        dao.insertReminder(remEntity)
+                        remindersToSchedule.add(remEntity to rem.dueMillis)
                     }
                 }
 
-                // Compute accurate asset refCount based on living items in database
-                val allItems = dao.getAllItemsIncludingTrash()
-                val liveCounts = allItems.mapNotNull { it.contentHash }.groupingBy { it }.eachCount()
+                // Accurate asset refCounts derived from all live items in database
+                val allLiveItems = dao.getAllItemsIncludingTrash()
+                val liveCounts = allLiveItems.mapNotNull { it.contentHash }.groupingBy { it }.eachCount()
 
                 for (asset in preview.manifest.assets) {
                     val count = liveCounts[asset.hash] ?: 0
@@ -496,10 +549,24 @@ class LibraryRepository(private val context: Context) {
                 }
             }
 
-            // 3. Rebuild FTS triggers and index for restored content
+            // 3. External Alarm Scheduling strictly AFTER Room transaction succeeds
+            val scheduler = ReminderScheduler(context)
+            for ((rem, dueMillis) in remindersToSchedule) {
+                scheduler.schedule(rem.itemId, rem.title, dueMillis, rem.isExact)
+            }
+
+            // 4. Rebuild FTS
             try {
                 dao.rebuildFts()
             } catch (_: Exception) {}
+
+            // 5. Re-index newly imported items through LocalIndexer
+            val indexer = LocalIndexer(context, this@LibraryRepository)
+            for (it in itemsToReindex) {
+                try {
+                    indexer.indexItem(it)
+                } catch (_: Exception) {}
+            }
 
         } finally {
             preview.stagingDir.deleteRecursively()
@@ -508,7 +575,7 @@ class LibraryRepository(private val context: Context) {
         importedCount
     }
 
-    // WhatsApp Migration with strict parsing and attachment support
+    // WhatsApp Migration with strict parsing, attachment matching, and idempotent refCounts
     suspend fun importWhatsAppMigration(
         chatText: String,
         dateOrder: DateOrder? = null,
@@ -534,6 +601,8 @@ class LibraryRepository(private val context: Context) {
             var fileSizeBytes = 0L
             var mimeType: String? = null
 
+            val existingItem = dao.getItemById(msg.importKey)
+
             // If an attachment is referenced and stream bytes provided, import via ManagedAssetStore
             if (msg.attachmentFileName != null && attachments.containsKey(msg.attachmentFileName)) {
                 val stream = attachments[msg.attachmentFileName]
@@ -543,28 +612,50 @@ class LibraryRepository(private val context: Context) {
                     fileSizeBytes = stored.sizeBytes
                     mimeType = stored.mimeType
 
-                    val existingAsset = dao.getAssetByHash(stored.hash)
-                    if (existingAsset != null) {
-                        dao.updateAsset(existingAsset.copy(refCount = existingAsset.refCount + 1))
-                    } else {
-                        dao.insertAsset(
-                            AssetEntity(
-                                hash = stored.hash,
-                                relativePath = stored.relativePath,
-                                sizeBytes = stored.sizeBytes,
-                                originalName = stored.originalName,
-                                mimeType = stored.mimeType,
-                                kind = stored.kind.name,
-                                refCount = 1
+                    // Idempotent reference counting
+                    if (existingItem?.contentHash != stored.hash) {
+                        // If item previously pointed to a different hash, decrement old hash
+                        if (existingItem?.contentHash != null) {
+                            val oldAsset = dao.getAssetByHash(existingItem.contentHash)
+                            if (oldAsset != null) {
+                                val newRefCount = oldAsset.refCount - 1
+                                if (newRefCount <= 0) {
+                                    dao.deleteAsset(existingItem.contentHash)
+                                    assetStore.deleteBlob(existingItem.contentHash)
+                                } else {
+                                    dao.updateAsset(oldAsset.copy(refCount = newRefCount))
+                                }
+                            }
+                        }
+
+                        val existingAsset = dao.getAssetByHash(stored.hash)
+                        if (existingAsset != null) {
+                            dao.updateAsset(existingAsset.copy(refCount = existingAsset.refCount + 1))
+                        } else {
+                            dao.insertAsset(
+                                AssetEntity(
+                                    hash = stored.hash,
+                                    relativePath = stored.relativePath,
+                                    sizeBytes = stored.sizeBytes,
+                                    originalName = stored.originalName,
+                                    mimeType = stored.mimeType,
+                                    kind = stored.kind.name,
+                                    refCount = 1
+                                )
                             )
-                        )
+                        }
                     }
                 }
+            } else if (existingItem != null) {
+                // Keep existing hash if no new stream was provided
+                contentHash = existingItem.contentHash
+                fileSizeBytes = existingItem.fileSizeBytes
+                mimeType = existingItem.mimeType
             }
 
             val title = when {
                 msg.extractedUrl != null -> {
-                    val host = Uri.parse(msg.extractedUrl).host ?: "Link"
+                    val host = try { Uri.parse(msg.extractedUrl).host ?: "Link" } catch (_: Exception) { "Link" }
                     "Link: $host"
                 }
                 msg.attachmentFileName != null -> msg.attachmentFileName
@@ -572,14 +663,14 @@ class LibraryRepository(private val context: Context) {
             }
 
             val item = ItemEntity(
-                id = msg.importKey, // Deterministic! Repeated imports replace cleanly
+                id = msg.importKey, // Deterministic key
                 title = title ?: "WhatsApp Message",
                 content = msg.rawText,
                 kind = msg.kind.name,
                 sourceDate = msg.parsedTimestamp,
-                createdAt = System.currentTimeMillis(),
+                createdAt = existingItem?.createdAt ?: System.currentTimeMillis(),
                 contentHash = contentHash,
-                originalFileName = msg.attachmentFileName,
+                originalFileName = msg.attachmentFileName ?: existingItem?.originalFileName,
                 mimeType = mimeType,
                 fileSizeBytes = fileSizeBytes,
                 aiStatus = "PENDING"
@@ -590,13 +681,5 @@ class LibraryRepository(private val context: Context) {
         }
 
         Pair(imported, parseResult.ambiguousDateCount)
-    }
-
-    private fun formatSize(bytes: Long): String {
-        return when {
-            bytes >= 1024 * 1024 -> String.format("%.1f MB", bytes / (1024.0 * 1024.0))
-            bytes >= 1024 -> String.format("%.1f KB", bytes / 1024.0)
-            else -> "$bytes B"
-        }
     }
 }

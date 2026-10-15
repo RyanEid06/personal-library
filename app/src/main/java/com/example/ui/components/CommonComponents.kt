@@ -112,6 +112,7 @@ fun ItemCard(
     isSelectMode: Boolean = false,
     isSelected: Boolean = false,
     onSelectToggle: () -> Unit = {},
+    matchingSnippet: String? = null,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -179,7 +180,6 @@ fun ItemCard(
                         }
                     }
 
-                    // Many-to-many collections pills
                     if (itemWithCols.collections.isNotEmpty()) {
                         Spacer(modifier = Modifier.width(6.dp))
                         LazyRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -247,8 +247,31 @@ fun ItemCard(
                 overflow = TextOverflow.Ellipsis
             )
 
-            // Content snippet
-            if (item.content.isNotBlank() && item.kind != "PHOTO" && item.kind != "STICKER") {
+            // Matching text snippet
+            if (!matchingSnippet.isNullOrBlank()) {
+                Spacer(modifier = Modifier.height(4.dp))
+                Surface(
+                    color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.4f),
+                    shape = RoundedCornerShape(6.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Filled.Search, contentDescription = null, modifier = Modifier.size(12.dp), tint = MaterialTheme.colorScheme.primary)
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = matchingSnippet,
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.Medium,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                            fontSize = 12.sp
+                        )
+                    }
+                }
+            } else if (item.content.isNotBlank() && item.kind != "PHOTO" && item.kind != "STICKER") {
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
                     text = item.content,
@@ -331,6 +354,105 @@ fun ItemCard(
     }
 }
 
+@Composable
+fun ItemGridCard(
+    itemWithCols: ItemWithCollections,
+    fileResolver: (hash: String) -> File?,
+    onClick: () -> Unit,
+    onFavoriteToggle: () -> Unit,
+    onDelete: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val item = itemWithCols.item
+    val kindColor = getKindColor(item.kind)
+    val blobFile = remember(item.contentHash) {
+        item.contentHash?.let { fileResolver(it) }
+    }
+
+    Card(
+        modifier = modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .testTag("item_grid_card_${item.id}"),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+        shape = RoundedCornerShape(12.dp)
+    ) {
+        Column(modifier = Modifier.padding(10.dp)) {
+            // Visual header or icon
+            if (blobFile != null && (item.kind == "PHOTO" || item.kind == "STICKER")) {
+                AsyncImage(
+                    model = blobFile,
+                    contentDescription = item.title,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(110.dp)
+                        .clip(RoundedCornerShape(8.dp)),
+                    contentScale = ContentScale.Crop
+                )
+            } else {
+                Surface(
+                    color = kindColor.copy(alpha = 0.15f),
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier.fillMaxWidth().height(70.dp)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(getKindIcon(item.kind), contentDescription = null, tint = kindColor, modifier = Modifier.size(28.dp))
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(6.dp))
+
+            Text(
+                text = item.title,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Bold,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
+
+            if (item.content.isNotBlank() && item.kind != "PHOTO" && item.kind != "STICKER") {
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = item.content,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+
+            Spacer(modifier = Modifier.height(6.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    text = item.kind,
+                    color = kindColor,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold
+                )
+
+                IconButton(
+                    onClick = onFavoriteToggle,
+                    modifier = Modifier.size(24.dp)
+                ) {
+                    Icon(
+                        imageVector = if (item.isFavorite) Icons.Filled.Star else Icons.Outlined.Star,
+                        contentDescription = "Favorite",
+                        tint = if (item.isFavorite) Color(0xFFF59E0B) else MaterialTheme.colorScheme.outline,
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+            }
+        }
+    }
+}
+
 fun shareItemEntity(context: Context, item: ItemEntity, file: File?) {
     try {
         if (file != null && file.exists()) {
@@ -352,7 +474,6 @@ fun shareItemEntity(context: Context, item: ItemEntity, file: File?) {
             return
         }
 
-        // Text or Link share
         val shareText = if (item.kind == "LINK") item.content else "${item.title}\n\n${item.content}"
         val intent = Intent(Intent.ACTION_SEND).apply {
             type = "text/plain"

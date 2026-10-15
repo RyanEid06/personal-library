@@ -20,6 +20,7 @@ sealed class AiGatewayException(message: String, cause: Throwable? = null) : IOE
     class UnconfiguredException(msg: String = "Gemini API is not configured on backend") : AiGatewayException(msg)
     class ProviderException(msg: String = "Gemini provider error") : AiGatewayException(msg)
     class ValidationException(msg: String = "Response validation failed") : AiGatewayException(msg)
+    class RateLimitedException(msg: String = "Request rate limit exceeded") : AiGatewayException(msg)
 }
 
 @Serializable
@@ -31,7 +32,8 @@ data class EnrollRequest(
     val appVersion: String,
     val challengeNonce: String,
     val enrollmentSecret: String? = null,
-    val publicKey: String? = null
+    val publicKey: String? = null,
+    val signature: String? = null
 )
 
 @Serializable
@@ -40,14 +42,16 @@ data class EnrollResponse(
     val deviceId: String,
     val sessionToken: String,
     val deviceCredential: String,
-    val expiresInSeconds: Long = 86400
+    val expiresInSeconds: Long = 1800
 )
 
 @Serializable
 data class SessionRenewRequest(
     val deviceId: String,
     val deviceCredential: String,
-    val challengeNonce: String
+    val challengeNonce: String,
+    val publicKey: String? = null,
+    val signature: String? = null
 )
 
 @Serializable
@@ -55,7 +59,13 @@ data class SessionRenewResponse(
     val status: String,
     val deviceId: String,
     val sessionToken: String,
-    val expiresInSeconds: Long = 86400
+    val expiresInSeconds: Long = 1800
+)
+
+@Serializable
+data class MediaPart(
+    val mimeType: String,
+    val dataBase64: String
 )
 
 @Serializable
@@ -63,7 +73,8 @@ data class AnalyzeRequest(
     val itemId: String,
     val kind: String,
     val textContent: String? = null,
-    val originalFileName: String? = null
+    val originalFileName: String? = null,
+    val mediaParts: List<MediaPart> = emptyList()
 )
 
 @Serializable
@@ -149,13 +160,16 @@ class AiGateway(private val context: Context) {
         val nonce = getChallenge()
         val deviceId = identityManager.deviceId
         val pubKey = identityManager.getPublicKeyBase64()
+        val appVersion = "1.0.0"
+        val signature = identityManager.signEnrollment(nonce, appVersion, pubKey)
 
         val req = EnrollRequest(
             deviceId = deviceId,
-            appVersion = "1.0.0",
+            appVersion = appVersion,
             challengeNonce = nonce,
             enrollmentSecret = enrollmentSecret,
-            publicKey = pubKey
+            publicKey = pubKey,
+            signature = signature
         )
         val payload = json.encodeToString(EnrollRequest.serializer(), req)
         val request = Request.Builder()
@@ -166,7 +180,7 @@ class AiGateway(private val context: Context) {
         try {
             okHttpClient.newCall(request).execute().use { response ->
                 if (response.code == 401) {
-                    throw AiGatewayException.AuthenticationException("Invalid enrollment secret")
+                    throw AiGatewayException.AuthenticationException("Invalid enrollment secret or signature")
                 }
                 if (!response.isSuccessful) {
                     throw AiGatewayException.BackendUnavailableException("Enrollment failed: HTTP ${response.code}")
@@ -183,19 +197,20 @@ class AiGateway(private val context: Context) {
         }
     }
 
-    suspend fun ensureSessionToken(): String = withContext(Dispatchers.IO) {
-        if (identityManager.isSessionValid) {
-            return@withContext identityManager.sessionToken!!
-        }
-
-        val cred = identityManager.deviceCredential
-        if (cred == null) {
-            throw AiGatewayException.UnpairedException()
-        }
-
+    suspend fun renewSession(): String = withContext(Dispatchers.IO) {
+        val cred = identityManager.deviceCredential ?: throw AiGatewayException.UnpairedException()
         val nonce = getChallenge()
         val deviceId = identityManager.deviceId
-        val req = SessionRenewRequest(deviceId, cred, nonce)
+        val pubKey = identityManager.getPublicKeyBase64()
+        val signature = identityManager.signSessionRenew(nonce, cred)
+
+        val req = SessionRenewRequest(
+            deviceId = deviceId,
+            deviceCredential = cred,
+            challengeNonce = nonce,
+            publicKey = pubKey,
+            signature = signature
+        )
         val payload = json.encodeToString(SessionRenewRequest.serializer(), req)
         val request = Request.Builder()
             .url("$backendBaseUrl/v1/auth/session")
@@ -206,7 +221,7 @@ class AiGateway(private val context: Context) {
             okHttpClient.newCall(request).execute().use { response ->
                 if (response.code == 401) {
                     identityManager.clearPairing()
-                    throw AiGatewayException.AuthenticationException("Session renewal rejected: credential invalid or revoked")
+                    throw AiGatewayException.AuthenticationException("Session renewal rejected: credential invalid or revoked. Please re-pair device.")
                 }
                 if (!response.isSuccessful) {
                     throw AiGatewayException.BackendUnavailableException("Session renewal failed: HTTP ${response.code}")
@@ -223,16 +238,49 @@ class AiGateway(private val context: Context) {
         }
     }
 
+    suspend fun ensureSessionToken(): String = withContext(Dispatchers.IO) {
+        if (identityManager.isSessionValid) {
+            return@withContext identityManager.sessionToken!!
+        }
+        renewSession()
+    }
+
+    /**
+     * Common authenticated-request helper:
+     * 1. obtain cached valid session
+     * 2. make request
+     * 3. if response is 401:
+     *    - clear session token only
+     *    - perform signed session renewal
+     *    - retry original request exactly once
+     * 4. if renewal fails 401: clear pairing and throw AuthenticationException
+     */
+    private suspend fun <T> executeWithAuth(action: suspend (token: String) -> T): T {
+        var token = ensureSessionToken()
+        return try {
+            action(token)
+        } catch (e: AiGatewayException.AuthenticationException) {
+            identityManager.clearSession()
+            token = renewSession()
+            try {
+                action(token)
+            } catch (retryEx: AiGatewayException.AuthenticationException) {
+                identityManager.clearPairing()
+                throw AiGatewayException.AuthenticationException("Authentication failed after renewal. Re-pair required.")
+            }
+        }
+    }
+
     suspend fun analyze(
         itemId: String,
         kind: String,
         textContent: String?,
-        originalFileName: String?
-    ): AnalyzeResponse = withContext(Dispatchers.IO) {
-        val token = ensureSessionToken()
+        originalFileName: String?,
+        mediaParts: List<MediaPart> = emptyList()
+    ): AnalyzeResponse = executeWithAuth { token ->
         val payload = json.encodeToString(
             AnalyzeRequest.serializer(),
-            AnalyzeRequest(itemId, kind, textContent, originalFileName)
+            AnalyzeRequest(itemId, kind, textContent, originalFileName, mediaParts)
         )
         val request = Request.Builder()
             .url("$backendBaseUrl/v1/ai/analyze")
@@ -246,10 +294,10 @@ class AiGateway(private val context: Context) {
                 when (response.code) {
                     200 -> {
                         val body = response.body?.string() ?: throw AiGatewayException.ValidationException("Empty analyze body")
-                        val res = json.decodeFromString<AnalyzeResponse>(body)
-                        res
+                        json.decodeFromString<AnalyzeResponse>(body)
                     }
                     401 -> throw AiGatewayException.AuthenticationException("Unauthorized AI analyze request")
+                    429 -> throw AiGatewayException.RateLimitedException("Rate limit reached on AI analysis")
                     503 -> throw AiGatewayException.UnconfiguredException("Gemini API not configured on backend")
                     else -> throw AiGatewayException.ProviderException("AI analyze failed with HTTP ${response.code}")
                 }
@@ -263,62 +311,58 @@ class AiGateway(private val context: Context) {
 
     suspend fun embed(texts: List<String>): List<FloatArray> = withContext(Dispatchers.IO) {
         if (texts.isEmpty()) return@withContext emptyList()
-        val token = ensureSessionToken()
-        val payload = json.encodeToString(EmbedRequest.serializer(), EmbedRequest(texts))
-        val request = Request.Builder()
-            .url("$backendBaseUrl/v1/ai/embed")
-            .addHeader("X-Device-Id", identityManager.deviceId)
-            .addHeader("Authorization", "Bearer $token")
-            .post(payload.toRequestBody("application/json".toMediaType()))
-            .build()
+        executeWithAuth { token ->
+            val payload = json.encodeToString(EmbedRequest.serializer(), EmbedRequest(texts))
+            val request = Request.Builder()
+                .url("$backendBaseUrl/v1/ai/embed")
+                .addHeader("X-Device-Id", identityManager.deviceId)
+                .addHeader("Authorization", "Bearer $token")
+                .post(payload.toRequestBody("application/json".toMediaType()))
+                .build()
 
-        try {
-            okHttpClient.newCall(request).execute().use { response ->
-                when (response.code) {
-                    200 -> {
-                        val body = response.body?.string() ?: throw AiGatewayException.ValidationException("Empty embed body")
-                        val res = json.decodeFromString<EmbedResponse>(body)
+            try {
+                okHttpClient.newCall(request).execute().use { response ->
+                    when (response.code) {
+                        200 -> {
+                            val body = response.body?.string() ?: throw AiGatewayException.ValidationException("Empty embed body")
+                            val res = json.decodeFromString<EmbedResponse>(body)
 
-                        if (res.dimension != 768) {
-                            throw AiGatewayException.ValidationException("Expected 768 dimensions but received ${res.dimension}")
-                        }
-                        if (res.embeddings.size != texts.size) {
-                            throw AiGatewayException.ValidationException("Embedding count mismatch: expected ${texts.size}, got ${res.embeddings.size}")
-                        }
-
-                        res.embeddings.map { vecList ->
-                            if (vecList.size != 768) {
-                                throw AiGatewayException.ValidationException("Vector length ${vecList.size} != 768")
+                            if (res.dimension != 768) {
+                                throw AiGatewayException.ValidationException("Expected 768 dimensions but received ${res.dimension}")
                             }
-                            for (v in vecList) {
-                                if (v.isNaN() || v.isInfinite()) {
-                                    throw AiGatewayException.ValidationException("Non-finite float value in vector")
+                            if (res.embeddings.size != texts.size) {
+                                throw AiGatewayException.ValidationException("Embedding count mismatch: expected ${texts.size}, got ${res.embeddings.size}")
+                            }
+
+                            res.embeddings.map { vecList ->
+                                if (vecList.size != 768) {
+                                    throw AiGatewayException.ValidationException("Vector length ${vecList.size} != 768")
                                 }
+                                for (v in vecList) {
+                                    if (v.isNaN() || v.isInfinite()) {
+                                        throw AiGatewayException.ValidationException("Non-finite float value in vector")
+                                    }
+                                }
+                                vecList.toFloatArray()
                             }
-                            vecList.toFloatArray()
                         }
+                        401 -> throw AiGatewayException.AuthenticationException("Unauthorized embed request")
+                        429 -> throw AiGatewayException.RateLimitedException("Rate limit reached on embeddings")
+                        503 -> throw AiGatewayException.UnconfiguredException("Gemini API not configured on backend")
+                        else -> throw AiGatewayException.ProviderException("Embed request failed with HTTP ${response.code}")
                     }
-                    401 -> throw AiGatewayException.AuthenticationException("Unauthorized embed request")
-                    503 -> throw AiGatewayException.UnconfiguredException("Gemini API not configured on backend")
-                    else -> throw AiGatewayException.ProviderException("Embed request failed with HTTP ${response.code}")
                 }
+            } catch (e: AiGatewayException) {
+                throw e
+            } catch (e: Exception) {
+                throw AiGatewayException.BackendUnavailableException("Embed connection error: ${e.message}")
             }
-        } catch (e: AiGatewayException) {
-            throw e
-        } catch (e: Exception) {
-            throw AiGatewayException.BackendUnavailableException("Embed connection error: ${e.message}")
         }
     }
 
     suspend fun getSearchPlan(query: String, knownCollections: List<String>): SearchPlanResponse = withContext(Dispatchers.IO) {
-        val token = try {
-            ensureSessionToken()
-        } catch (_: Exception) {
-            null
-        }
-
-        if (token != null) {
-            try {
+        val planFromNetwork = try {
+            executeWithAuth { token ->
                 val payload = json.encodeToString(
                     SearchPlanRequest.serializer(),
                     SearchPlanRequest(query, knownCollections, java.time.Instant.now().toString())
@@ -334,17 +378,18 @@ class AiGateway(private val context: Context) {
                     if (response.isSuccessful) {
                         val body = response.body?.string()
                         if (body != null) {
-                            return@withContext json.decodeFromString<SearchPlanResponse>(body)
-                        }
-                    }
+                            json.decodeFromString<SearchPlanResponse>(body)
+                        } else null
+                    } else if (response.code == 401) {
+                        throw AiGatewayException.AuthenticationException("Unauthorized search-plan")
+                    } else null
                 }
-            } catch (_: Exception) {
-                // If backend search-plan fails, fall through to deterministic local query parser
             }
+        } catch (_: Exception) {
+            null
         }
 
-        // Local query parsing without network requirement
-        parseLocalSearchPlan(query)
+        planFromNetwork ?: parseLocalSearchPlan(query)
     }
 
     private fun parseLocalSearchPlan(query: String): SearchPlanResponse {

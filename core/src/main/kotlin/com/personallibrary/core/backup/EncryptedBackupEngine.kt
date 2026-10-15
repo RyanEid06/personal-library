@@ -1,5 +1,12 @@
 package com.personallibrary.core.backup
 
+import com.google.crypto.tink.BinaryKeysetReader
+import com.google.crypto.tink.BinaryKeysetWriter
+import com.google.crypto.tink.CleartextKeysetHandle
+import com.google.crypto.tink.KeyTemplates
+import com.google.crypto.tink.KeysetHandle
+import com.google.crypto.tink.StreamingAead
+import com.google.crypto.tink.streamingaead.StreamingAeadConfig
 import com.personallibrary.core.model.ItemKind
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
@@ -10,12 +17,7 @@ import java.nio.file.Path
 import java.security.MessageDigest
 import java.security.SecureRandom
 import java.util.Arrays
-import java.util.zip.ZipEntry
-import java.util.zip.ZipInputStream
-import java.util.zip.ZipOutputStream
 import javax.crypto.Cipher
-import javax.crypto.CipherInputStream
-import javax.crypto.CipherOutputStream
 import javax.crypto.SecretKeyFactory
 import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.PBEKeySpec
@@ -101,22 +103,39 @@ data class RestorePreview(
     val existingDuplicateCount: Int
 )
 
+/**
+ * Hardened backup engine implementing the Codex format principles:
+ * - Minimum 12-character passphrase
+ * - PBKDF2-HMAC-SHA256 with 600,000 iterations for master key derivation
+ * - Tink AES-256-GCM key wrapping
+ * - Tink AES256_GCM_HKDF_1MB streaming AEAD
+ * - Fresh salt/keyset per export
+ * - Authenticated prefix PLIBBK01
+ * - Framed PLIBAR01 inner archive (fixed magic, exact 32-byte SHA-256 binary hashes, declared lengths, strict end marker)
+ * - Zero reliance on vulnerable ZIP path extraction
+ */
 class EncryptedBackupEngine {
 
     companion object {
-        private val MAGIC_HEADER = "PLIB".toByteArray(Charsets.US_ASCII)
-        private const val BACKUP_VERSION = 1
-        private const val SALT_LENGTH = 16
-        private const val GCM_IV_LENGTH = 12
-        private const val GCM_TAG_LENGTH_BITS = 128
-        private const val PBKDF2_ITERATIONS = 65536
-        private const val KEY_LENGTH_BITS = 256
+        init {
+            StreamingAeadConfig.register()
+        }
 
-        // Hard security limits for backup extraction
-        private const val MAX_MANIFEST_BYTES = 10 * 1024 * 1024L // 10 MB
-        private const val MAX_TOTAL_UNCOMPRESSED_BYTES = 500 * 1024 * 1024L // 500 MB
-        private const val MAX_SINGLE_ENTRY_BYTES = 200 * 1024 * 1024L // 200 MB
-        private const val MAX_ZIP_ENTRIES = 20_000
+        val ENVELOPE_MAGIC = "PLIBBK01".toByteArray(Charsets.US_ASCII)
+        val ARCHIVE_MAGIC = "PLIBAR01".toByteArray(Charsets.US_ASCII)
+        val ARCHIVE_END_MARKER = "PLIBAR01_END".toByteArray(Charsets.US_ASCII)
+
+        const val MIN_PASSPHRASE_LENGTH = 12
+        const val PBKDF2_ITERATIONS = 600_000
+        const val SALT_LENGTH = 16
+        const val GCM_IV_LENGTH = 12
+        const val GCM_TAG_LENGTH_BITS = 128
+        const val KEY_LENGTH_BITS = 256
+
+        const val MAX_MANIFEST_BYTES = 10 * 1024 * 1024L // 10 MB
+        const val MAX_SINGLE_ENTRY_BYTES = 500 * 1024 * 1024L // 500 MB
+        const val MAX_TOTAL_UNCOMPRESSED_BYTES = 2048 * 1024 * 1024L // 2 GB
+        const val MAX_ASSET_COUNT = 50_000
     }
 
     private val json = Json {
@@ -130,46 +149,81 @@ class EncryptedBackupEngine {
         manifest: BackupManifest,
         assetResolver: (hash: String) -> File?
     ) {
+        if (passphrase.size < MIN_PASSPHRASE_LENGTH) {
+            throw IllegalArgumentException("Passphrase must be at least $MIN_PASSPHRASE_LENGTH characters long")
+        }
+
         val random = SecureRandom()
         val salt = ByteArray(SALT_LENGTH).also { random.nextBytes(it) }
         val iv = ByteArray(GCM_IV_LENGTH).also { random.nextBytes(it) }
 
-        val key = deriveKey(passphrase, salt)
-        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-        cipher.init(Cipher.ENCRYPT_MODE, key, GCMParameterSpec(GCM_TAG_LENGTH_BITS, iv))
+        // 1. Generate fresh Tink StreamingAead Keyset (AES256_GCM_HKDF_1MB)
+        val keysetHandle = KeysetHandle.generateNew(KeyTemplates.get("AES256_GCM_HKDF_1MB"))
+        val rawKeysetBaos = ByteArrayOutputStream()
+        CleartextKeysetHandle.write(keysetHandle, BinaryKeysetWriter.withOutputStream(rawKeysetBaos))
+        val rawKeysetBytes = rawKeysetBaos.toByteArray()
 
-        // Write header: MAGIC + VERSION + SALT + IV
-        outputStream.write(MAGIC_HEADER)
+        // 2. Wrap keyset bytes with PBKDF2-derived master key using AES-256-GCM
+        val derivedKey = deriveKey(passphrase, salt)
+        val wrappingCipher = Cipher.getInstance("AES/GCM/NoPadding")
+        wrappingCipher.init(Cipher.ENCRYPT_MODE, derivedKey, GCMParameterSpec(GCM_TAG_LENGTH_BITS, iv))
+        wrappingCipher.updateAAD(ENVELOPE_MAGIC)
+        val wrappedKeyset = wrappingCipher.doFinal(rawKeysetBytes)
+
+        // 3. Write outer envelope header: MAGIC (8 bytes) + SALT (16 bytes) + IV (12 bytes) + WRAPPED_KEYSET_LEN (4 bytes) + WRAPPED_KEYSET
         val dos = DataOutputStream(outputStream)
-        dos.writeInt(BACKUP_VERSION)
+        dos.write(ENVELOPE_MAGIC)
         dos.write(salt)
         dos.write(iv)
+        dos.writeInt(wrappedKeyset.size)
+        dos.write(wrappedKeyset)
         dos.flush()
 
-        // Encrypt the Zip payload
-        CipherOutputStream(outputStream, cipher).use { encryptedOut ->
-            ZipOutputStream(BufferedOutputStream(encryptedOut)).use { zipOut ->
-                // Write manifest.json
-                zipOut.putNextEntry(ZipEntry("manifest.json"))
-                val manifestBytes = json.encodeToString(manifest).toByteArray(Charsets.UTF_8)
-                zipOut.write(manifestBytes)
-                zipOut.closeEntry()
+        // 4. Stream encrypted payload using Tink StreamingAead
+        val streamingAead = keysetHandle.getPrimitive(StreamingAead::class.java)
+        val associatedData = ENVELOPE_MAGIC + salt
+        val encryptingStream = streamingAead.newEncryptingStream(outputStream, associatedData)
 
-                // Write asset files
-                val seenHashes = mutableSetOf<String>()
-                for (asset in manifest.assets) {
-                    if (!seenHashes.add(asset.hash)) continue
-                    val file = assetResolver(asset.hash)
-                    if (file != null && file.exists()) {
-                        zipOut.putNextEntry(ZipEntry("assets/${asset.hash}"))
-                        FileInputStream(file).use { fileIn ->
-                            fileIn.copyTo(zipOut)
+        try {
+            val archiveDos = DataOutputStream(BufferedOutputStream(encryptingStream))
+
+            // Write framed inner archive header: ARCHIVE_MAGIC + version (1)
+            archiveDos.write(ARCHIVE_MAGIC)
+            archiveDos.writeInt(1)
+
+            // Manifest
+            val manifestBytes = json.encodeToString(manifest).toByteArray(Charsets.UTF_8)
+            archiveDos.writeInt(manifestBytes.size)
+            archiveDos.write(manifestBytes)
+
+            // Distinct assets
+            val distinctAssets = manifest.assets.distinctBy { it.hash.lowercase() }
+            archiveDos.writeInt(distinctAssets.size)
+
+            val buffer = ByteArray(32768)
+            for (asset in distinctAssets) {
+                val hashBytes = hexToBytes(asset.hash)
+                archiveDos.write(hashBytes) // exact 32 bytes
+
+                val file = assetResolver(asset.hash)
+                val fileLen = if (file != null && file.exists()) file.length() else 0L
+                archiveDos.writeLong(fileLen)
+
+                if (fileLen > 0L && file != null) {
+                    FileInputStream(file).use { fis ->
+                        var read: Int
+                        while (fis.read(buffer).also { read = it } != -1) {
+                            archiveDos.write(buffer, 0, read)
                         }
-                        zipOut.closeEntry()
                     }
                 }
-                zipOut.flush()
             }
+
+            // End marker
+            archiveDos.write(ARCHIVE_END_MARKER)
+            archiveDos.flush()
+        } finally {
+            encryptingStream.close()
         }
     }
 
@@ -179,16 +233,16 @@ class EncryptedBackupEngine {
         stagingRoot: Path,
         existingItemIds: Set<String>
     ): RestorePreview {
-        val magic = ByteArray(MAGIC_HEADER.size)
-        val bytesRead = inputStream.read(magic)
-        if (bytesRead != MAGIC_HEADER.size || !magic.contentEquals(MAGIC_HEADER)) {
-            throw IllegalArgumentException("Not a valid Personal Library backup file (invalid magic header)")
+        if (passphrase.size < MIN_PASSPHRASE_LENGTH) {
+            throw IllegalArgumentException("Passphrase must be at least $MIN_PASSPHRASE_LENGTH characters long")
         }
 
+        // 1. Read and verify envelope header
         val dis = DataInputStream(inputStream)
-        val version = dis.readInt()
-        if (version != BACKUP_VERSION) {
-            throw IllegalArgumentException("Unsupported backup version: $version (expected $BACKUP_VERSION)")
+        val magic = ByteArray(ENVELOPE_MAGIC.size)
+        dis.readFully(magic)
+        if (!magic.contentEquals(ENVELOPE_MAGIC)) {
+            throw IllegalArgumentException("Not a valid Personal Library backup file (header magic mismatch)")
         }
 
         val salt = ByteArray(SALT_LENGTH)
@@ -197,97 +251,127 @@ class EncryptedBackupEngine {
         val iv = ByteArray(GCM_IV_LENGTH)
         dis.readFully(iv)
 
-        val key = deriveKey(passphrase, salt)
-        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-        cipher.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(GCM_TAG_LENGTH_BITS, iv))
+        val wrappedKeysetLen = dis.readInt()
+        if (wrappedKeysetLen <= 0 || wrappedKeysetLen > 65536) {
+            throw SecurityException("Corrupted or oversized wrapped keyset in backup")
+        }
+        val wrappedKeyset = ByteArray(wrappedKeysetLen)
+        dis.readFully(wrappedKeyset)
+
+        // 2. Unwrap keyset using passphrase
+        val derivedKey = deriveKey(passphrase, salt)
+        val rawKeysetBytes: ByteArray
+        try {
+            val unwrappingCipher = Cipher.getInstance("AES/GCM/NoPadding")
+            unwrappingCipher.init(Cipher.DECRYPT_MODE, derivedKey, GCMParameterSpec(GCM_TAG_LENGTH_BITS, iv))
+            unwrappingCipher.updateAAD(ENVELOPE_MAGIC)
+            rawKeysetBytes = unwrappingCipher.doFinal(wrappedKeyset)
+        } catch (_: Exception) {
+            throw SecurityException("Invalid password or backup file has been tampered with")
+        }
+
+        val keysetHandle: KeysetHandle
+        try {
+            keysetHandle = CleartextKeysetHandle.read(BinaryKeysetReader.withBytes(rawKeysetBytes))
+        } catch (e: Exception) {
+            throw SecurityException("Invalid encryption keyset in backup archive: ${e.message}")
+        }
 
         val stagingDir = Files.createTempDirectory(stagingRoot, "restore_stage_").toFile()
-        val stagingPath = stagingDir.toPath().toAbsolutePath().normalize()
+        val assetsDir = File(stagingDir, "assets").apply { mkdirs() }
 
         try {
-            var manifest: BackupManifest? = null
+            val streamingAead = keysetHandle.getPrimitive(StreamingAead::class.java)
+            val associatedData = ENVELOPE_MAGIC + salt
+            val decryptingStream = streamingAead.newDecryptingStream(inputStream, associatedData)
+
+            val archiveDis = DataInputStream(BufferedInputStream(decryptingStream))
+
+            // Verify inner archive magic
+            val archiveMagic = ByteArray(ARCHIVE_MAGIC.size)
+            archiveDis.readFully(archiveMagic)
+            if (!archiveMagic.contentEquals(ARCHIVE_MAGIC)) {
+                throw SecurityException("Archive header mismatch: corrupted inner archive")
+            }
+
+            val version = archiveDis.readInt()
+            if (version != 1) {
+                throw SecurityException("Unsupported archive version: $version")
+            }
+
+            // Read manifest
+            val manifestLen = archiveDis.readInt()
+            if (manifestLen <= 0 || manifestLen > MAX_MANIFEST_BYTES) {
+                throw SecurityException("Manifest length $manifestLen exceeds limit of $MAX_MANIFEST_BYTES bytes")
+            }
+            val manifestBytes = ByteArray(manifestLen)
+            archiveDis.readFully(manifestBytes)
+            val manifest = json.decodeFromString<BackupManifest>(String(manifestBytes, Charsets.UTF_8))
+
+            // Read assets
+            val assetCount = archiveDis.readInt()
+            if (assetCount < 0 || assetCount > MAX_ASSET_COUNT) {
+                throw SecurityException("Asset count $assetCount exceeds limit")
+            }
+
+            val seenHashes = mutableSetOf<String>()
+            val buffer = ByteArray(32768)
             var totalStagedBytes = 0L
-            var entryCount = 0
-            val seenEntries = mutableSetOf<String>()
 
-            CipherInputStream(inputStream, cipher).use { cipherIn ->
-                ZipInputStream(BufferedInputStream(cipherIn)).use { zipIn ->
-                    var entry = zipIn.nextEntry
-                    while (entry != null) {
-                        entryCount++
-                        if (entryCount > MAX_ZIP_ENTRIES) {
-                            throw SecurityException("Backup contains too many entries (exceeds $MAX_ZIP_ENTRIES)")
+            for (i in 0 until assetCount) {
+                val hashBytes = ByteArray(32)
+                archiveDis.readFully(hashBytes)
+                val hexHash = bytesToHex(hashBytes).lowercase()
+
+                if (!seenHashes.add(hexHash)) {
+                    throw SecurityException("Duplicate asset hash in archive: $hexHash")
+                }
+
+                val declaredLen = archiveDis.readLong()
+                if (declaredLen < 0 || declaredLen > MAX_SINGLE_ENTRY_BYTES) {
+                    throw SecurityException("Asset $hexHash declared length $declaredLen exceeds limit")
+                }
+
+                val targetFile = File(assetsDir, hexHash)
+                val md = MessageDigest.getInstance("SHA-256")
+
+                FileOutputStream(targetFile).use { fos ->
+                    var remaining = declaredLen
+                    while (remaining > 0) {
+                        val toRead = minOf(buffer.size.toLong(), remaining).toInt()
+                        val read = archiveDis.read(buffer, 0, toRead)
+                        if (read == -1) {
+                            throw EOFException("Unexpected EOF while reading asset $hexHash")
                         }
-
-                        val entryName = entry.name
-                        if (!seenEntries.add(entryName)) {
-                            throw SecurityException("Duplicate zip entry detected: $entryName")
+                        md.update(buffer, 0, read)
+                        fos.write(buffer, 0, read)
+                        remaining -= read
+                        totalStagedBytes += read
+                        if (totalStagedBytes > MAX_TOTAL_UNCOMPRESSED_BYTES) {
+                            throw SecurityException("Total uncompressed size exceeds limit")
                         }
+                    }
+                }
 
-                        // Strict path traversal defense: canonical/normalized path check
-                        val targetFile = File(stagingDir, entryName)
-                        val targetPath = targetFile.toPath().toAbsolutePath().normalize()
-                        if (!targetPath.startsWith(stagingPath)) {
-                            throw SecurityException("Malicious zip entry path traversal: $entryName")
-                        }
-
-                        targetFile.parentFile?.mkdirs()
-
-                        if (entryName == "manifest.json") {
-                            val baos = ByteArrayOutputStream()
-                            var manifestBytesCount = 0L
-                            val buffer = ByteArray(8192)
-                            var read: Int
-                            while (zipIn.read(buffer).also { read = it } != -1) {
-                                manifestBytesCount += read
-                                if (manifestBytesCount > MAX_MANIFEST_BYTES) {
-                                    throw SecurityException("Manifest exceeds size limit of $MAX_MANIFEST_BYTES bytes")
-                                }
-                                baos.write(buffer, 0, read)
-                            }
-                            val manifestJson = baos.toString(Charsets.UTF_8)
-                            manifest = json.decodeFromString<BackupManifest>(manifestJson)
-                        } else {
-                            var entryBytesCount = 0L
-                            FileOutputStream(targetFile).use { fos ->
-                                val buffer = ByteArray(8192)
-                                var read: Int
-                                while (zipIn.read(buffer).also { read = it } != -1) {
-                                    entryBytesCount += read
-                                    totalStagedBytes += read
-                                    if (entryBytesCount > MAX_SINGLE_ENTRY_BYTES) {
-                                        throw SecurityException("Archive entry $entryName exceeds maximum entry limit")
-                                    }
-                                    if (totalStagedBytes > MAX_TOTAL_UNCOMPRESSED_BYTES) {
-                                        throw SecurityException("Total uncompressed size exceeds limit of $MAX_TOTAL_UNCOMPRESSED_BYTES bytes")
-                                    }
-                                    fos.write(buffer, 0, read)
-                                }
-                            }
-                        }
-                        zipIn.closeEntry()
-                        entry = zipIn.nextEntry
+                if (declaredLen > 0) {
+                    val computedHash = bytesToHex(md.digest()).lowercase()
+                    if (computedHash != hexHash) {
+                        throw SecurityException("Checksum mismatch for $hexHash: computed $computedHash")
                     }
                 }
             }
 
-            if (manifest == null) {
-                stagingDir.deleteRecursively()
-                throw IllegalArgumentException("Backup archive is corrupted: manifest.json is missing")
+            // Verify end marker
+            val endMarker = ByteArray(ARCHIVE_END_MARKER.size)
+            archiveDis.readFully(endMarker)
+            if (!endMarker.contentEquals(ARCHIVE_END_MARKER)) {
+                throw SecurityException("Missing archive end marker: corrupted or truncated backup")
             }
 
-            // Verify staged assets against manifest declarations (SHA-256 and size)
-            for (asset in manifest.assets) {
-                val assetFile = File(stagingDir, "assets/${asset.hash}")
-                if (assetFile.exists()) {
-                    if (assetFile.length() != asset.sizeBytes) {
-                        throw SecurityException("Asset size mismatch for ${asset.hash}: expected ${asset.sizeBytes}, got ${assetFile.length()}")
-                    }
-                    val actualHash = sha256(assetFile)
-                    if (!actualHash.equals(asset.hash, ignoreCase = true)) {
-                        throw SecurityException("Asset SHA-256 checksum mismatch for ${asset.hash}: computed $actualHash")
-                    }
-                }
+            // Ensure no trailing bytes in decrypted stream
+            val extra = archiveDis.read()
+            if (extra != -1) {
+                throw SecurityException("Trailing unauthenticated data detected in archive")
             }
 
             val duplicateCount = manifest.items.count { existingItemIds.contains(it.id) }
@@ -302,23 +386,10 @@ class EncryptedBackupEngine {
             )
         } catch (e: Exception) {
             stagingDir.deleteRecursively()
-            if (e is javax.crypto.AEADBadTagException || e.cause is javax.crypto.AEADBadTagException) {
-                throw SecurityException("Invalid password or backup file has been tampered with")
-            }
-            throw e
+            if (e is SecurityException) throw e
+            if (e is IOException && e.cause is SecurityException) throw (e.cause as SecurityException)
+            throw SecurityException("Invalid password or backup file has been tampered with: ${e.message}")
         }
-    }
-
-    private fun sha256(file: File): String {
-        val digest = MessageDigest.getInstance("SHA-256")
-        file.inputStream().use { input ->
-            val buf = ByteArray(8192)
-            var read: Int
-            while (input.read(buf).also { read = it } != -1) {
-                digest.update(buf, 0, read)
-            }
-        }
-        return digest.digest().joinToString("") { "%02x".format(it) }
     }
 
     private fun deriveKey(passphrase: CharArray, salt: ByteArray): SecretKeySpec {
@@ -328,5 +399,23 @@ class EncryptedBackupEngine {
         val keySpec = SecretKeySpec(keyBytes, "AES")
         Arrays.fill(keyBytes, 0.toByte())
         return keySpec
+    }
+
+    private fun hexToBytes(hex: String): ByteArray {
+        val clean = hex.trim()
+        val len = clean.length
+        val data = ByteArray(len / 2)
+        for (i in 0 until len step 2) {
+            data[i / 2] = ((Character.digit(clean[i], 16) shl 4) + Character.digit(clean[i + 1], 16)).toByte()
+        }
+        return data
+    }
+
+    private fun bytesToHex(bytes: ByteArray): String {
+        val sb = StringBuilder(bytes.size * 2)
+        for (b in bytes) {
+            sb.append("%02x".format(b))
+        }
+        return sb.toString()
     }
 }

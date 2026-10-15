@@ -20,7 +20,20 @@ class LocalIndexer(
         if (hash == null) {
             // Text note or link: content is already owner text, no separate blob extraction needed
             val coverage = "COMPLETE"
-            repository.dao.updateExtractedText(item.id, null, coverage, item.localIndexVersion)
+            val newVersion = item.localIndexVersion + 1
+            repository.dao.updateExtractedText(item.id, null, coverage, newVersion)
+
+            // Persist durable job record before enqueuing
+            repository.dao.insertOrUpdateAnalysisJob(
+                AnalysisJobEntity(
+                    itemId = item.id,
+                    expectedContentVersion = newVersion,
+                    indexVersion = newVersion,
+                    status = "QUEUED",
+                    updatedAt = System.currentTimeMillis()
+                )
+            )
+
             enqueueDurableAiJob(item.id)
             return@withContext ExtractedText(item.content, coverage)
         }
@@ -117,5 +130,18 @@ class LocalIndexer(
             ExistingWorkPolicy.REPLACE,
             request
         )
+    }
+
+    suspend fun enqueuePendingAnalysisJobs() = withContext(Dispatchers.IO) {
+        val prefs = context.getSharedPreferences("personal_library_settings", Context.MODE_PRIVATE)
+        if (prefs.getBoolean("ai_paused", false)) return@withContext
+
+        val pendingJobs = repository.dao.getPendingAnalysisJobs()
+        for (job in pendingJobs) {
+            val item = repository.dao.getItemById(job.itemId)
+            if (item != null && !item.isTrash) {
+                enqueueDurableAiJob(job.itemId)
+            }
+        }
     }
 }

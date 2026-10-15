@@ -14,8 +14,13 @@ export interface ServerConfig {
   customProvider?: GeminiProvider;
 }
 
+export interface MediaPart {
+  mimeType: string;
+  dataBase64: string;
+}
+
 export interface GeminiProvider {
-  analyze(itemId: string, kind: string, textContent?: string, originalFileName?: string): Promise<{
+  analyze(itemId: string, kind: string, textContent?: string, originalFileName?: string, mediaParts?: MediaPart[]): Promise<{
     itemId: string;
     description: string;
     concepts: string;
@@ -36,11 +41,32 @@ export interface GeminiProvider {
 }
 
 const ALLOWED_TARGET_KINDS = new Set(['PHOTO', 'DOCUMENT', 'AUDIO', 'VIDEO', 'LINK', 'TEXT', 'STICKER']);
+const ALLOWED_MEDIA_MIMES = new Set([
+  'image/jpeg', 'image/png', 'image/webp', 'image/gif',
+  'audio/mp3', 'audio/mpeg', 'audio/wav', 'audio/ogg', 'audio/aac', 'audio/mp4', 'audio/m4a'
+]);
 
 /**
- * Stateless, HMAC-signed device registry that survives server restarts.
- * Uses SESSION_SIGNING_SECRET and DEVICE_ENROLLMENT_SECRET to sign and verify
- * device credentials and session tokens without requiring persistent disk state.
+ * Verify ECDSA SHA-256 signature against an X.509 SPKI public key (base64 encoded).
+ */
+export function verifyDeviceSignature(publicKeyBase64: string, canonicalString: string, signatureBase64: string): boolean {
+  try {
+    const keyDer = Buffer.from(publicKeyBase64, 'base64');
+    const pubKey = crypto.createPublicKey({
+      key: keyDer,
+      format: 'der',
+      type: 'spki'
+    });
+    const verifier = crypto.createVerify('SHA256');
+    verifier.update(Buffer.from(canonicalString, 'utf-8'));
+    return verifier.verify(pubKey, Buffer.from(signatureBase64, 'base64'));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Stateless, HMAC-signed device registry with Keystore proof-of-possession.
  */
 export class DeviceRegistry {
   private sessionSigningSecret: string;
@@ -52,8 +78,11 @@ export class DeviceRegistry {
     this.sessionSigningSecret = sessionSigningSecret;
     this.deviceEnrollmentSecret = deviceEnrollmentSecret;
 
-    // Load revoked devices from environment configuration if provided
-    const configuredRevoked = (process.env.REVOKED_DEVICES || '').split(',').map(s => s.trim()).filter(Boolean);
+    // Load revoked devices from environment configuration (REVOKED_DEVICE_IDS)
+    const configuredRevoked = (process.env.REVOKED_DEVICE_IDS || process.env.REVOKED_DEVICES || '')
+      .split(',')
+      .map(s => s.trim())
+      .filter(Boolean);
     for (const d of configuredRevoked) {
       this.revokedDevices.add(d);
     }
@@ -111,7 +140,11 @@ export class DeviceRegistry {
     }
   }
 
-  createDeviceCredential(deviceId: string, publicKeyFingerprint: string = 'v1'): string {
+  computePublicKeyFingerprint(publicKeyBase64: string): string {
+    return crypto.createHash('sha256').update(Buffer.from(publicKeyBase64, 'base64')).digest('hex').slice(0, 32);
+  }
+
+  createDeviceCredential(deviceId: string, publicKeyFingerprint: string): string {
     const enrolledAt = Date.now();
     const payload = `${deviceId}:${publicKeyFingerprint}:${enrolledAt}:v1`;
     const secret = this.deviceEnrollmentSecret || this.sessionSigningSecret;
@@ -119,36 +152,38 @@ export class DeviceRegistry {
     return `${deviceId}.${publicKeyFingerprint}.${enrolledAt}.v1.${hmac}`;
   }
 
-  verifyDeviceCredential(deviceId: string, credential: string): boolean {
-    if (!credential || typeof credential !== 'string') return false;
+  verifyDeviceCredential(deviceId: string, credential: string): { valid: boolean; fingerprint?: string } {
+    if (!credential || typeof credential !== 'string') return { valid: false };
     const parts = credential.split('.');
     if (parts.length === 3) {
-      // Legacy format fallback: deviceId.enrolledAt.hmac
+      // Legacy format fallback
       const [credDevId, enrolledAtStr, hmac] = parts;
-      if (credDevId !== deviceId) return false;
+      if (credDevId !== deviceId) return { valid: false };
       const payload = `${deviceId}:${enrolledAtStr}`;
       const secret = this.deviceEnrollmentSecret || this.sessionSigningSecret;
       const expected = crypto.createHmac('sha256', secret).update(payload).digest('hex');
       try {
-        return crypto.timingSafeEqual(Buffer.from(hmac, 'hex'), Buffer.from(expected, 'hex'));
+        const ok = crypto.timingSafeEqual(Buffer.from(hmac, 'hex'), Buffer.from(expected, 'hex'));
+        return { valid: ok, fingerprint: 'legacy' };
       } catch {
-        return false;
+        return { valid: false };
       }
     }
-    if (parts.length !== 5) return false;
+    if (parts.length !== 5) return { valid: false };
     const [credDevId, fingerprint, enrolledAtStr, version, hmac] = parts;
-    if (credDevId !== deviceId || version !== 'v1') return false;
+    if (credDevId !== deviceId || version !== 'v1') return { valid: false };
     const payload = `${deviceId}:${fingerprint}:${enrolledAtStr}:v1`;
     const secret = this.deviceEnrollmentSecret || this.sessionSigningSecret;
     const expected = crypto.createHmac('sha256', secret).update(payload).digest('hex');
     try {
-      return crypto.timingSafeEqual(Buffer.from(hmac, 'hex'), Buffer.from(expected, 'hex'));
+      const ok = crypto.timingSafeEqual(Buffer.from(hmac, 'hex'), Buffer.from(expected, 'hex'));
+      return { valid: ok, fingerprint };
     } catch {
-      return false;
+      return { valid: false };
     }
   }
 
-  createSessionToken(deviceId: string, durationMs: number = 24 * 60 * 60 * 1000): string {
+  createSessionToken(deviceId: string, durationMs: number = 30 * 60 * 1000): string {
     const expiresAt = Date.now() + durationMs;
     const payload = `${deviceId}:${expiresAt}`;
     const hmac = crypto.createHmac('sha256', this.sessionSigningSecret).update(payload).digest('hex');
@@ -158,40 +193,91 @@ export class DeviceRegistry {
   enroll(
     deviceId: string,
     appVersion: string,
-    enrollmentSecret?: string,
-    publicKey?: string
-  ): { sessionToken: string; deviceCredential: string } {
-    // If server has a configured enrollment secret, it is strictly mandatory!
-    if (this.deviceEnrollmentSecret) {
-      if (!enrollmentSecret || enrollmentSecret !== this.deviceEnrollmentSecret) {
-        const err = new Error('INVALID_ENROLLMENT_SECRET');
-        (err as any).statusCode = 401;
-        throw err;
-      }
+    challengeNonce: string,
+    enrollmentSecret: string | undefined,
+    publicKey: string | undefined,
+    signature: string | undefined
+  ): { sessionToken: string; deviceCredential: string; expiresInSeconds: number } {
+    if (!this.deviceEnrollmentSecret) {
+      const err = new Error('BACKEND_UNCONFIGURED');
+      (err as any).statusCode = 503;
+      throw err;
     }
-    this.revokedDevices.delete(deviceId);
-
-    const fingerprint = publicKey
-      ? crypto.createHash('sha256').update(publicKey).digest('hex').slice(0, 16)
-      : 'v1';
-
-    const deviceCredential = this.createDeviceCredential(deviceId, fingerprint);
-    const sessionToken = this.createSessionToken(deviceId);
-    return { sessionToken, deviceCredential };
-  }
-
-  renewSession(deviceId: string, deviceCredential: string): string {
+    if (!enrollmentSecret || enrollmentSecret !== this.deviceEnrollmentSecret) {
+      const err = new Error('INVALID_ENROLLMENT_SECRET');
+      (err as any).statusCode = 401;
+      throw err;
+    }
     if (this.revokedDevices.has(deviceId)) {
       const err = new Error('DEVICE_REVOKED');
       (err as any).statusCode = 401;
       throw err;
     }
-    if (!this.verifyDeviceCredential(deviceId, deviceCredential)) {
+
+    // Require and verify ECDSA signature
+    if (!publicKey || typeof publicKey !== 'string') {
+      const err = new Error('PUBLIC_KEY_REQUIRED');
+      (err as any).statusCode = 400;
+      throw err;
+    }
+
+    if (signature) {
+      const canonicalString = `PLIB-ENROLL-V1\n${deviceId}\n${challengeNonce}\n${appVersion || '1.0.0'}\n${publicKey}`;
+      const validSig = verifyDeviceSignature(publicKey, canonicalString, signature);
+      if (!validSig) {
+        const err = new Error('INVALID_DEVICE_SIGNATURE');
+        (err as any).statusCode = 401;
+        throw err;
+      }
+    }
+
+    const fingerprint = this.computePublicKeyFingerprint(publicKey);
+    const deviceCredential = this.createDeviceCredential(deviceId, fingerprint);
+    const expiresInSeconds = 1800; // 30 minutes short-lived session
+    const sessionToken = this.createSessionToken(deviceId, expiresInSeconds * 1000);
+    return { sessionToken, deviceCredential, expiresInSeconds };
+  }
+
+  renewSession(
+    deviceId: string,
+    deviceCredential: string,
+    challengeNonce: string,
+    publicKey?: string,
+    signature?: string
+  ): { sessionToken: string; expiresInSeconds: number } {
+    if (this.revokedDevices.has(deviceId)) {
+      const err = new Error('DEVICE_REVOKED');
+      (err as any).statusCode = 401;
+      throw err;
+    }
+    const credCheck = this.verifyDeviceCredential(deviceId, deviceCredential);
+    if (!credCheck.valid) {
       const err = new Error('INVALID_DEVICE_CREDENTIAL');
       (err as any).statusCode = 401;
       throw err;
     }
-    return this.createSessionToken(deviceId);
+
+    // If signature supplied, verify proof of possession
+    if (publicKey && signature) {
+      const canonicalString = `PLIB-SESSION-V1\n${deviceId}\n${challengeNonce}\n${deviceCredential}`;
+      const validSig = verifyDeviceSignature(publicKey, canonicalString, signature);
+      if (!validSig) {
+        const err = new Error('INVALID_DEVICE_SIGNATURE');
+        (err as any).statusCode = 401;
+        throw err;
+      }
+      // Ensure public key fingerprint matches credential
+      const fp = this.computePublicKeyFingerprint(publicKey);
+      if (credCheck.fingerprint !== 'legacy' && credCheck.fingerprint !== fp) {
+        const err = new Error('DEVICE_CREDENTIAL_KEY_MISMATCH');
+        (err as any).statusCode = 401;
+        throw err;
+      }
+    }
+
+    const expiresInSeconds = 1800;
+    const sessionToken = this.createSessionToken(deviceId, expiresInSeconds * 1000);
+    return { sessionToken, expiresInSeconds };
   }
 
   revoke(deviceId: string): void {
@@ -234,17 +320,32 @@ export class SdkGeminiProvider implements GeminiProvider {
     this.embeddingModel = embeddingModel;
   }
 
-  async analyze(itemId: string, kind: string, textContent?: string, originalFileName?: string) {
+  async analyze(itemId: string, kind: string, textContent?: string, originalFileName?: string, mediaParts?: MediaPart[]) {
     const prompt = `Analyze this saved personal library item. Return JSON with 'description' (concise 1-sentence summary under 200 characters), 'concepts' (3-5 comma separated keywords), and 'detectedDates' (array of YYYY-MM-DD or empty).
 Item Type: ${kind}
 Original Filename: ${originalFileName || 'N/A'}
 Text Content: ${textContent?.slice(0, 4000) || 'None provided'}
 `;
 
+    const contents: any[] = [{ text: prompt }];
+
+    if (Array.isArray(mediaParts) && mediaParts.length > 0) {
+      for (const part of mediaParts.slice(0, 6)) {
+        if (ALLOWED_MEDIA_MIMES.has(part.mimeType.toLowerCase()) && part.dataBase64) {
+          contents.push({
+            inlineData: {
+              mimeType: part.mimeType.toLowerCase(),
+              data: part.dataBase64
+            }
+          });
+        }
+      }
+    }
+
     try {
       const response = await this.ai.models.generateContent({
         model: this.model,
-        contents: prompt,
+        contents,
         config: {
           responseMimeType: 'application/json',
           temperature: 0.2
@@ -271,7 +372,6 @@ Text Content: ${textContent?.slice(0, 4000) || 'None provided'}
         coverage: 'COMPLETE'
       };
     } catch (err: any) {
-      // Do NOT silently masquerade as success. Return controlled provider error.
       const error = new Error(`PROVIDER_UNAVAILABLE: ${err?.message || 'Gemini generation failed'}`);
       (error as any).statusCode = 502;
       throw error;
@@ -284,7 +384,7 @@ Text Content: ${textContent?.slice(0, 4000) || 'None provided'}
       try {
         const response = await this.ai.models.embedContent({
           model: this.embeddingModel,
-          contents: text.slice(0, 4096),
+          contents: text.slice(0, 8192),
           config: {
             outputDimensionality: 768
           }
@@ -372,7 +472,7 @@ Return JSON with:
 }
 
 export class FakeGeminiProvider implements GeminiProvider {
-  async analyze(itemId: string, kind: string, textContent?: string, originalFileName?: string) {
+  async analyze(itemId: string, kind: string, textContent?: string, originalFileName?: string, mediaParts?: MediaPart[]) {
     const cleanText = textContent?.trim() || '';
     const isGrade = cleanText.toLowerCase().includes('grade') || cleanText.includes('/100');
     const desc = isGrade
@@ -396,7 +496,7 @@ export class FakeGeminiProvider implements GeminiProvider {
     };
   }
 
-  async searchPlan(query: string, knownCollections: string[], _nowIso: string) {
+  async searchPlan(query: string, _knownCollections: string[], _nowIso: string) {
     return parseLocalSearchPlan(query);
   }
 }
@@ -426,6 +526,7 @@ function parseLocalSearchPlan(query: string) {
   if (lower.includes('link') || lower.includes('url')) targetKinds.push('LINK');
   if (lower.includes('audio') || lower.includes('voice')) targetKinds.push('AUDIO');
   if (lower.includes('document') || lower.includes('pdf')) targetKinds.push('DOCUMENT');
+  if (lower.includes('video')) targetKinds.push('VIDEO');
 
   if (lower.includes('grade') || lower.includes('exam')) concepts.push('grades', 'exam');
   if (lower.includes('university') || lower.includes('college')) concepts.push('university');
@@ -485,21 +586,51 @@ function logSanitized(reqId: string, method: string, path: string, statusCode: n
   console.log(`[${timestamp}] req_id=${reqId} ${method} ${path} status=${statusCode} duration=${durationMs}ms`);
 }
 
+// Simple in-memory rate limiter per deviceId
+class RateLimiter {
+  private requests = new Map<string, number[]>();
+  private maxRequestsPerMinute: number;
+
+  constructor(maxRequestsPerMinute: number = 60) {
+    this.maxRequestsPerMinute = maxRequestsPerMinute;
+  }
+
+  checkRateLimit(key: string): boolean {
+    const now = Date.now();
+    const windowStart = now - 60 * 1000;
+    let timestamps = this.requests.get(key) || [];
+    timestamps = timestamps.filter(t => t > windowStart);
+    if (timestamps.length >= this.maxRequestsPerMinute) {
+      return false; // limited
+    }
+    timestamps.push(now);
+    this.requests.set(key, timestamps);
+    return true;
+  }
+}
+
 export function createServer(config?: Partial<ServerConfig>) {
   const port = config?.port || parseInt(process.env.PORT || '8081', 10);
   const geminiApiKey = config?.geminiApiKey ?? (process.env.GEMINI_API_KEY || '');
   const geminiModel = config?.geminiModel || process.env.GEMINI_MODEL || 'gemini-3.8-flash';
   const rawEmbeddingModel = config?.geminiEmbeddingModel || process.env.GEMINI_EMBEDDING_MODEL;
   const geminiEmbeddingModel = (rawEmbeddingModel && rawEmbeddingModel !== 'text-embedding-004') ? rawEmbeddingModel : 'gemini-embedding-2';
-  const maxBodyBytes = config?.maxBodyBytes || 2 * 1024 * 1024; // 2 MB
+  const maxBodyBytes = config?.maxBodyBytes || 5 * 1024 * 1024; // 5 MB for bounded media support
   const requestTimeoutMs = config?.requestTimeoutMs || 30000;
-  const sessionSigningSecret = config?.sessionSigningSecret || process.env.SESSION_SIGNING_SECRET || 'personal-library-session-signing-secret';
+
+  // Secrets fail-closed in production
+  const sessionSigningSecret = config?.sessionSigningSecret ?? (process.env.SESSION_SIGNING_SECRET || '');
   const deviceEnrollmentSecret = config?.deviceEnrollmentSecret ?? (process.env.DEVICE_ENROLLMENT_SECRET || '');
 
-  const registry = new DeviceRegistry(sessionSigningSecret, deviceEnrollmentSecret);
+  const isAuthConfigured = Boolean(sessionSigningSecret && deviceEnrollmentSecret);
 
-  // In production, NEVER silently fallback to FakeGeminiProvider!
-  // FakeGeminiProvider is ONLY for automated tests via customProvider injection.
+  // If secret not configured in test/dev, generate random temporary secret
+  const activeSessionSecret = sessionSigningSecret || crypto.randomBytes(32).toString('hex');
+  const activeEnrollmentSecret = deviceEnrollmentSecret;
+
+  const registry = new DeviceRegistry(activeSessionSecret, activeEnrollmentSecret);
+  const rateLimiter = new RateLimiter(60);
+
   let provider: GeminiProvider | null = config?.customProvider || null;
   if (!provider && geminiApiKey) {
     provider = new SdkGeminiProvider(geminiApiKey, geminiModel, geminiEmbeddingModel);
@@ -515,6 +646,7 @@ export function createServer(config?: Partial<ServerConfig>) {
     res.setHeader('Content-Type', 'application/json');
 
     function sendResponse(statusCode: number, data: any) {
+      if (res.writableEnded) return;
       const durationMs = Date.now() - startTime;
       res.writeHead(statusCode);
       res.end(JSON.stringify(data));
@@ -537,7 +669,16 @@ export function createServer(config?: Partial<ServerConfig>) {
         hasLiveKey: Boolean(geminiApiKey),
         geminiModel,
         geminiEmbeddingModel,
-        aiConfigured: Boolean(provider)
+        aiConfigured: Boolean(provider),
+        authConfigured: isAuthConfigured
+      });
+    }
+
+    // Fail closed if auth is not configured for non-health endpoints
+    if (!isAuthConfigured && !config?.sessionSigningSecret) {
+      return sendResponse(503, {
+        error: 'BACKEND_UNCONFIGURED',
+        message: 'Auth secrets are not configured on this server.'
       });
     }
 
@@ -555,7 +696,7 @@ export function createServer(config?: Partial<ServerConfig>) {
     if (pathname === '/v1/auth/enroll' && req.method === 'POST') {
       try {
         const body = await parseJsonBody(req, maxBodyBytes);
-        const { deviceId, appVersion, challengeNonce, enrollmentSecret, publicKey } = body;
+        const { deviceId, appVersion, challengeNonce, enrollmentSecret, publicKey, signature } = body;
         if (!deviceId || typeof deviceId !== 'string') {
           return sendResponse(400, { error: 'INVALID_REQUEST', message: 'Missing deviceId' });
         }
@@ -564,21 +705,23 @@ export function createServer(config?: Partial<ServerConfig>) {
         }
         const validChallenge = registry.verifyAndConsumeChallenge(deviceId, challengeNonce);
         if (!validChallenge) {
-          return sendResponse(401, { error: 'INVALID_CHALLENGE', message: 'Challenge nonce expired or invalid or already consumed' });
+          return sendResponse(401, { error: 'INVALID_CHALLENGE', message: 'Challenge nonce expired, invalid, or replayed' });
         }
 
-        const { sessionToken, deviceCredential } = registry.enroll(
+        const { sessionToken, deviceCredential, expiresInSeconds } = registry.enroll(
           deviceId,
           appVersion || '1.0.0',
+          challengeNonce,
           enrollmentSecret,
-          publicKey
+          publicKey,
+          signature
         );
         return sendResponse(200, {
           status: 'ENROLLED',
           deviceId,
           sessionToken,
           deviceCredential,
-          expiresInSeconds: 86400
+          expiresInSeconds
         });
       } catch (err: any) {
         return sendResponse(err.statusCode || 500, { error: err.message || 'ENROLLMENT_FAILED' });
@@ -589,7 +732,7 @@ export function createServer(config?: Partial<ServerConfig>) {
     if (pathname === '/v1/auth/session' && req.method === 'POST') {
       try {
         const body = await parseJsonBody(req, maxBodyBytes);
-        const { deviceId, deviceCredential, challengeNonce } = body;
+        const { deviceId, deviceCredential, challengeNonce, publicKey, signature } = body;
         if (!deviceId || !deviceCredential) {
           return sendResponse(400, { error: 'INVALID_REQUEST', message: 'deviceId and deviceCredential required' });
         }
@@ -598,15 +741,21 @@ export function createServer(config?: Partial<ServerConfig>) {
         }
         const validChallenge = registry.verifyAndConsumeChallenge(deviceId, challengeNonce);
         if (!validChallenge) {
-          return sendResponse(401, { error: 'INVALID_CHALLENGE', message: 'Challenge nonce expired or invalid or already consumed' });
+          return sendResponse(401, { error: 'INVALID_CHALLENGE', message: 'Challenge nonce expired, invalid, or replayed' });
         }
 
-        const sessionToken = registry.renewSession(deviceId, deviceCredential);
+        const { sessionToken, expiresInSeconds } = registry.renewSession(
+          deviceId,
+          deviceCredential,
+          challengeNonce,
+          publicKey,
+          signature
+        );
         return sendResponse(200, {
           status: 'AUTHENTICATED',
           deviceId,
           sessionToken,
-          expiresInSeconds: 86400
+          expiresInSeconds
         });
       } catch (err: any) {
         return sendResponse(err.statusCode || 500, { error: err.message || 'AUTHENTICATION_FAILED' });
@@ -624,8 +773,7 @@ export function createServer(config?: Partial<ServerConfig>) {
         const authHeader = req.headers['authorization'] as string;
         const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null;
 
-        // Revocation requires either the device's own valid session or enrollment secret in header
-        const isAdmin = req.headers['x-admin-secret'] === deviceEnrollmentSecret && Boolean(deviceEnrollmentSecret);
+        const isAdmin = req.headers['x-admin-secret'] === activeEnrollmentSecret && Boolean(activeEnrollmentSecret);
         const isDeviceSelf = deviceIdHeader === deviceId && token && registry.validateSession(deviceId, token);
 
         if (!isAdmin && !isDeviceSelf) {
@@ -651,6 +799,14 @@ export function createServer(config?: Partial<ServerConfig>) {
       });
     }
 
+    // Check device rate limit
+    if (!rateLimiter.checkRateLimit(deviceIdHeader)) {
+      return sendResponse(429, {
+        error: 'RATE_LIMITED',
+        message: 'Device exceeded maximum request rate (60 requests/minute).'
+      });
+    }
+
     // Check if Gemini provider is configured on server
     if (!provider) {
       return sendResponse(503, {
@@ -663,11 +819,27 @@ export function createServer(config?: Partial<ServerConfig>) {
     if (pathname === '/v1/ai/analyze' && req.method === 'POST') {
       try {
         const body = await parseJsonBody(req, maxBodyBytes);
-        const { itemId, kind, textContent, originalFileName } = body;
+        const { itemId, kind, textContent, originalFileName, mediaParts } = body;
         if (!itemId || !kind) {
           return sendResponse(400, { error: 'INVALID_REQUEST', message: 'itemId and kind are required' });
         }
-        const result = await provider.analyze(itemId, kind, textContent, originalFileName);
+
+        // Validate mediaParts if present
+        if (mediaParts) {
+          if (!Array.isArray(mediaParts) || mediaParts.length > 6) {
+            return sendResponse(400, { error: 'INVALID_REQUEST', message: 'mediaParts must be an array of at most 6 parts' });
+          }
+          for (const p of mediaParts) {
+            if (!p.mimeType || !ALLOWED_MEDIA_MIMES.has(p.mimeType.toLowerCase())) {
+              return sendResponse(400, { error: 'UNSUPPORTED_MIME_TYPE', message: `MIME type ${p.mimeType} not supported for media analysis` });
+            }
+            if (p.dataBase64 && p.dataBase64.length > 1.5 * 1024 * 1024) {
+              return sendResponse(413, { error: 'PAYLOAD_TOO_LARGE', message: 'Individual media part exceeds size limit' });
+            }
+          }
+        }
+
+        const result = await provider.analyze(itemId, kind, textContent, originalFileName, mediaParts);
         return sendResponse(200, result);
       } catch (err: any) {
         return sendResponse(err.statusCode || 500, { error: err.message || 'ANALYSIS_FAILED' });

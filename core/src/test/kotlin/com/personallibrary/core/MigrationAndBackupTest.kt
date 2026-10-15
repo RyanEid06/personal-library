@@ -87,7 +87,6 @@ class WhatsAppExportParserTest {
 
     @Test
     fun testEqualMonthAndDayDateNotAmbiguous() {
-        // 10/10/2026 has equal day and month (10 and 10), so both orders yield Oct 10. Must NOT be marked ambiguous!
         val chat = """
             10/10/2026, 12:00 - Ryan: Test message on tenth of October
         """.trimIndent()
@@ -106,12 +105,26 @@ class EncryptedBackupTest {
     @JvmField
     val tempFolder = TemporaryFolder()
 
-    @Test
-    fun testEncryptedBackupRoundTrip() {
-        val engine = EncryptedBackupEngine()
-        val passphrase = "SecretPassword123!".toCharArray()
+    private val validPassphrase = "SuperStrongPassword2026!".toCharArray()
 
-        // Create a test asset file
+    @Test
+    fun testShortPassphraseRejection() {
+        val engine = EncryptedBackupEngine()
+        val shortPass = "Short1!".toCharArray()
+        val manifest = BackupManifest(items = emptyList(), collections = emptyList(), memberships = emptyList(), reminders = emptyList(), assets = emptyList())
+        val baos = ByteArrayOutputStream()
+
+        try {
+            engine.exportArchive(baos, shortPass, manifest) { null }
+            fail("Expected IllegalArgumentException for passphrase < 12 characters")
+        } catch (_: IllegalArgumentException) {}
+    }
+
+    @Test
+    fun testEncryptedBackupRoundTripWithUnicodePassphrase() {
+        val engine = EncryptedBackupEngine()
+        val unicodePass = "SecurePass🔑WithEmojis2026!".toCharArray()
+
         val assetFile = tempFolder.newFile("sample_asset.jpg")
         val sampleBytes = "Fake image binary data 123456789".toByteArray()
         assetFile.writeBytes(sampleBytes)
@@ -154,15 +167,14 @@ class EncryptedBackupTest {
         )
 
         val baos = ByteArrayOutputStream()
-        engine.exportArchive(baos, passphrase, manifest) { h -> if (h == hash) assetFile else null }
+        engine.exportArchive(baos, unicodePass, manifest) { h -> if (h == hash) assetFile else null }
 
         val encryptedBytes = baos.toByteArray()
         assertTrue(encryptedBytes.isNotEmpty())
 
-        // Test restore inspection
         val preview = engine.inspectAndStage(
             ByteArrayInputStream(encryptedBytes),
-            passphrase,
+            unicodePass,
             tempFolder.root.toPath(),
             existingItemIds = emptySet()
         )
@@ -172,7 +184,6 @@ class EncryptedBackupTest {
         assertEquals(1, preview.totalAssets)
         assertEquals("Chemistry Midterm", preview.manifest.items.first().title)
 
-        // Verify extracted asset
         val extractedAsset = File(preview.stagingDir, "assets/$hash")
         assertTrue(extractedAsset.exists())
         assertEquals(sampleBytes.size.toLong(), extractedAsset.length())
@@ -183,8 +194,8 @@ class EncryptedBackupTest {
     @Test
     fun testWrongPasswordRejection() {
         val engine = EncryptedBackupEngine()
-        val correctPass = "Correct123".toCharArray()
-        val wrongPass = "WrongPassword999".toCharArray()
+        val correctPass = "CorrectPassword123!".toCharArray()
+        val wrongPass = "WrongPassword999!".toCharArray()
 
         val manifest = BackupManifest(items = emptyList(), collections = emptyList(), memberships = emptyList(), reminders = emptyList(), assets = emptyList())
         val baos = ByteArrayOutputStream()
@@ -199,7 +210,6 @@ class EncryptedBackupTest {
             )
             fail("Expected SecurityException on wrong password")
         } catch (e: SecurityException) {
-            // Success: AEADBadTagException caught and reported as SecurityException
             assertTrue(e.message!!.contains("Invalid password", ignoreCase = true))
         }
     }
@@ -207,7 +217,7 @@ class EncryptedBackupTest {
     @Test
     fun testTamperedCiphertextRejection() {
         val engine = EncryptedBackupEngine()
-        val pass = "Password123".toCharArray()
+        val pass = validPassphrase
 
         val manifest = BackupManifest(items = emptyList(), collections = emptyList(), memberships = emptyList(), reminders = emptyList(), assets = emptyList())
         val baos = ByteArrayOutputStream()
@@ -225,8 +235,8 @@ class EncryptedBackupTest {
                 existingItemIds = emptySet()
             )
             fail("Expected SecurityException on tampered ciphertext")
-        } catch (e: SecurityException) {
-            // Success: GCM Authentication tag fails
+        } catch (_: SecurityException) {
+            // Success: GCM Authentication tag or streaming AEAD tag fails
         }
     }
 }

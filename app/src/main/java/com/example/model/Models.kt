@@ -16,6 +16,23 @@ enum class DateFilter(val label: String) {
     CUSTOM("Custom Range")
 }
 
+enum class DateBasis(val label: String) {
+    SAVED_DATE("Saved Date"),
+    SOURCE_DATE("Source Date")
+}
+
+enum class DateGrouping(val label: String) {
+    NONE("No Grouping"),
+    DAY("Day"),
+    MONTH("Month"),
+    YEAR("Year")
+}
+
+enum class LibraryLayout(val label: String) {
+    LIST("List"),
+    GRID("Grid")
+}
+
 data class StorageStats(
     val originalsBytes: Long = 0L,
     val cacheBytes: Long = 0L,
