@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Bundle
+import android.os.Build
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
@@ -188,7 +189,19 @@ private fun startListening(
         return
     }
 
-    val recognizer = SpeechRecognizer.createSpeechRecognizer(context)
+    var onDevice = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && SpeechRecognizer.isOnDeviceRecognitionAvailable(context)
+    val recognizer = if (onDevice) {
+        try {
+            SpeechRecognizer.createOnDeviceSpeechRecognizer(context)
+        } catch (_: Exception) {
+            onDevice = false
+            onStatus("Using the device's default speech service")
+            SpeechRecognizer.createSpeechRecognizer(context)
+        }
+    } else {
+        onStatus("Using the device's default speech service")
+        SpeechRecognizer.createSpeechRecognizer(context)
+    }
     setRecognizer(recognizer)
 
     val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
@@ -201,7 +214,7 @@ private fun startListening(
     recognizer.setRecognitionListener(object : RecognitionListener {
         override fun onReadyForSpeech(params: Bundle?) {
             onListeningState(true)
-            onStatus("Listening...")
+            onStatus(if (onDevice) "Listening on device..." else "Listening with default speech service...")
         }
 
         override fun onBeginningOfSpeech() {

@@ -37,6 +37,11 @@ data class DateRange(
     }
 
     companion object {
+        fun days(start: LocalDate, endInclusive: LocalDate, zone: ZoneId): DateRange {
+            require(!endInclusive.isBefore(start)) { "End date must not precede start date" }
+            return DateRange(start.atStartOfDay(zone).toInstant(), endInclusive.plusDays(1).atStartOfDay(zone).toInstant())
+        }
+
         fun allTime(): DateRange {
             return DateRange(Instant.EPOCH, Instant.ofEpochMilli(Long.MAX_VALUE - 1000000L))
         }

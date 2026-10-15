@@ -280,6 +280,9 @@ interface LibraryDao {
     suspend fun searchLikeWithCollections(pattern: String): List<ItemWithCollections>
 
     // Reminders
+    @Query("SELECT * FROM reminders ORDER BY dueMillis ASC")
+    suspend fun getAllReminders(): List<ReminderEntity>
+
     @Query("SELECT * FROM reminders WHERE isDone = 0 ORDER BY dueMillis ASC")
     suspend fun getPendingReminders(): List<ReminderEntity>
 

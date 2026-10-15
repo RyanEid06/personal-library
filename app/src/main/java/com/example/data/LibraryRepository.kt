@@ -23,11 +23,26 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import java.io.IOException
 import java.io.File
 import java.io.InputStream
 import java.util.UUID
 
 class LibraryRepository(private val context: Context, database: LibraryRoomDatabase? = null) {
+    companion object {
+        private val assetMutations = Mutex()
+    }
+
+    private suspend fun removeUnreferencedBlobs(hashes: Collection<String>) = withContext(NonCancellable + Dispatchers.IO) {
+        for (hash in hashes) {
+            if (dao.getAssetByHash(hash) == null && dao.getAllItemsIncludingTrash().none { it.contentHash == hash }) {
+                assetStore.deleteBlob(hash)
+            }
+        }
+    }
 
     private val db = database ?: Room.databaseBuilder(
         context.applicationContext,
@@ -65,8 +80,10 @@ class LibraryRepository(private val context: Context, database: LibraryRoomDatab
         collectionIds: List<String> = emptyList(),
         sourceDate: Long? = null
     ): ItemEntity = withContext(Dispatchers.IO) {
+        assetMutations.withLock {
         val storedAsset = assetStore.import(input, originalName, declaredMime, explicitSticker)
-
+        try {
+        db.withTransaction {
         // Reference counting
         val existingAsset = dao.getAssetByHash(storedAsset.hash)
         if (existingAsset != null) {
@@ -107,6 +124,12 @@ class LibraryRepository(private val context: Context, database: LibraryRoomDatab
         }
 
         item
+        }
+        } catch (failure: Throwable) {
+            try { removeUnreferencedBlobs(listOf(storedAsset.hash)) } catch (cleanup: Exception) { failure.addSuppressed(cleanup) }
+            throw failure
+        }
+        }
     }
 
     suspend fun createNote(
@@ -174,6 +197,9 @@ class LibraryRepository(private val context: Context, database: LibraryRoomDatab
     }
 
     suspend fun deletePermanently(id: String) = withContext(Dispatchers.IO) {
+        assetMutations.withLock {
+        var orphanHash: String? = null
+        db.withTransaction {
         val item = dao.getItemById(id)
         if (item != null) {
             val hash = item.contentHash
@@ -183,7 +209,7 @@ class LibraryRepository(private val context: Context, database: LibraryRoomDatab
                     val newCount = asset.refCount - 1
                     if (newCount <= 0) {
                         dao.deleteAsset(hash)
-                        assetStore.deleteBlob(hash)
+                        orphanHash = hash
                     } else {
                         dao.updateAsset(asset.copy(refCount = newCount))
                     }
@@ -194,6 +220,9 @@ class LibraryRepository(private val context: Context, database: LibraryRoomDatab
             dao.deleteSearchDocumentsForItem(id)
             dao.deleteAnalysisJob(id)
             dao.deleteItemPermanently(id)
+        }
+        }
+        orphanHash?.let { removeUnreferencedBlobs(listOf(it)) }
         }
     }
 
@@ -326,7 +355,7 @@ class LibraryRepository(private val context: Context, database: LibraryRoomDatab
             val allItems = dao.getAllItemsIncludingTrash()
             val allCols = dao.getAllCollections()
             val allAssets = dao.getAllAssets()
-            val allReminders = dao.getPendingReminders()
+            val allReminders = dao.getAllReminders()
 
             val memberships = mutableListOf<BackupMembershipRecord>()
             for (item in allItems) {
@@ -351,6 +380,8 @@ class LibraryRepository(private val context: Context, database: LibraryRoomDatab
                         reminderTime = it.reminderTime,
                         isReminderDone = it.isReminderDone,
                         isReminderExact = it.isReminderExact,
+                        isReminderDateOnly = it.isReminderDateOnly,
+                        reminderLocalDate = it.reminderLocalDate,
                         contentHash = it.contentHash,
                         originalFileName = it.originalFileName,
                         mimeType = it.mimeType,
@@ -366,14 +397,15 @@ class LibraryRepository(private val context: Context, database: LibraryRoomDatab
                 },
                 memberships = memberships,
                 reminders = allReminders.map {
-                    BackupReminderRecord(it.id, it.itemId, it.title, it.dueMillis, it.isDone, it.isExact)
+                    BackupReminderRecord(it.id, it.itemId, it.title, it.dueMillis, it.isDone, it.isExact, it.isDateOnly, it.localDate)
                 },
                 assets = allAssets.map {
                     BackupAssetRecord(it.hash, it.relativePath, it.sizeBytes, it.mimeType, it.originalName, it.kind)
                 }
             )
 
-            context.contentResolver.openOutputStream(uri)?.use { out ->
+            val output = context.contentResolver.openOutputStream(uri) ?: throw IOException("Cannot open backup destination")
+            output.use { out ->
                 backupEngine.exportArchive(out, passphrase, manifest) { hash ->
                     assetStore.getBlobFile(hash)
                 }
@@ -422,20 +454,27 @@ class LibraryRepository(private val context: Context, database: LibraryRoomDatab
      * - Re-indexes newly imported items.
      */
     suspend fun commitRestore(preview: RestorePreview, keepBoth: Boolean = false): Int = withContext(Dispatchers.IO) {
+        assetMutations.withLock {
         val existingIds = dao.getAllItemsIncludingTrash().map { it.id }.toSet()
         var importedCount = 0
         val itemsToReindex = mutableListOf<ItemEntity>()
         val remindersToSchedule = mutableListOf<Pair<ReminderEntity, Long>>()
+        val publishedHashes = mutableListOf<String>()
+        val storedAssets = mutableMapOf<String, com.personallibrary.core.model.StoredAsset>()
+        val collectionRemap = mutableMapOf<String, String>()
 
         try {
             // 1. Physically import asset blobs into ManagedAssetStore
             for (asset in preview.manifest.assets) {
                 val stagedFile = File(preview.stagingDir, "assets/${asset.hash}")
-                if (stagedFile.exists()) {
-                    stagedFile.inputStream().use { input ->
-                        assetStore.import(input, asset.originalName ?: asset.hash, asset.mimeType)
-                    }
+                if (!stagedFile.isFile) throw IOException("Missing staged original: ${asset.hash}")
+                val wasPresent = assetStore.getBlobFile(asset.hash) != null
+                val stored = stagedFile.inputStream().use { input ->
+                    assetStore.import(input, asset.originalName ?: asset.hash, asset.mimeType)
                 }
+                if (!wasPresent) publishedHashes.add(stored.hash)
+                if (stored.hash != asset.hash || stored.sizeBytes != asset.sizeBytes) throw IOException("Staged original changed")
+                storedAssets[asset.hash] = stored
             }
 
             // Remap colliding item IDs if keepBoth is true
@@ -453,7 +492,11 @@ class LibraryRepository(private val context: Context, database: LibraryRoomDatab
             db.withTransaction {
                 // Collections: insert or reuse
                 for (col in preview.manifest.collections) {
-                    dao.insertCollection(CollectionEntity(col.id, col.name, col.iconName, col.colorHex, col.createdAt))
+                    val existing = dao.getAllCollections().find { it.id == col.id }
+                    val compatible = existing != null && existing.name == col.name && existing.iconName == col.iconName && existing.colorHex == col.colorHex
+                    val finalId = if (existing != null && !compatible) UUID.randomUUID().toString() else col.id
+                    collectionRemap[col.id] = finalId
+                    if (!compatible) dao.insertCollection(CollectionEntity(finalId, col.name, col.iconName, col.colorHex, col.createdAt))
                 }
 
                 for (item in preview.manifest.items) {
@@ -464,6 +507,9 @@ class LibraryRepository(private val context: Context, database: LibraryRoomDatab
                     }
 
                     val finalId = idRemap[item.id] ?: item.id
+                    item.contentHash?.let { hash ->
+                        if (storedAssets[hash] == null || assetStore.getBlobFile(hash)?.isFile != true) throw IOException("Restored item has no physical original")
+                    }
                     val entity = ItemEntity(
                         id = finalId,
                         title = item.title,
@@ -477,13 +523,15 @@ class LibraryRepository(private val context: Context, database: LibraryRoomDatab
                         reminderTime = item.reminderTime,
                         isReminderDone = item.isReminderDone,
                         isReminderExact = item.isReminderExact,
+                        isReminderDateOnly = item.isReminderDateOnly,
+                        reminderLocalDate = item.reminderLocalDate,
                         contentHash = item.contentHash,
                         originalFileName = item.originalFileName,
                         mimeType = item.mimeType,
                         fileSizeBytes = item.fileSizeBytes,
-                        extractedText = item.extractedText,
-                        aiDescription = item.aiDescription,
-                        aiConcepts = item.aiConcepts,
+                        extractedText = null,
+                        aiDescription = null,
+                        aiConcepts = null,
                         aiStatus = "PENDING" // Re-index locally after restore
                     )
                     dao.insertItem(entity)
@@ -499,7 +547,9 @@ class LibraryRepository(private val context: Context, database: LibraryRoomDatab
                         // Under Skip Existing, existing memberships are left unchanged
                         continue
                     }
-                    dao.insertItemCollectionCrossRef(ItemCollectionCrossRef(finalItemId, mem.collectionId))
+                    require(preview.manifest.items.any { it.id == mem.itemId }) { "Unknown membership item" }
+                    val collectionId = collectionRemap[mem.collectionId] ?: throw IOException("Unknown membership collection")
+                    dao.insertItemCollectionCrossRef(ItemCollectionCrossRef(finalItemId, collectionId))
                 }
 
                 // Reminders
@@ -508,17 +558,26 @@ class LibraryRepository(private val context: Context, database: LibraryRoomDatab
                     if (existingIds.contains(rem.itemId) && !keepBoth && !idRemap.containsKey(rem.itemId)) {
                         continue
                     }
-                    if (!rem.isDone && rem.dueMillis > System.currentTimeMillis()) {
+                    require(preview.manifest.items.any { it.id == rem.itemId }) { "Unknown reminder item" }
+                    run {
+                        val dueMillis = if (rem.isDateOnly) {
+                            java.time.LocalDate.parse(rem.localDate ?: throw IOException("Missing reminder local date"))
+                                .atTime(9, 0).atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
+                        } else rem.dueMillis
                         val remEntity = ReminderEntity(
                             id = "rem_$finalItemId",
                             itemId = finalItemId,
                             title = rem.title,
-                            dueMillis = rem.dueMillis,
+                            dueMillis = dueMillis,
                             isDone = rem.isDone,
-                            isExact = rem.isExact
+                            isExact = rem.isExact,
+                            isDateOnly = rem.isDateOnly,
+                            localDate = rem.localDate
                         )
                         dao.insertReminder(remEntity)
-                        remindersToSchedule.add(remEntity to rem.dueMillis)
+                        dao.setReminder(finalItemId, dueMillis, rem.isExact, rem.isDateOnly, rem.localDate)
+                        dao.setReminderDone(finalItemId, rem.isDone)
+                        if (!rem.isDone && dueMillis > System.currentTimeMillis()) remindersToSchedule.add(remEntity to dueMillis)
                     }
                 }
 
@@ -529,12 +588,14 @@ class LibraryRepository(private val context: Context, database: LibraryRoomDatab
                 for (asset in preview.manifest.assets) {
                     val count = liveCounts[asset.hash] ?: 0
                     if (count > 0) {
+                        val stored = storedAssets.getValue(asset.hash)
+                        if (assetStore.getBlobFile(asset.hash)?.isFile != true) throw IOException("Missing restored blob")
                         val existing = dao.getAssetByHash(asset.hash)
                         if (existing == null) {
                             dao.insertAsset(
                                 AssetEntity(
                                     hash = asset.hash,
-                                    relativePath = asset.relativePath,
+                                    relativePath = stored.relativePath,
                                     sizeBytes = asset.sizeBytes,
                                     originalName = asset.originalName ?: asset.hash,
                                     mimeType = asset.mimeType,
@@ -569,10 +630,11 @@ class LibraryRepository(private val context: Context, database: LibraryRoomDatab
             }
 
         } finally {
-            preview.stagingDir.deleteRecursively()
+            try { removeUnreferencedBlobs(publishedHashes) } finally { preview.stagingDir.deleteRecursively() }
         }
 
         importedCount
+        }
     }
 
     // WhatsApp Migration with strict parsing, attachment matching, and idempotent refCounts

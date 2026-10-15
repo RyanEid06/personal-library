@@ -4,11 +4,11 @@ import android.content.Context
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
-import java.security.KeyPair
 import java.security.KeyPairGenerator
 import java.security.KeyStore
 import java.security.PrivateKey
 import java.security.Signature
+import java.security.spec.ECGenParameterSpec
 import java.util.UUID
 
 interface DeviceSigner {
@@ -16,27 +16,18 @@ interface DeviceSigner {
     fun signData(data: ByteArray): ByteArray
 }
 
-class AndroidKeystoreDeviceSigner(private val context: Context) : DeviceSigner {
+class DeviceIdentityUnavailableException(cause: Throwable) : java.io.IOException(
+    "Android Keystore is unavailable. Unlock your device and retry pairing or authentication.", cause
+)
+
+class AndroidKeystoreDeviceSigner : DeviceSigner {
 
     companion object {
         private const val KEY_ALIAS = "personal_library_device_key"
         private const val ANDROID_KEYSTORE = "AndroidKeyStore"
     }
 
-    private var fallbackSigner: SoftwareEcDeviceSigner? = null
-
-    init {
-        try {
-            ensureKeyExists()
-        } catch (_: Exception) {
-            // AndroidKeyStore unavailable (e.g. Robolectric / local JVM testing)
-            fallbackSigner = SoftwareEcDeviceSigner(context)
-        }
-    }
-
-    private fun ensureKeyExists() {
-        val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE)
-        keyStore.load(null)
+    private fun ensureKeyExists(keyStore: KeyStore) {
         if (!keyStore.containsAlias(KEY_ALIAS)) {
             val kpg = KeyPairGenerator.getInstance(KeyProperties.KEY_ALGORITHM_EC, ANDROID_KEYSTORE)
             val spec = KeyGenParameterSpec.Builder(
@@ -44,58 +35,40 @@ class AndroidKeystoreDeviceSigner(private val context: Context) : DeviceSigner {
                 KeyProperties.PURPOSE_SIGN or KeyProperties.PURPOSE_VERIFY
             )
                 .setDigests(KeyProperties.DIGEST_SHA256)
+                .setAlgorithmParameterSpec(ECGenParameterSpec("secp256r1"))
                 .build()
             kpg.initialize(spec)
             kpg.generateKeyPair()
         }
     }
 
-    override fun getPublicKeyBase64(): String {
-        fallbackSigner?.let { return it.getPublicKeyBase64() }
-        val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE)
-        keyStore.load(null)
-        val cert = keyStore.getCertificate(KEY_ALIAS)
-            ?: throw IllegalStateException("Keystore certificate missing for $KEY_ALIAS")
-        return Base64.encodeToString(cert.publicKey.encoded, Base64.NO_WRAP)
+    private fun <T> withKeystore(action: (KeyStore) -> T): T = try {
+        val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
+        ensureKeyExists(keyStore)
+        action(keyStore)
+    } catch (error: Exception) {
+        throw DeviceIdentityUnavailableException(error)
     }
 
-    override fun signData(data: ByteArray): ByteArray {
-        fallbackSigner?.let { return it.signData(data) }
-        val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE)
-        keyStore.load(null)
+    override fun getPublicKeyBase64(): String = withKeystore { keyStore ->
+        val cert = keyStore.getCertificate(KEY_ALIAS)
+            ?: throw IllegalStateException("Keystore certificate missing for $KEY_ALIAS")
+        Base64.encodeToString(cert.publicKey.encoded, Base64.NO_WRAP)
+    }
+
+    override fun signData(data: ByteArray): ByteArray = withKeystore { keyStore ->
         val privateKey = keyStore.getKey(KEY_ALIAS, null) as? PrivateKey
             ?: throw IllegalStateException("Keystore private key missing for $KEY_ALIAS")
         val signature = Signature.getInstance("SHA256withECDSA")
         signature.initSign(privateKey)
         signature.update(data)
-        return signature.sign()
-    }
-}
-
-class SoftwareEcDeviceSigner(context: Context) : DeviceSigner {
-    private val keyPair: KeyPair
-
-    init {
-        val kpg = KeyPairGenerator.getInstance("EC")
-        kpg.initialize(256)
-        keyPair = kpg.generateKeyPair()
-    }
-
-    override fun getPublicKeyBase64(): String {
-        return Base64.encodeToString(keyPair.public.encoded, Base64.NO_WRAP)
-    }
-
-    override fun signData(data: ByteArray): ByteArray {
-        val signature = Signature.getInstance("SHA256withECDSA")
-        signature.initSign(keyPair.private)
-        signature.update(data)
-        return signature.sign()
+        signature.sign()
     }
 }
 
 class DeviceIdentityManager(
     private val context: Context,
-    private val signer: DeviceSigner = AndroidKeystoreDeviceSigner(context)
+    private val signer: DeviceSigner = AndroidKeystoreDeviceSigner()
 ) {
 
     private val prefs = context.getSharedPreferences("device_identity_prefs", Context.MODE_PRIVATE)

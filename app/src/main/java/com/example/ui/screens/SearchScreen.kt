@@ -243,7 +243,8 @@ fun SearchScreen(
                             fileResolver = { hash -> viewModel.repository.assetStore.getBlobFile(hash) },
                             onClick = { onOpenItemDetail(itemWithCols) },
                             onFavoriteToggle = { viewModel.toggleFavorite(itemWithCols.item.id) },
-                            onDelete = { viewModel.moveToTrash(itemWithCols.item.id) }
+                              onDelete = { viewModel.moveToTrash(itemWithCols.item.id) },
+                              matchingSnippet = viewModel.buildMatchSnippet(itemWithCols.item, searchQuery)
                         )
                     }
                 } else {

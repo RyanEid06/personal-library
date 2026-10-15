@@ -241,8 +241,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         DateFilter.CUSTOM -> {
                             if (timestamp == null) false
                             else {
-                                (customStart == null || timestamp >= customStart) &&
-                                    (customEnd == null || timestamp <= customEnd)
+                                customStart != null && customEnd != null && timestamp >= customStart && timestamp <= customEnd
                             }
                         }
                     }
@@ -255,7 +254,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     when (sort) {
                         SortOrder.SAVED_NEWEST -> itemB.createdAt.compareTo(itemA.createdAt)
                         SortOrder.SAVED_OLDEST -> itemA.createdAt.compareTo(itemB.createdAt)
-                        SortOrder.SOURCE_NEWEST -> timeB.compareTo(timeA)
+                        SortOrder.SOURCE_NEWEST -> (itemB.sourceDate ?: Long.MIN_VALUE).compareTo(itemA.sourceDate ?: Long.MIN_VALUE)
+                        SortOrder.SOURCE_OLDEST -> (itemA.sourceDate ?: Long.MAX_VALUE).compareTo(itemB.sourceDate ?: Long.MAX_VALUE)
                         SortOrder.TITLE_AZ -> itemA.title.compareTo(itemB.title, true)
                     }
                 }

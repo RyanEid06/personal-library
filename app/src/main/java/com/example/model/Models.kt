@@ -5,7 +5,8 @@ typealias ItemKind = com.personallibrary.core.model.ItemKind
 enum class SortOrder(val label: String) {
     SAVED_NEWEST("Newest Saved"),
     SAVED_OLDEST("Oldest Saved"),
-    SOURCE_NEWEST("Source Date"),
+    SOURCE_NEWEST("Newest Source Date"),
+    SOURCE_OLDEST("Oldest Source Date"),
     TITLE_AZ("Title (A-Z)")
 }
 

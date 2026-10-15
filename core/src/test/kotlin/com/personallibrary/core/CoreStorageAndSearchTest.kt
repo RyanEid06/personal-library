@@ -149,6 +149,17 @@ class SearchQueryTest {
 
 class DateRangeTest {
 
+    @Test fun customCalendarDaysIncludeEndDayAcrossDst() {
+        val range = DateRange.days(java.time.LocalDate.of(2026, 3, 8), java.time.LocalDate.of(2026, 3, 8), ZoneId.of("America/New_York"))
+        assertEquals(Instant.parse("2026-03-08T05:00:00Z"), range.startInclusive)
+        assertEquals(Instant.parse("2026-03-09T04:00:00Z"), range.endExclusive)
+        assertTrue(range.contains(Instant.parse("2026-03-09T03:59:59.999Z")))
+        assertFalse(range.contains(Instant.parse("2026-03-09T04:00:00Z")))
+        assertThrows(IllegalArgumentException::class.java) {
+            DateRange.days(java.time.LocalDate.of(2026, 3, 9), java.time.LocalDate.of(2026, 3, 8), ZoneId.of("UTC"))
+        }
+    }
+
     @Test
     fun testMonthBoundary() {
         val zone = ZoneId.of("UTC")

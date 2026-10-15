@@ -32,6 +32,10 @@ import com.example.ui.MainViewModel
 import com.example.ui.components.ItemCard
 import com.example.ui.components.ItemGridCard
 import com.example.ui.components.TypeFilterChipStrip
+import com.personallibrary.core.model.DateRange
+import java.time.Instant
+import java.time.ZoneId
+import java.time.ZoneOffset
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -60,6 +64,29 @@ fun LibraryScreen(
     var showSortMenu by remember { mutableStateOf(false) }
     var showDateFilterMenu by remember { mutableStateOf(false) }
     var showGroupingMenu by remember { mutableStateOf(false) }
+    var showCustomRangeDialog by remember { mutableStateOf(false) }
+
+    if (showCustomRangeDialog) {
+        val rangeState = rememberDateRangePickerState()
+        DatePickerDialog(
+            onDismissRequest = { showCustomRangeDialog = false },
+            confirmButton = {
+                TextButton(
+                    enabled = rangeState.selectedStartDateMillis != null && rangeState.selectedEndDateMillis != null,
+                    onClick = {
+                        val start = Instant.ofEpochMilli(rangeState.selectedStartDateMillis!!).atZone(ZoneOffset.UTC).toLocalDate()
+                        val end = Instant.ofEpochMilli(rangeState.selectedEndDateMillis!!).atZone(ZoneOffset.UTC).toLocalDate()
+                        val range = DateRange.days(start, end, ZoneId.systemDefault())
+                        viewModel.setCustomDateRange(range.startInclusive.toEpochMilli(), range.endExclusive.toEpochMilli() - 1)
+                        showCustomRangeDialog = false
+                    }
+                ) { Text("Apply range") }
+            },
+            dismissButton = { TextButton(onClick = { showCustomRangeDialog = false }) { Text("Cancel") } }
+        ) {
+            DateRangePicker(state = rangeState, modifier = Modifier.height(450.dp), title = { Text("Choose date range", modifier = Modifier.padding(16.dp)) })
+        }
+    }
 
     // Preserve scroll position
     val listState = rememberLazyListState()
@@ -274,7 +301,7 @@ fun LibraryScreen(
                                 DropdownMenuItem(
                                     text = { Text(df.label) },
                                     onClick = {
-                                        viewModel.setDateFilter(df)
+                                        if (df == DateFilter.CUSTOM) showCustomRangeDialog = true else viewModel.setDateFilter(df)
                                         showDateFilterMenu = false
                                     }
                                 )

@@ -177,6 +177,10 @@ fun ItemDetailsDialog(
                     ItemAudioPreview(item, blobFile)
                     Spacer(modifier = Modifier.height(14.dp))
                 }
+                blobFile != null && item.kind == "VIDEO" -> {
+                    ItemVideoPreview(item, blobFile)
+                    Spacer(modifier = Modifier.height(14.dp))
+                }
                 blobFile != null && (item.kind == "TEXT" || (item.mimeType ?: "").startsWith("text/")) -> {
                     ItemTextPreview(item, blobFile)
                     Spacer(modifier = Modifier.height(14.dp))

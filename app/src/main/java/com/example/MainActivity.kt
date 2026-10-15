@@ -16,6 +16,7 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -204,6 +205,7 @@ fun MainAppScaffold(
     var activeDetailItem by remember { mutableStateOf<ItemWithCollections?>(null) }
     var showAddDialog by remember { mutableStateOf(false) }
     var showVoiceSearchDialog by remember { mutableStateOf(false) }
+    val destinationStates = rememberSaveableStateHolder()
 
     val incomingShare by viewModel.incomingShare.collectAsState()
     val collections by viewModel.collections.collectAsState()
@@ -277,6 +279,7 @@ fun MainAppScaffold(
                 .fillMaxSize()
                 .padding(padding)
         ) {
+            destinationStates.SaveableStateProvider(currentDestination.name) {
             when (currentDestination) {
                 AppDestination.LIBRARY -> {
                     LibraryScreen(
@@ -314,6 +317,7 @@ fun MainAppScaffold(
                         viewModel = viewModel
                     )
                 }
+            }
             }
         }
     }

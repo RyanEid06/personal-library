@@ -225,14 +225,23 @@ fun SettingsScreen(
                             onClick = {
                                 isPairingInProgress = true
                                 coroutineScope.launch {
+                                    try {
                                     val success = viewModel.pairBackend(pairingSecretInput.trim())
-                                    isPairingInProgress = false
-                                    pairingSecretInput = ""
                                     if (success) {
                                         showPairingDialog = false
                                         Toast.makeText(context, "Device paired successfully with backend", Toast.LENGTH_SHORT).show()
                                     } else {
                                         Toast.makeText(context, "Pairing failed. Check secret or backend connectivity.", Toast.LENGTH_LONG).show()
+                                    }
+                                    } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                                        throw cancelled
+                                    } catch (_: com.example.ai.DeviceIdentityUnavailableException) {
+                                        Toast.makeText(context, "Android Keystore is unavailable. Unlock your device and retry.", Toast.LENGTH_LONG).show()
+                                    } catch (_: Exception) {
+                                        Toast.makeText(context, "Pairing failed. Check the enrollment secret and backend connection.", Toast.LENGTH_LONG).show()
+                                    } finally {
+                                        isPairingInProgress = false
+                                        pairingSecretInput = ""
                                     }
                                 }
                             },
