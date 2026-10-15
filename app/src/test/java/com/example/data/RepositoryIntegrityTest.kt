@@ -106,4 +106,22 @@ class RepositoryIntegrityTest {
         assertNotEquals(owner.id, restored.collections.single().id)
         assertTrue(repository.dao.getAllAssets().single().relativePath.startsWith("blobs/"))
     }
+
+    @Test fun whatsAppRepeatedAttachmentImportIsIdempotentAndPreservesProvenance() = runBlocking {
+        val chat = "13/10/2026, 10:00 - Ryan: notes.pdf (file attached)\n13/10/2026, 10:01 - Ryan: notes.pdf (file attached)"
+        val bytes = "same supplied original".toByteArray()
+        repository.importWhatsAppMigration(chat, attachments = mapOf("notes.pdf" to bytes.inputStream()))
+        val messages = repository.dao.getAllActiveItems().filter { it.originalFileName == "notes.pdf" }
+        assertEquals(2, messages.size)
+        assertTrue(messages.all { it.contentHash == hash(bytes) })
+        assertEquals(2, repository.dao.getAssetByHash(hash(bytes))!!.refCount)
+        repository.setFavorite(messages.first().id, true)
+        val repeated = repository.importWhatsAppMigration(chat, attachments = mapOf("notes.pdf" to bytes.inputStream()))
+        assertEquals(0, repeated.first)
+        assertEquals(2, repository.dao.getAssetByHash(hash(bytes))!!.refCount)
+        assertTrue(repository.dao.getItemById(messages.first().id)!!.isFavorite)
+        val export = repository.dao.getAllActiveItems().single { it.originalFileName == "WhatsApp export.txt" }
+        assertArrayEquals(chat.toByteArray(), repository.assetStore.getBlobFile(export.contentHash!!)!!.readBytes())
+        assertTrue(messages.all { "Sender: Ryan" in it.content && "13/10/2026" in it.content })
+    }
 }
