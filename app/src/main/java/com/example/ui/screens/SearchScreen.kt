@@ -156,7 +156,7 @@ fun SearchScreen(
                                 )
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text(
-                                    text = "AI Assisted Semantic Retrieval (${aiResults.size} matches)",
+                                    text = "Search matches (${aiResults.size})",
                                     style = MaterialTheme.typography.titleSmall,
                                     fontWeight = FontWeight.Bold,
                                     color = MaterialTheme.colorScheme.onPrimaryContainer
@@ -197,7 +197,7 @@ fun SearchScreen(
                                         shape = RoundedCornerShape(6.dp)
                                     ) {
                                         Text(
-                                            text = res.explanation,
+                                            text = "${res.source}${res.pageNumber?.let { " • Page $it" } ?: ""}\n${res.explanation}",
                                             fontSize = 11.sp,
                                             color = MaterialTheme.colorScheme.onTertiaryContainer,
                                             fontWeight = FontWeight.Medium,
@@ -213,6 +213,10 @@ fun SearchScreen(
                                     style = MaterialTheme.typography.titleMedium,
                                     fontWeight = FontWeight.Bold
                                 )
+
+                                res.matchingSnippet?.let {
+                                    Text(it, style = MaterialTheme.typography.bodySmall, maxLines = 3)
+                                }
 
                                 if (item.content.isNotBlank()) {
                                     Spacer(modifier = Modifier.height(4.dp))

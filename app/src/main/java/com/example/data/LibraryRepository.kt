@@ -639,111 +639,96 @@ class LibraryRepository(private val context: Context, database: LibraryRoomDatab
         }
     }
 
-    // WhatsApp Migration with strict parsing, attachment matching, and idempotent refCounts
+    // Import originals first, then commit the complete message/reference batch together.
     suspend fun importWhatsAppMigration(
         chatText: String,
         dateOrder: DateOrder? = null,
-        attachments: Map<String, InputStream> = emptyMap()
+        attachments: Map<String, InputStream> = emptyMap(),
+        originalExport: InputStream? = null
     ): Pair<Int, Int> = withContext(Dispatchers.IO) {
-        val parseResult = WhatsAppExportParser.parse(chatText, dateOrder)
-
-        val cols = dao.getAllCollections()
-        var randomLinksCol = cols.find { it.name.equals("Random Links", true) }
-        if (randomLinksCol == null) {
-            randomLinksCol = CollectionEntity(
-                id = "col_random_links",
-                name = "Random Links",
-                iconName = "chat",
-                colorHex = "#10B981"
-            )
-            dao.insertCollection(randomLinksCol)
-        }
-
-        var imported = 0
-        for (msg in parseResult.messages) {
-            var contentHash: String? = null
-            var fileSizeBytes = 0L
-            var mimeType: String? = null
-
-            val existingItem = dao.getItemById(msg.importKey)
-
-            // If an attachment is referenced and stream bytes provided, import via ManagedAssetStore
-            if (msg.attachmentFileName != null && attachments.containsKey(msg.attachmentFileName)) {
-                val stream = attachments[msg.attachmentFileName]
-                if (stream != null) {
-                    val stored = assetStore.import(stream, msg.attachmentFileName, null)
-                    contentHash = stored.hash
-                    fileSizeBytes = stored.sizeBytes
-                    mimeType = stored.mimeType
-
-                    // Idempotent reference counting
-                    if (existingItem?.contentHash != stored.hash) {
-                        // If item previously pointed to a different hash, decrement old hash
-                        if (existingItem?.contentHash != null) {
-                            val oldAsset = dao.getAssetByHash(existingItem.contentHash)
-                            if (oldAsset != null) {
-                                val newRefCount = oldAsset.refCount - 1
-                                if (newRefCount <= 0) {
-                                    dao.deleteAsset(existingItem.contentHash)
-                                    assetStore.deleteBlob(existingItem.contentHash)
-                                } else {
-                                    dao.updateAsset(oldAsset.copy(refCount = newRefCount))
-                                }
-                            }
-                        }
-
-                        val existingAsset = dao.getAssetByHash(stored.hash)
-                        if (existingAsset != null) {
-                            dao.updateAsset(existingAsset.copy(refCount = existingAsset.refCount + 1))
+        assetMutations.withLock {
+            val parsed = WhatsAppExportParser.parse(chatText, dateOrder, java.util.TimeZone.getDefault())
+            require(parsed.totalMessages > 0) { "No messages in export" }
+            val supplied = mutableMapOf<String, com.personallibrary.core.model.StoredAsset>()
+            val publications = mutableSetOf<String>()
+            val previousHashes = mutableSetOf<String>()
+            try {
+                val rawExport = (originalExport ?: chatText.byteInputStream()).use { input ->
+                    val bytes = java.io.ByteArrayOutputStream()
+                    val buffer = ByteArray(8192)
+                    while (true) {
+                        val count = input.read(buffer)
+                        if (count < 0) break
+                        if (count == 0) continue
+                        require(bytes.size() + count <= com.personallibrary.core.TextExtraction.MAX_BYTES) { "Export exceeds import budget" }
+                        bytes.write(buffer, 0, count)
+                    }
+                    bytes.toByteArray()
+                }
+                val decoded = com.personallibrary.core.TextExtraction.read(rawExport.inputStream())
+                require(decoded.coverage == "complete" && decoded.text == chatText) { "Export changed since preview; choose it again" }
+                val export = assetStore.import(rawExport.inputStream(), "WhatsApp export.txt", "text/plain")
+                publications.add(export.hash)
+                val neededNames = parsed.messages.mapNotNull { it.attachmentFileName }.toSet()
+                for ((name, stream) in attachments) {
+                    if (name in neededNames) {
+                        val stored = stream.use { assetStore.import(it, name, null) }
+                        supplied[name] = stored
+                        publications.add(stored.hash)
+                    }
+                }
+                var imported = 0
+                db.withTransaction {
+                    val randomLinks = dao.getAllCollections().find { it.name.equals("Random Links", true) }
+                        ?: CollectionEntity(UUID.randomUUID().toString(), "Random Links", "chat", "#10B981").also { dao.insertCollection(it) }
+                    val exportId = "whatsapp_export_${export.hash}"
+                    if (dao.getItemById(exportId) == null) {
+                        dao.insertItem(ItemEntity(id = exportId, title = "WhatsApp export", content = "Original WhatsApp export; imported in timezone ${java.util.TimeZone.getDefault().id}",
+                            kind = ItemKind.DOCUMENT.name, contentHash = export.hash, originalFileName = export.originalName,
+                            mimeType = "text/plain", fileSizeBytes = export.sizeBytes, aiStatus = "PENDING"))
+                        dao.insertItemCollectionCrossRef(ItemCollectionCrossRef(exportId, randomLinks.id))
+                    }
+                    for (msg in parsed.messages) {
+                        val existing = dao.getItemById(msg.importKey)
+                        val stored = msg.attachmentFileName?.let(supplied::get)
+                        existing?.contentHash?.let(previousHashes::add)
+                        val sourceDate = msg.parsedTimestamp ?: existing?.sourceDate
+                        val item = if (existing != null) {
+                            existing.copy(sourceDate = sourceDate, contentHash = stored?.hash ?: existing.contentHash,
+                                originalFileName = stored?.originalName ?: existing.originalFileName,
+                                mimeType = stored?.mimeType ?: existing.mimeType, fileSizeBytes = stored?.sizeBytes ?: existing.fileSizeBytes,
+                                aiStatus = if (stored != null && stored.hash != existing.contentHash) "PENDING" else existing.aiStatus)
                         } else {
-                            dao.insertAsset(
-                                AssetEntity(
-                                    hash = stored.hash,
-                                    relativePath = stored.relativePath,
-                                    sizeBytes = stored.sizeBytes,
-                                    originalName = stored.originalName,
-                                    mimeType = stored.mimeType,
-                                    kind = stored.kind.name,
-                                    refCount = 1
-                                )
-                            )
+                            val provenance = "${msg.rawText}\n\nWhatsApp provenance\nSender: ${msg.sender ?: "System"}\nSource date text: ${msg.rawDateText}\nImport timezone: ${java.util.TimeZone.getDefault().id}"
+                            ItemEntity(id = msg.importKey, title = msg.attachmentFileName ?: msg.rawText.take(40).replace("\n", " "),
+                                content = provenance, kind = msg.kind.name, sourceDate = sourceDate,
+                                contentHash = stored?.hash, originalFileName = msg.attachmentFileName,
+                                mimeType = stored?.mimeType, fileSizeBytes = stored?.sizeBytes ?: 0L, aiStatus = "PENDING")
+                        }
+                        if (existing == null) imported++
+                        dao.insertItem(item)
+                        dao.insertItemCollectionCrossRef(ItemCollectionCrossRef(item.id, randomLinks.id))
+                    }
+                    // Derive counts from actual references, including reuse of one supplied file by many messages.
+                    val counts = dao.getAllItemsIncludingTrash().mapNotNull { it.contentHash }.groupingBy { it }.eachCount()
+                    val importedAssets = (supplied.values + export).associateBy { it.hash }
+                    for (hash in publications + previousHashes) {
+                        val count = counts[hash] ?: 0
+                        val old = dao.getAssetByHash(hash)
+                        if (count == 0) dao.deleteAsset(hash)
+                        else if (old != null) dao.updateAsset(old.copy(refCount = count))
+                        else {
+                            val stored = importedAssets[hash] ?: throw IOException("Missing imported original metadata")
+                            if (assetStore.getBlobFile(hash)?.isFile != true) throw IOException("Missing imported original")
+                            dao.insertAsset(AssetEntity(hash, stored.relativePath, stored.sizeBytes, stored.originalName, stored.mimeType, stored.kind.name, count))
                         }
                     }
                 }
-            } else if (existingItem != null) {
-                // Keep existing hash if no new stream was provided
-                contentHash = existingItem.contentHash
-                fileSizeBytes = existingItem.fileSizeBytes
-                mimeType = existingItem.mimeType
+                Pair(imported, parsed.ambiguousDateCount)
+            } finally {
+                attachments.values.forEach { try { it.close() } catch (_: Exception) { } }
+                removeUnreferencedBlobs(publications + previousHashes)
             }
-
-            val title = when {
-                msg.extractedUrl != null -> {
-                    val host = try { Uri.parse(msg.extractedUrl).host ?: "Link" } catch (_: Exception) { "Link" }
-                    "Link: $host"
-                }
-                msg.attachmentFileName != null -> msg.attachmentFileName
-                else -> msg.rawText.take(40).replace("\n", " ")
-            }
-
-            val item = ItemEntity(
-                id = msg.importKey, // Deterministic key
-                title = title ?: "WhatsApp Message",
-                content = msg.rawText,
-                kind = msg.kind.name,
-                sourceDate = msg.parsedTimestamp,
-                createdAt = existingItem?.createdAt ?: System.currentTimeMillis(),
-                contentHash = contentHash,
-                originalFileName = msg.attachmentFileName ?: existingItem?.originalFileName,
-                mimeType = mimeType,
-                fileSizeBytes = fileSizeBytes,
-                aiStatus = "PENDING"
-            )
-            dao.insertItem(item)
-            dao.insertItemCollectionCrossRef(ItemCollectionCrossRef(msg.importKey, randomLinksCol.id))
-            imported++
         }
-
-        Pair(imported, parseResult.ambiguousDateCount)
     }
 }

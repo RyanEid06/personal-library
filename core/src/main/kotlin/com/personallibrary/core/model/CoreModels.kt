@@ -99,6 +99,12 @@ object SearchQuery {
 object SemanticVectorMath {
     const val DIMENSION = 768
 
+    fun compatibleSimilarity(query: FloatArray, chunk: FloatArray, dimension: Int, model: String): Float {
+        if (dimension != DIMENSION || model != "gemini-embedding-2" || query.size != DIMENSION || chunk.size != DIMENSION) return 0f
+        if (query.any { !it.isFinite() } || chunk.any { !it.isFinite() }) return 0f
+        return cosineSimilarity(query, chunk).takeIf { it.isFinite() } ?: 0f
+    }
+
     fun normalize(vector: FloatArray): FloatArray {
         var sumSquares = 0.0
         for (v in vector) {

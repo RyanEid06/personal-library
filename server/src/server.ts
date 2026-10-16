@@ -33,6 +33,7 @@ export interface GeminiProvider {
     embeddings: number[][];
   }>;
   searchPlan(query: string, knownCollections: string[], nowIso: string, signal?: AbortSignal): Promise<{
+    provenance?: 'GEMINI' | 'LOCAL';
     query: string;
     concepts: string[];
     targetKinds: string[];
@@ -492,6 +493,7 @@ Return JSON with:
 
       return {
         query,
+        provenance: 'GEMINI' as const,
         concepts,
         targetKinds,
         dateRange: { startIso, endIso }
@@ -570,6 +572,7 @@ function parseLocalSearchPlan(query: string) {
 
   return {
     query,
+    provenance: 'LOCAL' as const,
     concepts,
     targetKinds,
     dateRange: { startIso: null, endIso: null }

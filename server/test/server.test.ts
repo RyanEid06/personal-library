@@ -2,7 +2,7 @@ import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert';
 import http from 'node:http';
 import crypto from 'node:crypto';
-import { createServer, DeviceRegistry, FakeGeminiProvider, verifyDeviceSignature } from '../src/server.js';
+import { createServer, DeviceRegistry, FakeGeminiProvider, SdkGeminiProvider, verifyDeviceSignature } from '../src/server.js';
 
 describe('Personal Library Authenticated Backend (TypeScript)', () => {
   let server: http.Server;
@@ -458,5 +458,20 @@ describe('Request cancellation', () => {
       app.server.closeAllConnections();
       await new Promise<void>(resolve => app.server.close(() => resolve()));
     }
+  });
+});
+
+describe('Search plan provenance', () => {
+  test('successful SDK plan identifies Gemini provenance', async () => {
+    const provider = new SdkGeminiProvider('synthetic-key', 'test-generation', 'test-embedding');
+    (provider as any).ai = { models: { generateContent: async () => ({ text: JSON.stringify({ concepts: ['chemistry'], targetKinds: ['TEXT'] }) }) } };
+    const plan = await provider.searchPlan('chemistry', [], '2026-10-15T00:00:00Z');
+    assert.strictEqual((plan as any).provenance, 'GEMINI');
+  });
+  test('provider failure identifies deterministic local plan', async () => {
+    const provider = new SdkGeminiProvider('synthetic-key', 'test-generation', 'test-embedding');
+    (provider as any).ai = { models: { generateContent: async () => { throw new Error('synthetic provider unavailable'); } } };
+    const plan = await provider.searchPlan('chemistry', [], '2026-10-15T00:00:00Z');
+    assert.strictEqual((plan as any).provenance, 'LOCAL');
   });
 });

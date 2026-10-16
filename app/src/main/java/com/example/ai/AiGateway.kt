@@ -114,7 +114,8 @@ data class SearchPlanResponse(
     val query: String,
     val concepts: List<String>,
     val targetKinds: List<String>,
-    val dateRange: DateRangePlan = DateRangePlan()
+    val dateRange: DateRangePlan = DateRangePlan(),
+    val provenance: String = "LOCAL"
 )
 
 class AiGateway(private val context: Context) {

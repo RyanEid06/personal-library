@@ -18,6 +18,9 @@ import com.personallibrary.core.backup.RestorePreview
 import com.personallibrary.core.migration.DateOrder
 import com.personallibrary.core.model.SemanticVectorMath
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -34,7 +37,9 @@ data class SemanticSearchResult(
     val item: ItemWithCollections,
     val explanation: String,
     val score: Float,
-    val matchingSnippet: String? = null
+    val matchingSnippet: String? = null,
+    val source: String = "AI plan + keyword match",
+    val pageNumber: Int? = null
 )
 
 data class GroupedLibrarySection(
@@ -108,6 +113,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val aiSearchResults: StateFlow<List<SemanticSearchResult>> = _aiSearchResults.asStateFlow()
 
     private val _isAiSearching = MutableStateFlow(false)
+    private var aiSearchJob: Job? = null
     val isAiSearching: StateFlow<Boolean> = _isAiSearching.asStateFlow()
 
     private val _incomingShare = MutableStateFlow<SharePayload?>(null)
@@ -377,8 +383,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun setSearchQuery(query: String) {
+        aiSearchJob?.cancel()
+        _isAiSearching.value = false
         _searchQuery.value = query
-        if (query.isBlank()) _aiSearchResults.value = emptyList()
+        _aiSearchResults.value = emptyList()
         refreshFilteredResults()
     }
 
@@ -412,8 +420,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun triggerAiSearch(query: String) {
         if (query.isBlank()) return
-        viewModelScope.launch(Dispatchers.IO) {
+        aiSearchJob?.cancel()
+        aiSearchJob = viewModelScope.launch(Dispatchers.IO) {
             _isAiSearching.value = true
+            _aiSearchResults.value = emptyList()
+            try {
             val active = _items.value
             val cols = _collections.value.map { it.name }
             val plan = aiGateway.getSearchPlan(query, cols)
@@ -421,10 +432,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             // Generate query embedding once online with gemini-embedding-2
             val queryVectors = try {
                 aiGateway.embed(listOf(query))
-            } catch (_: Exception) {
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) {
                 emptyList()
             }
-            val queryVec = queryVectors.firstOrNull()
+            val queryVec = queryVectors.firstOrNull()?.takeIf { it.size == 768 && it.all(Float::isFinite) }
+            // With neither a Gemini plan nor an embedding, keep ordinary local FTS visible.
+            if (queryVec == null && plan.provenance != "GEMINI") return@launch
 
             // Group all stored search documents by item to support multi-chunk indexing
             val allDocs = repository.dao.getAllSearchDocuments()
@@ -451,6 +465,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
                 var bestSim = 0f
                 var bestChunkText = ""
+                var bestPage: Int? = null
                 val explanations = mutableListOf<String>()
 
                 val itemDocs = docsByItem[item.id] ?: emptyList()
@@ -458,10 +473,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     if (queryVec != null && doc.embedding != null && doc.embeddingDimension == 768 && doc.modelVersion == "gemini-embedding-2") {
                         try {
                             val chunkVec = doc.embedding.split(",").map { it.toFloat() }.toFloatArray()
-                            val sim = SemanticVectorMath.cosineSimilarity(queryVec, chunkVec)
+                            val sim = SemanticVectorMath.compatibleSimilarity(queryVec, chunkVec, doc.embeddingDimension, doc.modelVersion)
                             if (sim > bestSim) {
                                 bestSim = sim
                                 bestChunkText = doc.textContent
+                                bestPage = doc.pageNumber
                             }
                         } catch (_: Exception) {}
                     }
@@ -474,7 +490,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
 
                 val itemTextLower = "${item.title} ${item.content} ${item.extractedText ?: ""} ${item.aiDescription ?: ""} ${item.aiConcepts ?: ""}".lowercase()
-                for (c in plan.concepts) {
+                for (c in if (plan.provenance == "GEMINI") plan.concepts else emptyList()) {
                     if (itemTextLower.contains(c.lowercase())) {
                         score += 3f
                         explanations.add("Concept '$c'")
@@ -482,20 +498,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
 
                 if (score > 0f) {
-                    val snippet = buildMatchSnippet(item, query) ?: bestChunkText.take(120)
+                    val semantic = bestSim > 0.30f
+                    val snippet = if (semantic) bestChunkText.take(180) else buildMatchSnippet(item, query)
                     results.add(
                         SemanticSearchResult(
                             item = itemWithCols,
                             explanation = explanations.distinct().take(3).joinToString(" • "),
                             score = score,
-                            matchingSnippet = snippet.ifBlank { null }
+                            matchingSnippet = snippet?.ifBlank { null },
+                            source = if (semantic) "Gemini semantic match" else "AI plan + keyword match",
+                            pageNumber = if (semantic) bestPage else null
                         )
                     )
                 }
             }
 
-            _aiSearchResults.value = results.sortedByDescending { it.score }
-            _isAiSearching.value = false
+            ensureActive()
+            if (_searchQuery.value == query) _aiSearchResults.value = results.sortedByDescending { it.score }
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { _aiSearchResults.value = emptyList() }
+            finally { if (coroutineContext[Job]?.isActive == true) _isAiSearching.value = false }
         }
     }
 
@@ -715,6 +737,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             localIndexer.indexItem(item)
         }
         return res
+    }
+
+    suspend fun importWhatsAppFiles(chatText: String, dateOrder: DateOrder?, attachments: Map<String, Uri>, exportUri: Uri): Pair<Int, Int> = withContext(Dispatchers.IO) {
+        val resolver = getApplication<Application>().contentResolver
+        val streams = mutableMapOf<String, InputStream>()
+        val result = try {
+            for ((name, uri) in attachments) streams[name] = resolver.openInputStream(uri) ?: throw java.io.IOException("Supplied attachment is unavailable")
+            val original = resolver.openInputStream(exportUri) ?: throw java.io.IOException("Original export is unavailable")
+            original.use { repository.importWhatsAppMigration(chatText, dateOrder, streams, originalExport = it) }
+        } finally { streams.values.forEach { try { it.close() } catch (_: Exception) { } } }
+        for (item in repository.dao.getAllActiveItems().filter { it.aiStatus == "PENDING" }) localIndexer.indexItem(item)
+        result
     }
 
     fun clearCache() {

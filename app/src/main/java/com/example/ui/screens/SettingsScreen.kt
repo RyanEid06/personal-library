@@ -28,7 +28,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import com.example.ui.MainViewModel
 import com.example.ui.components.EncryptedBackupPassphraseDialog
-import com.example.ui.components.WhatsAppMigrationDialog
+import com.example.ui.components.WhatsAppFileImportDialog
 import com.personallibrary.core.backup.RestorePreview
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
@@ -261,18 +261,10 @@ fun SettingsScreen(
     }
 
     if (showMigrationDialog) {
-        WhatsAppMigrationDialog(
+        WhatsAppFileImportDialog(
             onDismiss = { showMigrationDialog = false },
-            onImport = { chatText, dateOrder ->
-                coroutineScope.launch {
-                    val (imported, ambiguous) = viewModel.importWhatsAppMigration(chatText, dateOrder)
-                    val msg = if (ambiguous > 0) {
-                        "Imported $imported items. $ambiguous dates were ambiguous and preserved as unparseable to avoid guessing."
-                    } else {
-                        "Imported $imported items successfully."
-                    }
-                    Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
-                }
+            onImport = { chatText, dateOrder, attachments, exportUri ->
+                viewModel.importWhatsAppFiles(chatText, dateOrder, attachments, exportUri)
             }
         )
     }
