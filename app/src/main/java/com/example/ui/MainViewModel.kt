@@ -55,6 +55,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val reminderScheduler = ReminderScheduler(application)
     val aiGateway = AiGateway(application)
     val localIndexer = LocalIndexer(application, repository)
+    val captureState = (application as com.example.PersonalLibraryApp).captureState.state
 
     private val prefs = application.getSharedPreferences("personal_library_settings", Context.MODE_PRIVATE)
 
@@ -134,7 +135,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     init {
         // Enforce 30-day automatic Trash expiry on startup
         viewModelScope.launch(Dispatchers.IO) {
+            repository.reconcileStorage()
             repository.purgeExpiredTrash()
+            com.example.indexing.LocalIndexWorker.enqueue(application)
         }
 
         // Observe active items from Room
@@ -405,18 +408,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun importUris(uris: List<Uri>, collectionIds: List<String>, explicitSticker: Boolean = false) {
-        viewModelScope.launch(Dispatchers.IO) {
-            val resolver = getApplication<Application>().contentResolver
-            for (uri in uris) {
-                val mime = resolver.getType(uri) ?: "application/octet-stream"
-                val name = uri.lastPathSegment ?: "file_${System.currentTimeMillis()}"
-                resolver.openInputStream(uri)?.use { stream ->
-                    val item = repository.captureStream(stream, name, mime, explicitSticker, collectionIds)
-                    localIndexer.indexItem(item)
-                }
-            }
-        }
+        startCapture(SharePayload(uris = uris.map { it.toString() }), collectionIds, explicitSticker)
     }
+
+    private fun startCapture(payload: SharePayload, collectionIds: List<String>, sticker: Boolean = false): Boolean {
+        val context = getApplication<Application>()
+        val started = com.example.capture.CaptureService.start(context, payload, collectionIds, sticker)
+        if (!started) android.widget.Toast.makeText(context, "Another save is running, or saving could not start. Keep the originals and try again.", android.widget.Toast.LENGTH_LONG).show()
+        return started
+    }
+
+    fun confirmShare(collectionIds: List<String>) {
+        val payload = _incomingShare.value ?: return
+        if (startCapture(payload, collectionIds)) _incomingShare.value = null
+    }
+    fun cancelCapture() = com.example.capture.CaptureService.cancel(getApplication())
+    fun dismissCaptureMessage() = (getApplication<Application>() as com.example.PersonalLibraryApp).captureState.dismiss()
 
     fun triggerAiSearch(query: String) {
         if (query.isBlank()) return

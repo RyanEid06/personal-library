@@ -17,14 +17,19 @@ import java.io.File
 class LibraryMigrationTest {
 
     @Test
-    fun testMigrationFrom2To3PreservesDataAndAddsColumns() {
+    fun testMigrationFrom2To3PreservesDataAndAddsColumns() = runMigrations(false)
+
+    @Test fun testMigrationFrom3To4PreservesOwnerDataAndAddsDateOnlyReminders() = runMigrations(true)
+
+    private fun runMigrations(throughV4: Boolean) {
         val context = ApplicationProvider.getApplicationContext<Context>()
-        val dbFile = File(context.filesDir, "test_migration_2_3.db")
+        val databaseName = "migration_${java.util.UUID.randomUUID()}.db"
+        val dbFile = context.getDatabasePath(databaseName)
         dbFile.delete()
 
         // Create DB manually at schema v2
         val helperConfig = androidx.sqlite.db.SupportSQLiteOpenHelper.Configuration.builder(context)
-            .name("test_migration_2_3.db")
+            .name(databaseName)
             .callback(object : androidx.sqlite.db.SupportSQLiteOpenHelper.Callback(2) {
                 override fun onCreate(db: SupportSQLiteDatabase) {
                     db.execSQL("""
@@ -165,7 +170,31 @@ class LibraryMigrationTest {
         assertTrue("FTS should match on newly added extractedText column", ftsCursor.moveToFirst())
         ftsCursor.close()
 
+        if (throughV4) {
+            writableDb.execSQL("INSERT INTO reminders(id,itemId,title,dueMillis,isDone,isExact) VALUES('rem-v3','item_v2_1','Review',1800000000000,0,1)")
+            MIGRATION_3_4.migrate(writableDb)
+            writableDb.query("SELECT content,extractedText,isReminderDateOnly,reminderLocalDate FROM items WHERE id='item_v2_1'").use {
+                assertTrue(it.moveToFirst())
+                assertEquals("Owner Authored Text", it.getString(0))
+                assertEquals("Machine OCR content", it.getString(1))
+                assertEquals(0, it.getInt(2))
+                assertNull(it.getString(3))
+            }
+            writableDb.query("SELECT dueMillis,isExact,isDateOnly,localDate FROM reminders WHERE id='rem-v3'").use {
+                assertTrue(it.moveToFirst())
+                assertEquals(1800000000000L, it.getLong(0))
+                assertEquals(1, it.getInt(1))
+                assertEquals(0, it.getInt(2))
+                assertNull(it.getString(3))
+            }
+            writableDb.execSQL("UPDATE reminders SET isDateOnly=1,localDate='2026-12-01' WHERE id='rem-v3'")
+            writableDb.query("SELECT isDateOnly,localDate FROM reminders WHERE id='rem-v3'").use {
+                assertTrue(it.moveToFirst()); assertEquals(1, it.getInt(0)); assertEquals("2026-12-01", it.getString(1))
+            }
+        }
+
         writableDb.close()
+        openHelper.close()
         dbFile.delete()
     }
 }

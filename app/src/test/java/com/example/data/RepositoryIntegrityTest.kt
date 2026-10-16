@@ -140,4 +140,14 @@ class RepositoryIntegrityTest {
         assertFalse(repository.publishAiResult(item.id, item.localIndexVersion + 1, "trashed", "stale", "READY", emptyList(), 1))
         assertEquals("fresh", repository.dao.getItemById(item.id)!!.aiDescription)
     }
+
+    @Test fun restoredOriginalReusesSharedBlobAndCountsBothCommittedItems() = runBlocking {
+        val bytes = "shared restore original".toByteArray()
+        val first = repository.captureStream(bytes.inputStream(), "first.bin", "application/octet-stream")
+        repository.commitRestore(preview(bytes))
+        assertEquals(2, repository.dao.getAssetByHash(hash(bytes))!!.refCount)
+        repository.deletePermanently("restored")
+        assertEquals(1, repository.dao.getAssetByHash(hash(bytes))!!.refCount)
+        assertArrayEquals(bytes, repository.assetStore.getBlobFile(first.contentHash!!)!!.readBytes())
+    }
 }

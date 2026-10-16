@@ -94,11 +94,11 @@ class DurableAiWorker(
                 val mime = (initialItem.mimeType ?: "").lowercase()
                 try {
                     when {
-                        mime.startsWith("image/") -> {
+                        mime.startsWith("image/") || initialItem.kind in setOf("PHOTO", "STICKER") -> {
                             val part = extractBoundedImagePart(blobFile)
                             if (part != null) mediaParts.add(part)
                         }
-                        mime.startsWith("video/") -> {
+                        mime.startsWith("video/") || initialItem.kind == "VIDEO" -> {
                             mediaParts.addAll(extractBoundedVideoFrames(blobFile))
                             mediaPartial = true
                         }

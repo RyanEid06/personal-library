@@ -45,5 +45,6 @@ data class StorageStats(
 data class SharePayload(
     val text: String? = null,
     val uris: List<String> = emptyList(),
-    val mimeType: String? = null
+    val mimeType: String? = null,
+    val rejectedCount: Int = 0
 )

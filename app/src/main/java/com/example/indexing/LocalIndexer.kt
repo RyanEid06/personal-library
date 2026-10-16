@@ -52,7 +52,7 @@ class LocalIndexer(
                     ext in setOf("txt", "json", "csv", "tsv", "md", "xml", "yaml", "yml", "log") -> {
                     TextExtraction.read(blobFile.inputStream())
                 }
-                mime.startsWith("image/") -> {
+                mime.startsWith("image/") || item.kind in setOf("PHOTO", "STICKER") -> {
                     AndroidTextExtractor.image(blobFile, mime)
                 }
                 mime == "application/pdf" || ext == "pdf" -> {

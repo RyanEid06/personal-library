@@ -709,6 +709,7 @@ fun SharePreviewDialog(
                         style = MaterialTheme.typography.bodyMedium
                     )
                 }
+                if (payload.rejectedCount > 0) Text("${payload.rejectedCount} attachment(s) cannot be read. Share files using a content provider.", color = MaterialTheme.colorScheme.error)
 
                 Spacer(modifier = Modifier.height(14.dp))
 

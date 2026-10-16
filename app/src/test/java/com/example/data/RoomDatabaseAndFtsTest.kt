@@ -26,6 +26,7 @@ class RoomDatabaseAndFtsTest {
         val context = ApplicationProvider.getApplicationContext<Context>()
         db = Room.inMemoryDatabaseBuilder(context, LibraryRoomDatabase::class.java)
             .allowMainThreadQueries()
+            .addCallback(DATABASE_CALLBACK)
             .build()
         dao = db.libraryDao()
     }
@@ -170,6 +171,13 @@ class RoomDatabaseAndFtsTest {
         dao.deleteReminderById("rem_1")
         val pendingAfter = dao.getPendingReminders()
         assertEquals(0, pendingAfter.size)
+    }
+
+    @Test fun unicodeAndOperatorWordsUseActualFtsWithEscapedInput() = runBlocking {
+        dao.insertItem(ItemEntity("unicode", "CANDOR ORGANIC", "درجات chemistry", "TEXT"))
+        val query = com.personallibrary.core.model.SearchQuery.fts("CANDOR OR \"ORGANIC\" درجات")!!
+        assertEquals(listOf("unicode"), dao.searchFts(query).map { it.id })
+        assertTrue(dao.searchFts(com.personallibrary.core.model.SearchQuery.fts("missing")!!).isEmpty())
     }
 
     @Test

@@ -55,6 +55,7 @@ class ManagedAssetStore(val root: Path) {
                     output.write(buffer, 0, bytesRead)
                 }
                 output.flush()
+                output.fd.sync()
             }
 
             val hash = digest.digest().joinToString("") { "%02x".format(it) }
@@ -115,6 +116,17 @@ class ManagedAssetStore(val root: Path) {
 
     fun cleanStaging() {
         stagingDir.listFiles()?.forEach { it.delete() }
+    }
+
+    /** Recover only our own incomplete staging files and unreferenced content-addressed blobs. */
+    fun reconcile(referencedHashes: Set<String>) {
+        cleanStaging()
+        blobsDir.listFiles()?.filter { it.isDirectory && it.name.matches(Regex("[0-9a-f]{2}")) }?.forEach { bucket ->
+            bucket.listFiles()?.filter {
+                it.isFile && it.name.matches(Regex("[0-9a-f]{64}")) && it.name.take(2) == bucket.name && it.name !in referencedHashes
+            }?.forEach { it.delete() }
+            if (bucket.list()?.isEmpty() == true) bucket.delete()
+        }
     }
 
     fun sanitizeFileName(rawName: String): String {

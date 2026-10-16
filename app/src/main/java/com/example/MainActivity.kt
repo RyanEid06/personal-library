@@ -52,7 +52,10 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
-        handleIntent(intent)
+        if (savedInstanceState == null) handleIntent(intent)
+        else if (savedInstanceState.getBoolean("share_preview_pending") && viewModel.incomingShare.value == null) {
+            android.widget.Toast.makeText(this, "Share preview expired after restart. Share the files again to grant access.", android.widget.Toast.LENGTH_LONG).show()
+        }
 
         setContent {
             PersonalLibraryTheme {
@@ -113,7 +116,7 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
         }
     }
 
-    private var lastHandledIntentHash: Int = 0
+
 
     override fun onStop() {
         super.onStop()
@@ -128,71 +131,16 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
         handleIntent(intent)
     }
 
+    override fun onSaveInstanceState(outState: Bundle) {
+        outState.putBoolean("share_preview_pending", viewModel.incomingShare.value != null)
+        super.onSaveInstanceState(outState)
+    }
+
     private fun handleIntent(intent: Intent?) {
-        if (intent == null) return
-        val action = intent.action ?: return
-        if (action != Intent.ACTION_SEND && action != Intent.ACTION_SEND_MULTIPLE) return
-
-        // Prevent duplicate processing of the same intent on configuration change
-        val intentHash = System.identityHashCode(intent)
-        if (intentHash == lastHandledIntentHash) return
-        lastHandledIntentHash = intentHash
-
-        val type = intent.type ?: "application/octet-stream"
-        val text = intent.getStringExtra(Intent.EXTRA_TEXT)
-
-        val uris = mutableListOf<String>()
-
-        // 1. ClipData items (standard, robust modern Android capture)
-        val clipData = intent.clipData
-        if (clipData != null) {
-            for (i in 0 until clipData.itemCount) {
-                val clipUri = clipData.getItemAt(i).uri
-                if (clipUri != null && !uris.contains(clipUri.toString())) {
-                    uris.add(clipUri.toString())
-                }
-            }
-        }
-
-        // 2. EXTRA_STREAM single send
-        if (action == Intent.ACTION_SEND) {
-            val streamUri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
-            } else {
-                @Suppress("DEPRECATION")
-                intent.getParcelableExtra(Intent.EXTRA_STREAM) as? Uri
-            }
-            if (streamUri != null && !uris.contains(streamUri.toString())) {
-                uris.add(streamUri.toString())
-            }
-        }
-
-        // 3. EXTRA_STREAM multiple send
-        if (action == Intent.ACTION_SEND_MULTIPLE) {
-            val streamUris = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                intent.getParcelableArrayListExtra(Intent.EXTRA_STREAM, Uri::class.java)
-            } else {
-                @Suppress("DEPRECATION")
-                intent.getParcelableArrayListExtra(Intent.EXTRA_STREAM)
-            }
-            if (streamUris != null) {
-                for (u in streamUris) {
-                    if (u != null && !uris.contains(u.toString())) {
-                        uris.add(u.toString())
-                    }
-                }
-            }
-        }
-
-        if (text != null || uris.isNotEmpty()) {
-            viewModel.setIncomingShare(
-                SharePayload(
-                    text = text,
-                    uris = uris,
-                    mimeType = type
-                )
-            )
-        }
+        val payload = intent?.let(com.example.capture.SharePayloadDecoder::decode) ?: return
+        if (payload.text != null || payload.uris.isNotEmpty() || payload.rejectedCount > 0) viewModel.setIncomingShare(payload)
+        // Consume delivery immediately. A configuration/process restore must not replay transient grants.
+        setIntent(Intent(this, MainActivity::class.java).setAction(Intent.ACTION_MAIN))
     }
 }
 
@@ -210,6 +158,7 @@ fun MainAppScaffold(
     val incomingShare by viewModel.incomingShare.collectAsState()
     val collections by viewModel.collections.collectAsState()
     val allItems by viewModel.items.collectAsState()
+    val capture by viewModel.captureState.collectAsState()
 
     // Handle launch from notification
     LaunchedEffect(intentTargetItemId, allItems) {
@@ -229,6 +178,19 @@ fun MainAppScaffold(
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         contentWindowInsets = WindowInsets.systemBars,
+        topBar = {
+            if (capture.saving || capture.message != null) {
+                Surface(color = MaterialTheme.colorScheme.secondaryContainer) {
+                    Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                        Text(if (capture.saving) "Saving… ${capture.saved} committed, ${capture.failed} failed of ${capture.total}" else capture.message.orEmpty(),
+                            modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
+                        TextButton(onClick = { if (capture.saving) viewModel.cancelCapture() else viewModel.dismissCaptureMessage() }) {
+                            Text(if (capture.saving) "Cancel" else "Dismiss")
+                        }
+                    }
+                }
+            }
+        },
         bottomBar = {
             if (currentDestination in listOf(AppDestination.LIBRARY, AppDestination.COLLECTIONS, AppDestination.SEARCH)) {
                 NavigationBar(modifier = Modifier.testTag("bottom_nav_bar")) {
@@ -373,19 +335,7 @@ fun MainAppScaffold(
             collections = collections,
             onDismiss = { viewModel.setIncomingShare(null) },
             onConfirmSave = { targetCollectionId ->
-                if (payload.uris.isNotEmpty()) {
-                    val uriList = payload.uris.map { Uri.parse(it) }
-                    viewModel.importUris(uriList, targetCollectionId)
-                }
-                if (payload.text != null) {
-                    val text = payload.text
-                    if (text.startsWith("http://") || text.startsWith("https://")) {
-                        viewModel.saveLink(text, "", "", targetCollectionId)
-                    } else {
-                        viewModel.createNote("", text, targetCollectionId)
-                    }
-                }
-                viewModel.setIncomingShare(null)
+                viewModel.confirmShare(targetCollectionId)
             }
         )
     }

@@ -84,6 +84,20 @@ class LibraryRepository(private val context: Context, database: LibraryRoomDatab
     val assetStore = ManagedAssetStore(File(context.filesDir, "storage_root").toPath())
     private val backupEngine = EncryptedBackupEngine()
 
+    suspend fun reconcileStorage() = withContext(Dispatchers.IO) {
+        assetMutations.withLock {
+            val counts = dao.getAllItemsIncludingTrash().mapNotNull { it.contentHash }.groupingBy { it }.eachCount()
+            db.withTransaction {
+                for (asset in dao.getAllAssets()) {
+                    val count = counts[asset.hash] ?: 0
+                    if (count == 0) dao.deleteAsset(asset.hash)
+                    else if (count != asset.refCount) dao.updateAsset(asset.copy(refCount = count))
+                }
+            }
+            assetStore.reconcile(counts.keys)
+        }
+    }
+
     fun observeActiveItemsWithCollections(): Flow<List<ItemWithCollections>> = dao.observeItemsWithCollections()
 
     fun observeTrashItems(): Flow<List<ItemEntity>> = dao.observeTrashItems()
@@ -134,6 +148,7 @@ class LibraryRepository(private val context: Context, database: LibraryRoomDatab
             title = storedAsset.originalName,
             content = "",
             kind = storedAsset.kind.name,
+            aiStatus = "PENDING",
             contentHash = storedAsset.hash,
             originalFileName = storedAsset.originalName,
             mimeType = storedAsset.mimeType,
@@ -163,12 +178,14 @@ class LibraryRepository(private val context: Context, database: LibraryRoomDatab
         content: String,
         collectionIds: List<String> = emptyList()
     ): ItemEntity = withContext(Dispatchers.IO) {
+        db.withTransaction {
         val itemId = UUID.randomUUID().toString()
         val item = ItemEntity(
             id = itemId,
             title = title.ifBlank { "Untitled Note" },
             content = content,
             kind = ItemKind.TEXT.name,
+            aiStatus = "PENDING",
             createdAt = System.currentTimeMillis()
         )
         dao.insertItem(item)
@@ -176,6 +193,7 @@ class LibraryRepository(private val context: Context, database: LibraryRoomDatab
             dao.insertItemCollectionCrossRef(ItemCollectionCrossRef(itemId, colId))
         }
         item
+        }
     }
 
     suspend fun saveLink(
@@ -184,6 +202,7 @@ class LibraryRepository(private val context: Context, database: LibraryRoomDatab
         note: String,
         collectionIds: List<String> = emptyList()
     ): ItemEntity = withContext(Dispatchers.IO) {
+        db.withTransaction {
         val itemId = UUID.randomUUID().toString()
         val itemTitle = title.ifBlank {
             try {
@@ -197,6 +216,7 @@ class LibraryRepository(private val context: Context, database: LibraryRoomDatab
             title = itemTitle,
             content = if (note.isNotBlank()) "$url\n$note" else url,
             kind = ItemKind.LINK.name,
+            aiStatus = "PENDING",
             createdAt = System.currentTimeMillis()
         )
         dao.insertItem(item)
@@ -204,6 +224,7 @@ class LibraryRepository(private val context: Context, database: LibraryRoomDatab
             dao.insertItemCollectionCrossRef(ItemCollectionCrossRef(itemId, colId))
         }
         item
+        }
     }
 
     suspend fun updateItem(item: ItemEntity) = withContext(Dispatchers.IO) {

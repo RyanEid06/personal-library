@@ -17,14 +17,15 @@ class PdfPageIndexTest {
     @Test fun excludedPdfRetainsPageReferencesAndLocalFtsWithoutRemoteAi() = runBlocking {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val source = File.createTempFile("pages-", ".pdf", context.cacheDir)
-        PdfDocument().use { pdf ->
+        val pdf = PdfDocument()
+        try {
             for (number in 1..2) {
                 val page = pdf.startPage(PdfDocument.PageInfo.Builder(600, 800, number).create())
                 page.canvas.drawText(if (number == 1) "Chemistry on page one" else "Biology on page two", 40f, 80f, Paint().apply { textSize = 28f })
                 pdf.finishPage(page)
             }
             source.outputStream().use(pdf::writeTo)
-        }
+        } finally { pdf.close() }
         val repository = LibraryRepository(context)
         val item = repository.captureStream(source.inputStream(), "synthetic-pages.pdf", "application/pdf")
         try {

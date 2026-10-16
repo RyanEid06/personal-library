@@ -11,10 +11,12 @@ import coil.decode.ImageDecoderDecoder
 import com.example.reminder.ReminderReceiver
 
 class PersonalLibraryApp : Application(), ImageLoaderFactory {
+    val captureState by lazy { com.example.capture.CaptureStateStore(this) }
 
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
+        captureState
     }
 
     override fun newImageLoader(): ImageLoader {
