@@ -49,6 +49,42 @@ class AiQueuePrivacyTest {
         assertEquals("NEEDS_RETRY", repository.dao.getAnalysisJob(item.id)!!.status)
     }
 
+    @Test fun abandonedProcessingRecoversWithoutResettingPersistedAttemptCount() = runBlocking {
+        val repository = LibraryRepository(context)
+        val item = repository.createNote("Interrupted", "Recover persisted processing", emptyList())
+        repository.dao.insertOrUpdateAnalysisJob(AnalysisJobEntity(itemId = item.id, expectedContentVersion = item.localIndexVersion,
+            indexVersion = item.localIndexVersion, status = "PROCESSING", attempts = 2))
+        LocalIndexer(context, repository).enqueuePendingAnalysisJobs()
+        val work = androidx.work.WorkManager.getInstance(context).getWorkInfosForUniqueWork("ai_job_${item.id}").get().single()
+        assertTrue("ai_version_${item.localIndexVersion}" in work.tags)
+        assertEquals(2, repository.dao.getAnalysisJob(item.id)!!.attempts)
+    }
+
+    @Test fun persistedRetryCeilingSurvivesNewWorkRequestUntilExplicitRetry() = runBlocking {
+        val repository = LibraryRepository(context)
+        val item = repository.createNote("Ceiling", "Do not resend automatically", emptyList())
+        repository.dao.updateExtractedText(item.id, null, "COMPLETE", item.localIndexVersion)
+        repository.dao.insertOrUpdateAnalysisJob(AnalysisJobEntity(itemId = item.id, status = "PROCESSING", attempts = 4))
+        val worker = TestListenableWorkerBuilder<DurableAiWorker>(context, inputData = workDataOf("item_id" to item.id)).build()
+        assertEquals(ListenableWorker.Result.failure(), worker.doWork())
+        assertEquals(4, repository.dao.getAnalysisJob(item.id)!!.attempts)
+        LocalIndexer(context, repository).enqueuePendingAnalysisJobs()
+        assertTrue(androidx.work.WorkManager.getInstance(context).getWorkInfosForUniqueWork("ai_job_${item.id}").get().isEmpty())
+        LocalIndexer(context, repository).retryAnalysis(item.id)
+        assertEquals(0, repository.dao.getAnalysisJob(item.id)!!.attempts)
+        assertFalse(androidx.work.WorkManager.getInstance(context).getWorkInfosForUniqueWork("ai_job_${item.id}").get().isEmpty())
+    }
+
+    @Test fun obsoleteWorkCannotStartOnNewContentVersion() = runBlocking {
+        val repository = LibraryRepository(context)
+        val item = repository.createNote("Replacement", "Current content", emptyList())
+        val worker = TestListenableWorkerBuilder<DurableAiWorker>(context,
+            inputData = workDataOf("item_id" to item.id, "content_version" to item.localIndexVersion - 1)).build()
+        assertEquals(ListenableWorker.Result.success(), worker.doWork())
+        assertEquals("PENDING", repository.dao.getItemById(item.id)!!.aiStatus)
+        assertNull(repository.dao.getAnalysisJob(item.id))
+    }
+
     @Test fun pausedWorkerRetainsQueuedJobAndFinishesWithoutRetry() = runBlocking {
         val repository = LibraryRepository(context)
         val item = repository.createNote("Private", "Offline searchable", emptyList())

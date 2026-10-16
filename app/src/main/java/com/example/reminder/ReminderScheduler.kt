@@ -17,6 +17,8 @@ class ReminderScheduler(private val context: Context) {
     fun canUseExactAlarms(): Boolean = Build.VERSION.SDK_INT < 31 || alarmManager.canScheduleExactAlarms()
 
     fun schedule(itemId: String, title: String, triggerAtMillis: Long, isExact: Boolean = true): Boolean {
+        // Replacing a reminder also removes its old alarm when the new time is past or blocked.
+        cancel(itemId)
         if (triggerAtMillis <= System.currentTimeMillis()) return false
         if (!notificationsEnabled()) return false
 

@@ -28,35 +28,48 @@ class CaptureService : Service() {
     }
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == CANCEL) {
-            active?.cancel()
-            stopSelf()
+            if (active != null) active?.cancel() else stopSelf()
             return START_NOT_STICKY
         }
         if (intent == null || active != null) { if (active == null) stopSelf(); return START_NOT_STICKY }
         val decoded = SharePayloadDecoder.decode(intent) ?: run { stopSelf(); return START_NOT_STICKY }
         val payload = decoded.copy(rejectedCount = decoded.rejectedCount + intent.getIntExtra("capture_rejected", 0))
-        if (store.state.value.batchId != intent.getStringExtra(BATCH_ID)) { stopSelf(); return START_NOT_STICKY }
+        val batchId = intent.getStringExtra(BATCH_ID)
+        if (batchId == null || store.state.value.batchId != batchId) { stopSelf(); return START_NOT_STICKY }
         val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         val cancel = PendingIntent.getService(this, 1, Intent(this, CaptureService::class.java).setAction(CANCEL), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         val notification = NotificationCompat.Builder(this, CHANNEL).setSmallIcon(android.R.drawable.stat_sys_download)
             .setContentTitle("Saving to your library").setContentText("Copying original files to this phone")
             .setContentIntent(open).addAction(0, "Cancel", cancel).setOngoing(true).setProgress(0, 0, true)
             .setVisibility(NotificationCompat.VISIBILITY_PRIVATE).build()
-        ServiceCompat.startForeground(this, 1001, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+        try { ServiceCompat.startForeground(this, 1001, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC) }
+        catch (_: Exception) {
+            stopSelfResult(startId)
+            store.finish("Saving could not start. Keep the originals and try sharing again.", batchId)
+            return START_NOT_STICKY
+        }
         active = scope.launch {
+            var message = "Saving could not finish. Items already committed are kept; share unfinished files again."
             try {
                 val repository = LibraryRepository(this@CaptureService)
                 val result = CaptureBatchProcessor.android(this@CaptureService, repository).save(payload,
-                    intent.getStringArrayListExtra(COLLECTIONS).orEmpty(), intent.getBooleanExtra(STICKER, false)) { saved, failed -> store.progress(saved, failed) }
-                store.finish(if (result.failed == 0) "Saved ${result.saved} item(s) to your library."
-                    else "Saved ${result.saved} item(s). ${result.failed} file(s) could not be saved; share them again.")
+                    intent.getStringArrayListExtra(COLLECTIONS).orEmpty(), intent.getBooleanExtra(STICKER, false)) { saved, failed -> store.progress(saved, failed, batchId) }
+                message = if (result.failed == 0) "Saved ${result.saved} item(s) to your library."
+                    else "Saved ${result.saved} item(s). ${result.failed} file(s) could not be saved; share them again."
             } catch (cancelled: CancellationException) {
-                store.finish("Saving stopped. Items already committed are kept; share unfinished files again.")
+                message = "Saving stopped. Items already committed are kept; share unfinished files again."
             } catch (_: Exception) {
-                store.finish("Saving could not finish. Items already committed are kept; share unfinished files again.")
+                // Keep the default failure message and committed counts.
             } finally {
-                LocalIndexWorker.enqueue(this@CaptureService)
-                withContext(NonCancellable + Dispatchers.Main) { stopForeground(STOP_FOREGROUND_REMOVE); stopSelfResult(startId) }
+                try { LocalIndexWorker.enqueue(this@CaptureService) } finally {
+                    withContext(NonCancellable + Dispatchers.Main) {
+                        stopForeground(STOP_FOREGROUND_REMOVE)
+                        active = null
+                        stopSelfResult(startId)
+                        // Release admission last, after foreground teardown and active-job reset.
+                        store.finish(message, batchId)
+                    }
+                }
             }
         }
         return START_NOT_STICKY
@@ -92,7 +105,7 @@ class CaptureService : Service() {
                 }
             }
             return try { ContextCompat.startForegroundService(context, intent); true }
-            catch (_: Exception) { store.finish("Saving could not start. Keep the originals and try sharing again."); false }
+            catch (_: Exception) { store.finish("Saving could not start. Keep the originals and try sharing again.", batch); false }
         }
         fun cancel(context: Context) { context.startService(Intent(context, CaptureService::class.java).setAction(CANCEL)) }
     }

@@ -306,7 +306,8 @@ fun MainAppScaffold(
                 viewModel.setReminder(currentItem.item.id, timeMillis, isExact, isDateOnly, localDate)
             },
             aiExcluded = viewModel.isItemExcludedFromAi(currentItem.item.id),
-            onAiExcludedChange = { viewModel.setItemAiExcluded(currentItem.item.id, it) }
+            onAiExcludedChange = { viewModel.setItemAiExcluded(currentItem.item.id, it) },
+            onRetryAi = { viewModel.retryAiAnalysis(currentItem.item.id) }
         )
     }
 

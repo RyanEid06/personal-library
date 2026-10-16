@@ -115,7 +115,7 @@ class ManagedAssetStore(val root: Path) {
     }
 
     fun cleanStaging() {
-        stagingDir.listFiles()?.forEach { it.delete() }
+        stagingDir.listFiles()?.filter { it.isFile && it.name.startsWith("stage_") }?.forEach { it.delete() }
     }
 
     /** Recover only our own incomplete staging files and unreferenced content-addressed blobs. */

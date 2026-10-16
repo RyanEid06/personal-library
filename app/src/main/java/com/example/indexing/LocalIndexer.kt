@@ -10,21 +10,23 @@ import com.personallibrary.core.ExtractedText
 import com.personallibrary.core.TextExtraction
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.io.File
 
 class LocalIndexer(
     private val context: Context,
     private val repository: LibraryRepository
 ) {
+    companion object { private val queueMutations = Mutex() }
     private suspend fun queueAnalysis(item: ItemEntity, version: Int) {
         val prefs = context.getSharedPreferences("personal_library_settings", Context.MODE_PRIVATE)
         val excludedItems = prefs.getStringSet("excluded_items", emptySet()).orEmpty()
         val excludedCollections = prefs.getStringSet("excluded_collections", emptySet()).orEmpty()
         val excluded = item.id in excludedItems || repository.dao.getCollectionIdsForItem(item.id).any { it in excludedCollections }
         val status = if (excluded) "EXCLUDED" else "QUEUED"
-        repository.dao.updateAiStatus(item.id, status)
-        repository.dao.insertOrUpdateAnalysisJob(AnalysisJobEntity(itemId = item.id, expectedContentVersion = version, indexVersion = version, status = status))
-        if (!excluded) enqueueDurableAiJob(item.id)
+        val queued = repository.updateAnalysisJobIfCurrent(AnalysisJobEntity(itemId = item.id, expectedContentVersion = version, indexVersion = version, status = status))
+        if (queued && !excluded) enqueueDurableAiJob(item.id)
     }
 
     suspend fun indexItem(item: ItemEntity): ExtractedText = withContext(Dispatchers.IO) {
@@ -93,46 +95,71 @@ class LocalIndexer(
         extracted
     }
 
-    fun enqueueDurableAiJob(itemId: String) {
+    suspend fun enqueueDurableAiJob(itemId: String) = queueMutations.withLock {
         val prefs = context.getSharedPreferences("personal_library_settings", Context.MODE_PRIVATE)
         val pauseAi = prefs.getBoolean("ai_paused", false)
-        if (pauseAi) return
+        if (pauseAi) return@withLock
 
         // Check if item or its collections are excluded
         val excludedItems = prefs.getStringSet("excluded_items", emptySet()) ?: emptySet()
-        if (excludedItems.contains(itemId)) return
+        if (excludedItems.contains(itemId)) return@withLock
+        val item = repository.dao.getItemById(itemId) ?: return@withLock
+        val job = repository.dao.getAnalysisJob(itemId) ?: return@withLock
+        if (item.isTrash || job.expectedContentVersion != item.localIndexVersion) return@withLock
+        val excludedCollections = prefs.getStringSet("excluded_collections", emptySet()).orEmpty()
+        if (repository.dao.getCollectionIdsForItem(itemId).any { it in excludedCollections }) return@withLock
+        val versionTag = "ai_version_${item.localIndexVersion}"
+        val manager = WorkManager.getInstance(context)
+        val liveWork = manager.getWorkInfosForUniqueWork("ai_job_$itemId").get().filter { !it.state.isFinished }
+        // KEEP preserves the current request's progress and backoff. Replace only obsolete content work.
+        val policy = if (liveWork.any { versionTag !in it.tags }) ExistingWorkPolicy.REPLACE else ExistingWorkPolicy.KEEP
 
         val wifiOnly = prefs.getBoolean("ai_wifi_only", true)
         val networkType = if (wifiOnly) NetworkType.UNMETERED else NetworkType.CONNECTED
         val constraints = Constraints.Builder()
             .setRequiredNetworkType(networkType)
+            .setRequiresBatteryNotLow(true)
             .build()
 
-        val data = workDataOf("item_id" to itemId)
+        val data = workDataOf("item_id" to itemId, "content_version" to item.localIndexVersion)
         val request = OneTimeWorkRequestBuilder<DurableAiWorker>()
             .setInputData(data)
             .setConstraints(constraints)
             .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 15, java.util.concurrent.TimeUnit.SECONDS)
             .addTag("ai_enrichment")
+            .addTag(versionTag)
             .build()
 
-        WorkManager.getInstance(context).enqueueUniqueWork(
+        manager.enqueueUniqueWork(
             "ai_job_$itemId",
-            ExistingWorkPolicy.REPLACE,
+            policy,
             request
-        )
+        ).result.get()
     }
 
-    suspend fun enqueuePendingAnalysisJobs() = withContext(Dispatchers.IO) {
+    suspend fun enqueuePendingAnalysisJobs(resumeUnpaired: Boolean = false) = withContext(Dispatchers.IO) {
         val prefs = context.getSharedPreferences("personal_library_settings", Context.MODE_PRIVATE)
         if (prefs.getBoolean("ai_paused", false)) return@withContext
 
         val pendingJobs = repository.dao.getPendingAnalysisJobs()
         for (job in pendingJobs) {
+            if (job.status == "NEEDS_RETRY" && !(resumeUnpaired && job.lastErrorClass == "UNPAIRED")) continue
             val item = repository.dao.getItemById(job.itemId)
-            if (item != null && !item.isTrash) {
+            if (item != null && !item.isTrash && item.localIndexVersion == job.expectedContentVersion) {
+                if (job.attempts >= 4) {
+                    repository.updateAnalysisJobIfCurrent(job.copy(status = "NEEDS_RETRY"))
+                    continue
+                }
+                if (job.status == "NEEDS_RETRY") repository.updateAnalysisJobIfCurrent(job.copy(status = "QUEUED"))
                 enqueueDurableAiJob(job.itemId)
             }
         }
+    }
+
+    suspend fun retryAnalysis(itemId: String) = withContext(Dispatchers.IO) {
+        val item = repository.dao.getItemById(itemId) ?: return@withContext
+        if (item.isTrash) return@withContext
+        if (item.localIndexCoverage in setOf("PENDING", "FAILED") || item.aiStatus == "PENDING") indexItem(item)
+        else queueAnalysis(item, item.localIndexVersion)
     }
 }

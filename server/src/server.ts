@@ -708,6 +708,7 @@ export function createServer(config?: Partial<ServerConfig>) {
         status: 'ok',
         service: 'personal-library-backend',
         version: '1.0.0',
+        revision: /^[0-9a-f]{40}$/.test(process.env.RENDER_GIT_COMMIT || '') ? process.env.RENDER_GIT_COMMIT : null,
         hasLiveKey: Boolean(geminiApiKey),
         geminiModel,
         geminiEmbeddingModel,

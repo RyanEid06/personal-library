@@ -20,7 +20,6 @@ class BootReceiver : BroadcastReceiver() {
             CoroutineScope(Dispatchers.IO).launch {
                 try {
                     val pendingReminders = repository.dao.getPendingReminders()
-                    val now = System.currentTimeMillis()
                     for (rem in pendingReminders) {
                         val due = if (rem.isDateOnly && rem.localDate != null) {
                             try { com.personallibrary.core.ReminderDate.atNine(rem.localDate) } catch (_: java.time.DateTimeException) { continue }
@@ -29,9 +28,8 @@ class BootReceiver : BroadcastReceiver() {
                             repository.dao.insertReminder(rem.copy(dueMillis = due))
                             repository.dao.setReminder(rem.itemId, due, rem.isExact, rem.isDateOnly, rem.localDate)
                         }
-                        if (due > now) {
-                            scheduler.schedule(rem.itemId, rem.title, due, rem.isExact)
-                        }
+                        // Newly past-due local dates remain visible as pending; do not deliver an old-zone alarm.
+                        scheduler.schedule(rem.itemId, rem.title, due, rem.isExact)
                     }
                 } finally {
                     pending.finish()

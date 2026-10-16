@@ -27,8 +27,12 @@ class CaptureStateStore(context: Context) {
         mutable.value = next
         return true
     }
-    @Synchronized fun progress(saved: Int, failed: Int) = update(mutable.value.copy(saved = saved, failed = failed))
-    @Synchronized fun finish(message: String) = update(mutable.value.copy(saving = false, batchId = null, message = message))
+    @Synchronized fun progress(saved: Int, failed: Int, batchId: String? = null) {
+        if (batchId == null || mutable.value.batchId == batchId) update(mutable.value.copy(saved = saved, failed = failed))
+    }
+    @Synchronized fun finish(message: String, batchId: String? = null) {
+        if (batchId == null || mutable.value.batchId == batchId) update(mutable.value.copy(saving = false, batchId = null, message = message))
+    }
     @Synchronized fun dismiss() { if (!mutable.value.saving) update(CaptureState()) }
     private fun update(value: CaptureState) { persist(value); mutable.value = value }
     private fun persist(value: CaptureState): Boolean = prefs.edit().putBoolean("saving", value.saving).putInt("total", value.total).putInt("saved", value.saved)

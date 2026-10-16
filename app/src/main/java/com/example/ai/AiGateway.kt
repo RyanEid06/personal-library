@@ -32,8 +32,8 @@ data class EnrollRequest(
     val appVersion: String,
     val challengeNonce: String,
     val enrollmentSecret: String? = null,
-    val publicKey: String? = null,
-    val signature: String? = null
+    val publicKey: String,
+    val signature: String
 )
 
 @Serializable
@@ -50,8 +50,8 @@ data class SessionRenewRequest(
     val deviceId: String,
     val deviceCredential: String,
     val challengeNonce: String,
-    val publicKey: String? = null,
-    val signature: String? = null
+    val publicKey: String,
+    val signature: String
 )
 
 @Serializable

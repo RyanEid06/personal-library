@@ -55,6 +55,14 @@ class LibraryRepository(private val context: Context, database: LibraryRoomDatab
 
     val dao = db.libraryDao()
 
+    suspend fun updateAnalysisJobIfCurrent(job: AnalysisJobEntity, itemStatus: String = job.status): Boolean = db.withTransaction {
+        val current = dao.getItemById(job.itemId)
+        if (current == null || current.isTrash || current.localIndexVersion != job.expectedContentVersion) return@withTransaction false
+        dao.updateAiStatus(job.itemId, itemStatus)
+        dao.insertOrUpdateAnalysisJob(job)
+        true
+    }
+
     suspend fun publishLocalIndex(itemId: String, expectedVersion: Int, text: String?, coverage: String,
         documents: List<SearchDocumentEntity>): Boolean = db.withTransaction {
         val current = dao.getItemById(itemId)
@@ -347,9 +355,11 @@ class LibraryRepository(private val context: Context, database: LibraryRoomDatab
     }
 
     suspend fun setItemCollections(itemId: String, collectionIds: List<String>) = withContext(Dispatchers.IO) {
-        dao.removeAllCollectionsForItem(itemId)
-        for (colId in collectionIds) {
-            dao.insertItemCollectionCrossRef(ItemCollectionCrossRef(itemId, colId))
+        db.withTransaction {
+            dao.removeAllCollectionsForItem(itemId)
+            for (colId in collectionIds.distinct()) {
+                dao.insertItemCollectionCrossRef(ItemCollectionCrossRef(itemId, colId))
+            }
         }
     }
 
@@ -619,12 +629,12 @@ class LibraryRepository(private val context: Context, database: LibraryRoomDatab
                             title = rem.title,
                             dueMillis = dueMillis,
                             isDone = rem.isDone,
-                            isExact = rem.isExact,
+                            isExact = rem.isExact && !rem.isDateOnly && ReminderScheduler(context).canUseExactAlarms(),
                             isDateOnly = rem.isDateOnly,
                             localDate = rem.localDate
                         )
                         dao.insertReminder(remEntity)
-                        dao.setReminder(finalItemId, dueMillis, rem.isExact, rem.isDateOnly, rem.localDate)
+                        dao.setReminder(finalItemId, dueMillis, remEntity.isExact, rem.isDateOnly, rem.localDate)
                         dao.setReminderDone(finalItemId, rem.isDone)
                         if (!rem.isDone && dueMillis > System.currentTimeMillis()) remindersToSchedule.add(remEntity to dueMillis)
                     }
@@ -740,11 +750,17 @@ class LibraryRepository(private val context: Context, database: LibraryRoomDatab
                         val stored = msg.attachmentFileName?.let(supplied::get)
                         existing?.contentHash?.let(previousHashes::add)
                         val sourceDate = msg.parsedTimestamp ?: existing?.sourceDate
+                        val originalChanged = existing != null && stored != null && stored.hash != existing.contentHash
                         val item = if (existing != null) {
                             existing.copy(sourceDate = sourceDate, contentHash = stored?.hash ?: existing.contentHash,
                                 originalFileName = stored?.originalName ?: existing.originalFileName,
                                 mimeType = stored?.mimeType ?: existing.mimeType, fileSizeBytes = stored?.sizeBytes ?: existing.fileSizeBytes,
-                                aiStatus = if (stored != null && stored.hash != existing.contentHash) "PENDING" else existing.aiStatus)
+                                localIndexVersion = existing.localIndexVersion + if (originalChanged) 1 else 0,
+                                extractedText = if (originalChanged) null else existing.extractedText,
+                                localIndexCoverage = if (originalChanged) "PENDING" else existing.localIndexCoverage,
+                                aiDescription = if (originalChanged) null else existing.aiDescription,
+                                aiConcepts = if (originalChanged) null else existing.aiConcepts,
+                                aiStatus = if (originalChanged) "PENDING" else existing.aiStatus)
                         } else {
                             val provenance = "${msg.rawText}\n\nWhatsApp provenance\nSender: ${msg.sender ?: "System"}\nSource date text: ${msg.rawDateText}\nImport timezone: ${java.util.TimeZone.getDefault().id}"
                             ItemEntity(id = msg.importKey, title = msg.attachmentFileName ?: msg.rawText.take(40).replace("\n", " "),
@@ -754,6 +770,10 @@ class LibraryRepository(private val context: Context, database: LibraryRoomDatab
                         }
                         if (existing == null) imported++
                         dao.insertItem(item)
+                        if (originalChanged) {
+                            dao.deleteSearchDocumentsForItem(item.id)
+                            dao.deleteAnalysisJob(item.id)
+                        }
                         dao.insertItemCollectionCrossRef(ItemCollectionCrossRef(item.id, randomLinks.id))
                     }
                     // Derive counts from actual references, including reuse of one supplied file by many messages.

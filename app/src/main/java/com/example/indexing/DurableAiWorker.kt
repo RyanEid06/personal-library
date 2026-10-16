@@ -34,6 +34,16 @@ class DurableAiWorker(
         val repository = LibraryRepository(applicationContext)
         val initialItem = repository.dao.getItemById(itemId) ?: return@withContext Result.success()
         val expectedVersion = initialItem.localIndexVersion
+        val requestedVersion = inputData.getInt("content_version", expectedVersion)
+        if (requestedVersion != expectedVersion) return@withContext Result.success()
+        val previousJob = repository.dao.getAnalysisJob(itemId)
+        val attempts = previousJob?.takeIf { it.expectedContentVersion == expectedVersion }?.attempts ?: 0
+        // Persist the ceiling across WorkManager recovery and process restarts.
+        if (attempts >= 4) {
+            repository.updateAnalysisJobIfCurrent(AnalysisJobEntity(itemId, expectedVersion, expectedVersion, status = "NEEDS_RETRY", attempts = attempts))
+            return@withContext Result.failure()
+        }
+        val attempt = attempts + 1
 
         // If item is trashed, do not process
         if (initialItem.isTrash) return@withContext Result.success()
@@ -48,8 +58,9 @@ class DurableAiWorker(
             val paused = prefs.getBoolean("ai_paused", false)
             if (excluded || paused) {
                 val status = if (excluded) "EXCLUDED" else "QUEUED"
-                repository.dao.updateAiStatus(itemId, status)
-                repository.dao.insertOrUpdateAnalysisJob(AnalysisJobEntity(itemId = itemId, expectedContentVersion = expectedVersion, indexVersion = expectedVersion, status = status))
+                val recordedAttempts = repository.dao.getAnalysisJob(itemId)?.takeIf { it.expectedContentVersion == expectedVersion }?.attempts ?: attempts
+                repository.updateAnalysisJobIfCurrent(AnalysisJobEntity(itemId = itemId, expectedContentVersion = expectedVersion,
+                    indexVersion = expectedVersion, status = status, attempts = recordedAttempts))
                 return false
             }
             return true
@@ -59,10 +70,12 @@ class DurableAiWorker(
 
         try {
             if (!aiGateway.identityManager.isPaired) {
-                repository.dao.updateAiStatus(itemId, "NEEDS_RETRY")
-                repository.dao.insertOrUpdateAnalysisJob(
+                repository.updateAnalysisJobIfCurrent(
                     AnalysisJobEntity(
                         itemId = itemId,
+                        expectedContentVersion = expectedVersion,
+                        indexVersion = expectedVersion,
+                        attempts = attempts,
                         status = "NEEDS_RETRY",
                         lastErrorClass = "UNPAIRED",
                         lastErrorTime = System.currentTimeMillis(),
@@ -73,17 +86,16 @@ class DurableAiWorker(
             }
 
             // Update status to ANALYZING and record job progress
-            repository.dao.updateAiStatus(itemId, "ANALYZING")
-            repository.dao.insertOrUpdateAnalysisJob(
+            if (!repository.updateAnalysisJobIfCurrent(
                 AnalysisJobEntity(
                     itemId = itemId,
                     expectedContentVersion = expectedVersion,
                     indexVersion = expectedVersion,
                     status = "PROCESSING",
-                    attempts = runAttemptCount + 1,
+                    attempts = attempt,
                     updatedAt = System.currentTimeMillis()
-                )
-            )
+                ), "ANALYZING"
+            )) return@withContext Result.success()
 
             // Extract bounded media parts if applicable
             val mediaParts = mutableListOf<MediaPart>()
@@ -116,7 +128,7 @@ class DurableAiWorker(
 
             if (initialItem.kind == "AUDIO" && mediaParts.isEmpty()) {
                 repository.publishAiResult(itemId, expectedVersion, "Automatic audio analysis unavailable: a bounded representation could not be produced.",
-                    "", "UNSUPPORTED", repository.dao.getSearchDocumentsForItem(itemId), runAttemptCount + 1)
+                    "", "UNSUPPORTED", repository.dao.getSearchDocumentsForItem(itemId), attempt)
                 return@withContext Result.success()
             }
 
@@ -200,7 +212,7 @@ class DurableAiWorker(
             // Keep local page chunks that were not selected for embedding, preserving page provenance.
             val unembeddedPages = localDocs.filter { local -> local.pageNumber != null && chunks.none { it.pageNumber == local.pageNumber && it.text == local.textContent } }
             repository.publishAiResult(itemId, expectedVersion, analysis.description, analysis.concepts,
-                if (analysis.coverage == "COMPLETE") "READY" else "PARTIAL", allEmbeddedDocs + unembeddedPages, runAttemptCount + 1)
+                if (analysis.coverage == "COMPLETE") "READY" else "PARTIAL", allEmbeddedDocs + unembeddedPages, attempt)
 
             Result.success()
         } catch (e: Exception) {
@@ -209,22 +221,21 @@ class DurableAiWorker(
             val isPermanent = e is AiGatewayException.UnconfiguredException ||
                 e is AiGatewayException.UnpairedException
 
-            val status = if (isPermanent || runAttemptCount >= 3) "NEEDS_RETRY" else "QUEUED"
-            repository.dao.updateAiStatus(itemId, status)
-            repository.dao.insertOrUpdateAnalysisJob(
+            val status = if (isPermanent || attempt >= 4) "NEEDS_RETRY" else "QUEUED"
+            repository.updateAnalysisJobIfCurrent(
                 AnalysisJobEntity(
                     itemId = itemId,
                     expectedContentVersion = expectedVersion,
                     indexVersion = expectedVersion,
                     status = status,
-                    attempts = runAttemptCount + 1,
+                    attempts = attempt,
                     lastErrorClass = e::class.java.simpleName,
                     lastErrorTime = System.currentTimeMillis(),
                     updatedAt = System.currentTimeMillis()
                 )
             )
 
-            if (!isPermanent && runAttemptCount < 3) {
+            if (!isPermanent && attempt < 4) {
                 Result.retry()
             } else {
                 Result.failure()

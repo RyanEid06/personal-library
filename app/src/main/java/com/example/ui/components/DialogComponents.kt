@@ -56,7 +56,8 @@ fun ItemDetailsDialog(
     onCollectionsChange: (List<String>) -> Unit,
     onSetReminder: (Long?, Boolean, Boolean, String?) -> Unit,
     aiExcluded: Boolean = false,
-    onAiExcludedChange: (Boolean) -> Unit = {}
+    onAiExcludedChange: (Boolean) -> Unit = {},
+    onRetryAi: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val item = itemWithCols.item
@@ -442,6 +443,9 @@ fun ItemDetailsDialog(
                 DetailRow("Source Date", dateFormatter.format(Date(item.sourceDate)))
             }
             DetailRow("AI Status", item.aiStatus)
+            if (item.aiStatus == "NEEDS_RETRY" && !excludeAi) {
+                TextButton(onClick = onRetryAi) { Text("Retry analysis") }
+            }
         }
     }
 }

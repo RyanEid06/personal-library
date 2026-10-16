@@ -669,7 +669,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             androidx.work.WorkManager.getInstance(getApplication()).cancelAllWorkByTag("ai_enrichment")
             viewModelScope.launch(Dispatchers.IO) {
                 for (job in repository.dao.getPendingAnalysisJobs()) {
-                    repository.dao.insertOrUpdateAnalysisJob(job.copy(status = "QUEUED"))
+                    if (job.status in setOf("QUEUED", "PROCESSING")) repository.updateAnalysisJobIfCurrent(job.copy(status = "QUEUED"))
                 }
             }
         } else resumePendingAiJobs()
@@ -679,6 +679,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch(Dispatchers.IO) {
             localIndexer.enqueuePendingAnalysisJobs()
         }
+    }
+
+    fun retryAiAnalysis(itemId: String) {
+        viewModelScope.launch(Dispatchers.IO) { localIndexer.retryAnalysis(itemId) }
     }
 
     fun toggleSelection(itemId: String) {
@@ -708,6 +712,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         return withContext(Dispatchers.IO) {
             val success = aiGateway.enrollWithSecret(enrollmentSecret)
             _isBackendPaired.value = success
+            if (success) localIndexer.enqueuePendingAnalysisJobs(resumeUnpaired = true)
             success
         }
     }
@@ -739,10 +744,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         attachments: Map<String, InputStream> = emptyMap()
     ): Pair<Int, Int> {
         val res = repository.importWhatsAppMigration(chatText, dateOrder, attachments)
-        val active = repository.dao.getAllActiveItems()
-        for (item in active.filter { it.aiStatus == "PENDING" }) {
-            localIndexer.indexItem(item)
-        }
+        withContext(kotlinx.coroutines.NonCancellable) { com.example.indexing.LocalIndexWorker.enqueue(getApplication()) }
         return res
     }
 
@@ -754,7 +756,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val original = resolver.openInputStream(exportUri) ?: throw java.io.IOException("Original export is unavailable")
             original.use { repository.importWhatsAppMigration(chatText, dateOrder, streams, originalExport = it) }
         } finally { streams.values.forEach { try { it.close() } catch (_: Exception) { } } }
-        for (item in repository.dao.getAllActiveItems().filter { it.aiStatus == "PENDING" }) localIndexer.indexItem(item)
+        withContext(kotlinx.coroutines.NonCancellable) { com.example.indexing.LocalIndexWorker.enqueue(getApplication()) }
         result
     }
 

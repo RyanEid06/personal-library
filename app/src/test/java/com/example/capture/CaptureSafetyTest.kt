@@ -89,6 +89,18 @@ class CaptureSafetyTest {
         assertFalse(context.getSharedPreferences("capture_state", 0).all.values.any { it.toString().contains("content://") })
     }
 
+    @Test fun staleBatchCallbacksCannotChangeNextConfirmedBatch() {
+        val store = CaptureStateStore(context)
+        assertTrue(store.begin("old", 1))
+        store.finish("First complete", "old")
+        assertTrue(store.begin("new", 2))
+        store.progress(99, 99, "old")
+        store.finish("Stale completion", "old")
+        assertTrue(store.state.value.saving)
+        assertEquals("new", store.state.value.batchId)
+        assertEquals(0, store.state.value.saved)
+    }
+
     @Test fun batchReportsPartialFailureOnlyAfterOriginalAndMetadataCommit() = runBlocking {
         val db = Room.inMemoryDatabaseBuilder(context, LibraryRoomDatabase::class.java).addCallback(DATABASE_CALLBACK).build()
         val repository = LibraryRepository(context, db)

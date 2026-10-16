@@ -79,6 +79,7 @@ describe('Personal Library Authenticated Backend (TypeScript)', () => {
     assert.strictEqual(res.body.service, 'personal-library-backend');
     assert.strictEqual(res.body.geminiModel, 'gemini-3.8-flash');
     assert.strictEqual(res.body.geminiEmbeddingModel, 'gemini-embedding-2');
+    assert.strictEqual(res.body.revision, process.env.RENDER_GIT_COMMIT || null);
   });
 
   test('Protected endpoint /v1/ai/analyze rejects unauthenticated request with 401', async () => {
