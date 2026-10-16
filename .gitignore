@@ -20,3 +20,9 @@ artifacts/
 test-results/
 *.log
 .DS_Store
+
+# Permanent Android release signing material
+*.jks
+*.keystore
+*.p12
+*.pfx
