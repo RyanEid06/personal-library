@@ -10,6 +10,21 @@ permissions:
   contents: read
 
 jobs:
+  signing-workflow:
+    runs-on: windows-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - name: Windows current-user DPAPI signing workflow regressions
+        shell: pwsh
+        run: |
+          ./scripts/Test-MemoraSigning.ps1
+          ./scripts/Test-MemoraReleaseSafety.ps1
+          powershell -NoProfile -ExecutionPolicy Bypass -File scripts/Test-MemoraSigning.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'Windows PowerShell DPAPI regressions failed' }
+          powershell -NoProfile -ExecutionPolicy Bypass -File scripts/Test-MemoraReleaseSafety.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'Windows PowerShell release safety regressions failed' }
+
   core:
     runs-on: ubuntu-latest
     timeout-minutes: 20

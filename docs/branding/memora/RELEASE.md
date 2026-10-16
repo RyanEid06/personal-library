@@ -10,15 +10,35 @@ CI actions use current supported majors: checkout v7, setup-java v6, setup-node 
 
 Checkpoint `22149d9ca2b8397d057ebf90bbd5d3c8d5371bcf` passed all four CI jobs: 46 core, 54 Android JVM, 32 backend and 5 API 35 instrumentation tests, zero failures/skips. Lint has zero errors and 80 unsuppressed warnings. Screenshot retrieval found a separate evidence bug: Gradle removed the emulator app before retrieval. The workflow now retains that disposable install and rejects non-PNG screenshots. Final guard/documentation/workflow verification and official signing remain pending until recorded in the generated release acceptance record. Historical green evidence is not a pass for a later source SHA.
 
-## Safe owner-local build
+## One-time Windows DPAPI setup
 
-After all four required CI jobs pass on the exact source SHA, run from a normal owner PowerShell console:
+From the owner's already-open PowerShell session containing the temporary signing environment variables, run once:
 
 ```powershell
-.\scripts\Build-MemoraRelease.ps1 -VerifiedSourceSha <full-40-character-green-SHA> -AndroidSdkRoot <local-Android-SDK-directory>
+& 'C:\Users\Administrator\Desktop\Projects\personal-library\scripts\Setup-MemoraSigning.ps1'
 ```
 
-The script verifies clean main, fetched origin/main and all four required CI jobs before signing. It requires SDK build-tools 36.0.0 and the canonical Documents keystore with its expected file hash. It consumes the four release environment variables when supplied, or asks for a hidden password on the local console. For this PKCS12 key, an absent key-password environment value uses the entered store password. Never put a password in the command, a transcript, chat, source, documentation or GitHub. Never enable Gradle debug logs/build scans for a signed build. Secrets are restored/cleared from the script's process environment on exit; configuration caching is disabled.
+Setup validates the existing canonical key's file hash, private certificate and expected fingerprint without creating any key. It encrypts SecureString password fields with Windows **current-user DPAPI** and restricts the file ACL to the current Windows SID. The credential/config file is outside the repository:
+
+`C:\Users\Administrator\Documents\Memora-Signing\memora-signing.credential.xml`
+
+Only this Windows user on this PC can decrypt the DPAPI payload. No AES key, portable/plaintext fallback, permanent environment variable or repository credential is created. Setup uses existing process variables silently; if absent, it offers a hidden prompt only during setup. An absent PKCS12 key password uses the store password. After successful setup, the temporary password environment variables are removed from that PowerShell process. Setup never builds an APK. An intentional credential reset uses `-Replace`. Protect the original keystore/password independently: a DPAPI file is not a portable key backup. [Microsoft DPAPI/CLIXML behavior](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.utility/export-clixml).
+
+## One-command owner-local release
+
+After required exact-source CI jobs pass, future releases need only:
+
+```powershell
+& 'C:\Users\Administrator\Desktop\Projects\personal-library\scripts\Build-MemoraRelease.ps1'
+```
+
+The script resolves HEAD automatically, verifies clean main and fetched origin/main, then requires core/android/server/emulator and the Windows signing-workflow job to succeed on that exact SHA. An optional `-VerifiedSourceSha <full-SHA>` pins an explicitly reviewed candidate. SDK selection uses ANDROID_HOME, ANDROID_SDK_ROOT, the prepared ignored `.tools/android-sdk`, then the usual local SDK directory; `-AndroidSdkRoot` can select it explicitly. SDK build-tools 36.0.0 and the canonical Documents key/hash remain required.
+
+If Windows PowerShell execution policy blocks local scripts, use a process-only invocation: `powershell -NoProfile -ExecutionPolicy Bypass -File <script-path>`. No permanent policy change is needed. A child process inherits already-loaded process credentials for setup; close the old credential-loaded console afterward to discard its temporary plaintext environment. Future builds need only the DPAPI file.
+
+Only after preflight does the script decrypt the local DPAPI profile and expose passwords in its process/Gradle child environment for the build. It never prompts for a future build password. Missing, corrupt or wrong-user profiles fail clearly. Environment values are restored and SecureStrings disposed in `finally`; configuration caching is disabled, native output is captured in memory only, and no password is passed as a command argument. Never put a password in a transcript, chat, source, documentation or GitHub; never enable Gradle debug logs/build scans for a signed build.
+
+Package/certificate remain fixed. Version metadata is read from verified source and checked against the APK. The initial source still declares 1.0.0/code 2. A public `memora-last-release.json` beside the keystore prevents a changed source release reusing the previous versionCode; later versions must increase it. No install/uninstall occurs.
 
 Gradle attaches permanent identity validation to every Release task, including aggregate/abbreviated invocations that select those tasks. Missing configuration cannot fall back to unsigned release output or a debug key. Validation checks the canonical path, file SHA-256, alias, private-key availability, RSA 4096-bit certificate, validity and expected certificate fingerprint. It emits only sanitized failure messages.
 
@@ -26,7 +46,7 @@ Only a freshly built `app/build/outputs/apk/release/app-release.apk` that passes
 
 `C:\Users\Administrator\Desktop\Memora-v1.0.0-official.apk`
 
-The Desktop copy is staged and hashed before publication, then hashed again. The script writes a public, secret-free record to ignored `artifacts/release-v1/official-release.json` with exact source SHA, CI URL, signature result, size and APK hash. That record is evidence only after a successful build; no debug/unsigned APK is placed at the official filename.
+The Desktop copy is staged and hashed before publication, then hashed again. The script validates and atomically saves the Documents `memora-last-release.json` provenance before publication; an I/O error prevents exposing a new official APK, and same-source retries remain allowed. Malformed prior records fail closed. After Desktop publication succeeds it writes the public, secret-free ignored `artifacts/release-v1/official-release.json` with exact source SHA, CI URL, signature result, size and APK hash. The Documents reservation can remain after a publication failure, so an existing Documents record alone is not proof of delivery; the verified Desktop copy and final report establish that. No debug/unsigned APK is placed at the official filename. Future output names follow `Memora-v<versionName>-official.apk`.
 
 ## V1 freeze audit
 

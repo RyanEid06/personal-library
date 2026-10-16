@@ -26,3 +26,4 @@ test-results/
 *.keystore
 *.p12
 *.pfx
+*.credential.xml
