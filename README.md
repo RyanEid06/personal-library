@@ -52,4 +52,4 @@ Automatic AI analysis sends bounded representations of eligible saved content to
 
 `metadata.json` is retained as legacy AI Studio descriptive metadata; Android/backend runtimes do not consume it. There is no web/Vite app. The owner requested removing obsolete `codex/v1`; its complete history was verified in a local Git bundle before deleting the remote branch. Finalization is on owner-authorized `main`; see the release ledger for recovery evidence.
 
-The owner-created permanent release key stays outside Git. No release tag or public GitHub Release is part of this pass. Export an encrypted backup before a signing transition and follow the [handoff guidance](docs/HANDOFF.md) if Android reports a signature conflict.
+The first official [Memora v1.0.0 GitHub release](https://github.com/RyanEid06/personal-library/releases/tag/v1.0.0) provides the permanently signed ARM64 and universal APKs. Export an encrypted backup before a signing transition and follow the [handoff guidance](docs/HANDOFF.md) if Android reports a signature conflict. Physical-phone acceptance remains a separate owner check.

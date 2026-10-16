@@ -2,9 +2,15 @@
 
 Application ID is permanently `com.personallibrary.app`. First official version remains **1.0.0 / versionCode 2**. The existing owner key is the only permitted official signing identity; see [SIGNING_IDENTITY](SIGNING_IDENTITY.md). Do not generate another key or rename the package. Future updates use the same certificate and a larger versionCode.
 
-## Current release pass
+## First official release — v1.0.0
 
-The final optimization pass starts at `41d9cf9e57dcb56715cce9a2af599be405c5a743` on main. R8 (`isMinifyEnabled = true`) and resource shrinking (`isShrinkResources = true`) use the existing optimized default ProGuard and dependency consumer rules; no blanket keep/dontwarn rules were added. `-PmemoraPhoneApks=true` enables a standalone ARM64 split plus a genuine four-ABI universal output. Normal debug/emulator packaging is unchanged. No architecture branches/flavors or application dependency upgrades were introduced.
+The first official release is published at [GitHub Releases](https://github.com/RyanEid06/personal-library/releases/tag/v1.0.0). It contains the permanently signed `Memora-v1.0.0-arm64-official.apk` and `Memora-v1.0.0-universal.apk`. Release assets include their SHA-256 checksums; the ignored `artifacts/release-v1/FINAL_VERIFICATION.md` keeps the full exact-source CI, APK, certificate and runtime audit. All five GitHub Actions jobs passed on the tag's source before signing. Both APKs passed package/version, permanent-certificate, ABI/OCR, zipalign and ARM64 16 KB ELF checks. Version 1.0.0 / versionCode 2 and application ID `com.personallibrary.app` remain fixed.
+
+Physical-phone acceptance remains owner work. The CI/emulator evidence does not establish real WhatsApp/OEM behavior, paired live Gemini quality, fresh-device restore, accessibility or retrieval/performance acceptance.
+
+## Release implementation and verification history
+
+The implementation is on main and is published from the `v1.0.0` tag. R8 (`isMinifyEnabled = true`) and resource shrinking (`isShrinkResources = true`) use the existing optimized default ProGuard and dependency consumer rules; no blanket keep/dontwarn rules were added. `-PmemoraPhoneApks=true` enables a standalone ARM64 split plus a genuine four-ABI universal output. Normal debug/emulator packaging is unchanged. No architecture branches/flavors or application dependency upgrades were introduced.
 
 Optimized OCR runtime verification exposed missing public no-argument constructors in the three manifest-declared ML Kit registrars. The pinned Firebase consumer rule preserved their classes but not reflective constructors. Three exact `-keepclassmembers` rules now retain those constructors in release and optimized verification builds. This preserves bundled OCR without broad package rules or disabling shrinking; the existing real OCR instrumentation assertion remains mandatory.
 

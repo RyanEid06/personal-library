@@ -1,6 +1,17 @@
 # V1 verification status
 
-## Final optimized completion pass — 16 October 2026
+## First official release — 16 October 2026
+
+Memora V1.0.0 / versionCode 2 is published as the first official GitHub release: [v1.0.0](https://github.com/RyanEid06/personal-library/releases/tag/v1.0.0). The annotated tag identifies the exact source certified by GitHub Actions. All five jobs passed, including debug and optimized API 35 instrumentation (8/8 each, no failures/errors/skips), backend tests, Android/core checks, lint, and Windows signing regressions. Both optimized APKs were signed with the established permanent certificate, verified for package/version, ABI/OCR assets, signature, zipalign and ARM64 16 KB ELF alignment, and attached to the release. Their exact SHA-256 values and sizes are listed with the release assets and in the ignored `artifacts/release-v1/FINAL_VERIFICATION.md` record.
+
+- Automated release gates: complete and green on the tagged source.
+- Physical phone acceptance: pending owner testing; emulator and CI results do not substitute for WhatsApp/OEM behavior, live paired Gemini, fresh-device restore, accessibility or retrieval/performance acceptance.
+- Signing identity: unchanged permanent Memora certificate; no signing material is stored in Git.
+- Release files: ARM64 official APK and four-ABI universal APK, both version 1.0.0 / code 2.
+
+Historical checkpoints below record the findings and evidence available at those earlier source revisions; their pending statements are superseded by the release above.
+
+## Historical final optimized completion pass — 16 October 2026 (superseded)
 
 Continuation from `0740ab6` preserved [38951276808](https://github.com/RyanEid06/personal-library/actions/runs/38951276808) through completion: four jobs succeeded, debug instrumentation passed 8/8, and the untouched optimized APK launched successfully. The instrumented optimized target then failed before tests with `IllegalAccessError`: repackaged `CollectionsKt__MutableCollectionsJVMKt` extended the kept package-private `CollectionsKt__IterablesKt`. Actual local DEX reproduced that single inaccessible inheritance edge. Its exact instrumentation-only keep rule now permits access widening; ordinary release rules and all assertions remain unchanged. The corrected source requires its own complete CI run before signing; the earlier passing jobs are not manually rerun.
 

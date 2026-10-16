@@ -15,7 +15,7 @@
 - main only; applicationId com.personallibrary.app; versionName 1.0.0; versionCode 2.
 - Existing canonical Documents PKCS12, alias memora-release, documented file/certificate SHA-256. No key generation or secret output/persistence in Git.
 - ARM64 primary and universal arm64-v8a/armeabi-v7a/x86/x86_64; same source/version/features/certificate.
-- No feature additions, redesign, dependency upgrades, weakened tests, public release or phone uninstall.
+- No feature additions, redesign, dependency upgrades, weakened tests or phone uninstall. Public publication was withheld until the owner explicitly authorized the first official release on 16 October 2026; that authorization is now carried out by this release.
 - Optimized verification artifacts must never be named or described as official.
 
 ## Review focus
@@ -31,11 +31,13 @@
 - [x] 1. Audit existing systems/current CI and preserve starting state; inspect source/test evidence and forbidden-pattern search.
 - [x] 2. Add APK-content verification regressions, observe rejection of current unoptimized/universal-only evidence; enable optimization, opt-in splits and nonofficial optimized verification build; build/inspect outputs and fix actual R8 failures.
 - [x] 3. Extend safe PowerShell publication to verify/stage both artifacts; regress incorrect ABI, incomplete artifact set and failed verification/publication. Preserve all existing signing safety tests.
-- [ ] 4. Local core/Android/lint/debug/test-APK/server/PowerShell gates passed; optimized runtime instrumentation awaits hosted API 35 emulator (none local).
-- [ ] 5. Review changes, update truthful docs after observed verification, commit intended files and push main. Require all jobs terminal-success on exact final SHA and healthy unchanged Render backend.
-- [ ] 6. Build/sign only after verified source using existing credentials; inspect both signatures/metadata/ABIs/16 KB alignment/actual sizes, then Desktop publication and final cleanliness. If credentials absent, leave exact verified owner command and report NOT READY.
+- [x] 4. Local and exact-source hosted core/Android/lint/server/Windows checks passed; debug and optimized API 35 runtime instrumentation each passed 8/8 with zero failures/errors/skips.
+- [x] 5. Updated the current release documentation and published the exact verified main source with a green five-job run and healthy unchanged Render backend.
+- [x] 6. Built and permanently signed both APKs with the existing key; verified signatures, metadata, ABIs, OCR, 16 KB alignment, sizes and Desktop copies; attached both APKs to the first GitHub release.
 
 ## Progress ledger
+
+The first official `v1.0.0` release is published at https://github.com/RyanEid06/personal-library/releases/tag/v1.0.0. The release tag points at the exact source certified by the five-job green run; APK hashes, sizes, certificate, Desktop paths and CI evidence are recorded in `artifacts/release-v1/FINAL_VERIFICATION.md`. Physical phone acceptance remains owner work. The checkpoint notes below retain historical diagnosis and are not current blockers.
 
 - Untouched optimized ARM64/universal assembly passed in 3m52s with all three public registrar constructors present in actual DEX. Both signatures and 16 KB zipalign checks passed; exact ABIs, native/offline asset preservation and ELF checks passed against same-source debug. Nonofficial measured sizes remain 18,134,652 / 48,171,575 bytes. The real OCR runtime regression awaits exact corrected-source CI; all earlier passing jobs remain preserved and no manual passing-job retry is requested.
 
