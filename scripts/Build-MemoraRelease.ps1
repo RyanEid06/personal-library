@@ -68,7 +68,7 @@ try {
     $digests = @($signature | Select-String 'certificate SHA-256 digest:' | ForEach-Object { ($_.Line -split 'digest:',2)[1].Trim().Replace(':','').ToUpperInvariant() })
     if ($digests.Count -ne 1 -or $digests[0] -ne $expectedCert) { throw 'APK signing certificate does not match the permanent Memora identity.' }
     $badging = (& $aapt dump badging $apk 2>&1) -join "`n"
-    if ($LASTEXITCODE -ne 0 -or $badging -notmatch "package: name='com.personallibrary.app' versionCode='2' versionName='1.0.0'") { throw 'APK package/version metadata mismatch.' }
+    if ($LASTEXITCODE -ne 0 -or $badging -notmatch "package: name='com\.personallibrary\.app' versionCode='2' versionName='1\.0\.0'") { throw 'APK package/version metadata mismatch.' }
     $apkHash = (Get-FileHash -LiteralPath $apk -Algorithm SHA256).Hash
     $pending = $OutputPath + '.pending'
     Copy-Item -LiteralPath $apk -Destination $pending -Force

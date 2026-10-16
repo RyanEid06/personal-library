@@ -1,10 +1,20 @@
 # V1 verification status
 
+## Final permanent release pass — 16 October 2026
+
+Starting SHA: `71dbfa187bcba5b37c7ed3ab7c834627915cd514`, clean main matching origin/main. The owner explicitly authorized stabilization, permanent signing using the existing canonical key, and the official Desktop APK. [Release procedure/audit](branding/memora/RELEASE.md), [public signing identity](branding/memora/SIGNING_IDENTITY.md), and [release ledger](superpowers/plans/2026-10-16-memora-v1-release.md) record this scope.
+
+Both historical failed branding runs were test-APK compilation failures from missing explicit Espresso dependency. The dependency is now declared without changing the appearance test. Code checkpoint `22149d9ca2b8397d057ebf90bbd5d3c8d5371bcf`: core 46, Android JVM 54, backend 32 and API 35 instrumentation 5 passed, with zero failures/skips; lint 0 errors/80 warnings; both debug APK builds and four synthetic signing failure cases passed. All four jobs in [CI 38903199274](https://github.com/RyanEid06/personal-library/actions/runs/38903199274) succeeded. Its screenshot retrieval was invalid because Gradle uninstalled the app after testing; CI now retains only the disposable emulator install and rejects invalid PNG artifacts. Final documentation/guard/workflow updates require a repeated full exact-SHA run.
+
+Local supplementary checks: 46 core and 3 theme tests passed; backend locked install/typecheck/32 tests/build passed outside sandbox. The Windows Java selector starts with a short socket-temp path; normal Gradle core initially lacked two cached dependencies and SDK tooling is being prepared. No local Android/device pass is claimed. No adb-connected device is present. Live Render is healthy at `9446329`, with configured gemini-3.8-flash/gemini-embedding-2; backend source is byte-unchanged since that deployment, so no forced redeployment is needed. Live paired Gemini quality remains owner acceptance.
+
+The permanent keystore file hash matches the owner's record. Signing password environment variables are absent; signing requires owner-local hidden entry. **Official APK/signature/hash/size are pending; physical acceptance is pending.** No official filename contains a debug/unsigned APK. The generated `artifacts/release-v1/official-release.json`, after a successful owner-local build, records exact final source SHA, CI, apksigner, package/version, certificate, official path, size and hash.
+
 ## Memora branding follow-up
 
 The owner subsequently supplied final Memora artwork and authorized a bounded appearance update: shared launcher icon, matching Library wordmarks, user-facing name, and saved Light/Dark/System selection. Version code advances to 2; app/database/preferences/auth/backup identifiers are preserved. Theme resolution regressed from the old system-only behavior (3 tests, 2 failures), then all 3 passed. Two Android preference regressions and one API 35 interactive appearance/recreation test extend the existing gates; final exact-commit results and screenshots accompany the replacement Desktop APK. [Artwork, resource preparation and stable RGB palette](branding/memora/README.md).
 
-The tables below retain the prior V1 finalization evidence; branding delivery must independently pass the same complete workflow before replacing the old Desktop handoff. No permanent signing or freeze is authorized by this update.
+The tables below retain the prior V1 finalization evidence. The later final-release authorization above supersedes the earlier debug-only handoff scope; current exact-source verification and permanent signing remain explicit gates.
 
 ## Prior V1 finalization
 

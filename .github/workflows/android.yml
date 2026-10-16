@@ -138,10 +138,11 @@ jobs:
           target: google_apis
           disable-animations: true
           script: |
-            ./gradlew :app:connectedDebugAndroidTest --stacktrace
+            ./gradlew :app:connectedDebugAndroidTest -Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true --stacktrace
             mkdir -p app/build/reports/branding
             adb exec-out run-as com.personallibrary.app cat files/memora-dark.png > app/build/reports/branding/memora-dark.png
             adb exec-out run-as com.personallibrary.app cat files/memora-light.png > app/build/reports/branding/memora-light.png
+            python3 -c 'from pathlib import Path; files=list(Path("app/build/reports/branding").glob("*.png")); assert len(files)==2; assert all(p.read_bytes().startswith(bytes.fromhex("89504e470d0a1a0a")) for p in files), "Invalid branding screenshot artifact"'
       - uses: actions/upload-artifact@v7
         if: always()
         with:

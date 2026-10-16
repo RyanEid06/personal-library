@@ -12,14 +12,19 @@ plugins {
     alias(libs.plugins.google.devtools.ksp)
 }
 
-// Release secrets must never be serialized into Gradle's configuration cache.
-val releaseStorePassword = providers.environmentVariable("RELEASE_STORE_PASSWORD").orNull
-val releaseKeyPassword = providers.environmentVariable("RELEASE_KEY_PASSWORD").orNull
-if (!releaseStorePassword.isNullOrBlank() || !releaseKeyPassword.isNullOrBlank()) {
-    check(!gradle.startParameter.isConfigurationCacheRequested) {
+abstract class MemoraBuildFeatures {
+    @get:javax.inject.Inject
+    abstract val features: org.gradle.api.configuration.BuildFeatures
+}
+
+// Reject caching before assigning signing passwords to the Android DSL.
+if (providers.environmentVariable("RELEASE_STORE_PASSWORD").isPresent || providers.environmentVariable("RELEASE_KEY_PASSWORD").isPresent) {
+    check(!objects.newInstance<MemoraBuildFeatures>().features.configurationCache.requested.getOrElse(false)) {
         "Memora signing requires --no-configuration-cache. Never use build scans or debug logging with signing credentials."
     }
 }
+val releaseStorePassword = providers.environmentVariable("RELEASE_STORE_PASSWORD").orNull
+val releaseKeyPassword = providers.environmentVariable("RELEASE_KEY_PASSWORD").orNull
 
 abstract class VerifyMemoraReleaseSigning : DefaultTask() {
     @TaskAction

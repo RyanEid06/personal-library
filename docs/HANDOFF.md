@@ -1,10 +1,10 @@
 # Memora V1 owner handoff
 
-V1 finalization code and automated gates are complete. The owner subsequently requested Memora branding and a saved Light/Dark/System choice; that delivery is a **debug test APK**, version 1.0.0 / code 2, application ID `com.personallibrary.app`. The exact branding CI and artifact verification are recorded in the new Desktop acceptance record; original V1 evidence remains in [STATUS](STATUS.md).
+V1 finalization code is complete. The owner has now authorized the final Memora stabilization and permanently signed official APK, version 1.0.0 / code 2, application ID `com.personallibrary.app`. [Release procedure and audit](branding/memora/RELEASE.md) describe the existing owner key and fail-closed local build; [STATUS](STATUS.md) separates current verification from historical debug evidence. Official artifact delivery is pending until its exact source, signature, metadata and checksum are verified.
 
 ## Installation
 
-Export an encrypted backup of an existing library before changing installs. Keep its passphrase safely. Install `Memora-V1-<commit>-test.apk` from Desktop. If Android reports a signature conflict, record the message and stop before uninstalling a valuable existing library: CI debug signing and eventual official signing are separate identities.
+Export an encrypted backup of an existing library before changing installs. Keep its passphrase safely. The intended official Desktop artifact is `Memora-v1.0.0-official.apk`, only after successful permanent-signature verification. A debug-signed installation cannot be updated by this different permanent certificate. Stop before uninstalling a valuable existing library and preserve/export its data. Nothing is uninstalled automatically. Future official updates must keep the same package/certificate and increase versionCode.
 
 Report the failing action, device/Android version and visible message. Never send enrollment/API secrets or personal library content in diagnostics.
 
@@ -24,7 +24,7 @@ Report the failing action, device/Android version and visible message. Never sen
 
 ## Freeze and official signing
 
-When owner acceptance is green, record the accepted SHA/limitations, freeze V1 and prepare the official version with owner-managed permanent signing material. No permanent key, release tag or official release was created here. Plan data transfer through the tested encrypted backup before uninstalling anything.
+The owner manually created the permanent key outside the repository; its public [identity](branding/memora/SIGNING_IDENTITY.md) is preserved. The current pass is authorized to build/sign V1 after exact-source automated gates pass. Physical acceptance and any final acceptance/freeze record remain pending. No release tag or public release has been created. Plan data transfer through the tested encrypted backup before any owner-approved uninstall.
 
 ## Maintainer continuation
 
