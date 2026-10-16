@@ -17,7 +17,7 @@ import org.robolectric.annotation.Config
 import java.io.InputStream
 
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [34])
+@Config(sdk = [34], application = com.example.PersonalLibraryApp::class)
 class CaptureSafetyTest {
     private val context: Context get() = ApplicationProvider.getApplicationContext()
 
