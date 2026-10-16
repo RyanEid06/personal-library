@@ -41,7 +41,7 @@ class LocalIndexer(
 
         val blobFile = repository.getBlobFile(hash)
         if (blobFile == null || !blobFile.exists()) {
-            repository.dao.updateExtractedText(item.id, null, "UNSUPPORTED", item.localIndexVersion)
+            repository.checkpointLocalIndex(item.id, item.localIndexVersion, null, "UNSUPPORTED")
             return@withContext ExtractedText("", "UNSUPPORTED")
         }
 
@@ -60,13 +60,12 @@ class LocalIndexer(
                 mime == "application/pdf" || ext == "pdf" -> {
                     AndroidTextExtractor.pdf(blobFile) { progress ->
                         // Checkpoint save partial progress into extractedText WITHOUT destroying owner content
-                        val current = repository.dao.getItemById(item.id)
-                        if (current != null && current.localIndexVersion == item.localIndexVersion && progress.text.isNotBlank()) {
-                            repository.dao.updateExtractedText(
+                        if (progress.text.isNotBlank()) {
+                            repository.checkpointLocalIndex(
                                 item.id,
+                                item.localIndexVersion,
                                 progress.text,
-                                progress.coverage,
-                                item.localIndexVersion
+                                progress.coverage
                             )
                         }
                     }
@@ -111,6 +110,11 @@ class LocalIndexer(
         val versionTag = "ai_version_${item.localIndexVersion}"
         val manager = WorkManager.getInstance(context)
         val liveWork = manager.getWorkInfosForUniqueWork("ai_job_$itemId").get().filter { !it.state.isFinished }
+        if (liveWork.any { versionTag in it.tags }) return@withLock
+        if (job.attempts >= 4) {
+            repository.updateAnalysisJobIfCurrent(job.copy(status = "NEEDS_RETRY"))
+            return@withLock
+        }
         // KEEP preserves the current request's progress and backoff. Replace only obsolete content work.
         val policy = if (liveWork.any { versionTag !in it.tags }) ExistingWorkPolicy.REPLACE else ExistingWorkPolicy.KEEP
 
@@ -146,10 +150,6 @@ class LocalIndexer(
             if (job.status == "NEEDS_RETRY" && !(resumeUnpaired && job.lastErrorClass == "UNPAIRED")) continue
             val item = repository.dao.getItemById(job.itemId)
             if (item != null && !item.isTrash && item.localIndexVersion == job.expectedContentVersion) {
-                if (job.attempts >= 4) {
-                    repository.updateAnalysisJobIfCurrent(job.copy(status = "NEEDS_RETRY"))
-                    continue
-                }
                 if (job.status == "NEEDS_RETRY") repository.updateAnalysisJobIfCurrent(job.copy(status = "QUEUED"))
                 enqueueDurableAiJob(job.itemId)
             }
@@ -159,6 +159,7 @@ class LocalIndexer(
     suspend fun retryAnalysis(itemId: String) = withContext(Dispatchers.IO) {
         val item = repository.dao.getItemById(itemId) ?: return@withContext
         if (item.isTrash) return@withContext
+        WorkManager.getInstance(context).cancelUniqueWork("ai_job_$itemId").result.get()
         if (item.localIndexCoverage in setOf("PENDING", "FAILED") || item.aiStatus == "PENDING") indexItem(item)
         else queueAnalysis(item, item.localIndexVersion)
     }

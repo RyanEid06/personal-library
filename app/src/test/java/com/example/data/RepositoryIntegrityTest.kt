@@ -105,6 +105,8 @@ class RepositoryIntegrityTest {
         assertNull(repository.dao.getAnalysisJob(item.id))
         assertFalse(repository.publishAiResult(item.id, indexed.localIndexVersion, "stale", "stale", "READY", emptyList(), 1))
         assertFalse(repository.publishLocalIndex(item.id, indexed.localIndexVersion, "stale", "COMPLETE", emptyList()))
+        assertFalse(repository.checkpointLocalIndex(item.id, indexed.localIndexVersion, "stale progress", "PARTIAL"))
+        assertNull(repository.dao.getItemById(item.id)!!.extractedText)
     }
 
     @Test fun supplyingPreviouslyMissingWhatsAppAttachmentInvalidatesTextOnlyVersion() = runBlocking {

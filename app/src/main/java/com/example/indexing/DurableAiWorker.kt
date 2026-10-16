@@ -36,6 +36,12 @@ class DurableAiWorker(
         val expectedVersion = initialItem.localIndexVersion
         val requestedVersion = inputData.getInt("content_version", expectedVersion)
         if (requestedVersion != expectedVersion) return@withContext Result.success()
+        val isPdf = initialItem.mimeType == "application/pdf" || initialItem.originalFileName?.endsWith(".pdf", true) == true
+        if (isPdf && !initialItem.extractedText.isNullOrBlank() && repository.dao.getSearchDocumentsForItem(itemId).none { it.pageNumber != null }) {
+            // Upgrade flattened legacy extraction locally before any bounded page upload can begin.
+            LocalIndexer(applicationContext, repository).indexItem(initialItem)
+            return@withContext Result.success()
+        }
         val previousJob = repository.dao.getAnalysisJob(itemId)
         val attempts = previousJob?.takeIf { it.expectedContentVersion == expectedVersion }?.attempts ?: 0
         // Persist the ceiling across WorkManager recovery and process restarts.
@@ -144,7 +150,6 @@ class DurableAiWorker(
             val pages = localDocs.filter { it.pageNumber != null }.groupBy { it.pageNumber!! }.toSortedMap().map { (number, docs) ->
                 ExtractedPage(number, docs.sortedBy { it.chunkIndex }.joinToString("") { it.textContent })
             }
-            val isPdf = initialItem.mimeType == "application/pdf" || initialItem.originalFileName?.endsWith(".pdf", true) == true
             val batches = if (isPdf) PdfAnalysisBounds.batches(pages) else emptyList()
             val responses = mutableListOf<AnalyzeResponse>()
             if (batches.isNotEmpty()) {

@@ -73,6 +73,13 @@ class LibraryRepository(private val context: Context, database: LibraryRoomDatab
         true
     }
 
+    suspend fun checkpointLocalIndex(itemId: String, expectedVersion: Int, text: String?, coverage: String): Boolean = db.withTransaction {
+        val current = dao.getItemById(itemId)
+        if (current == null || current.isTrash || current.localIndexVersion != expectedVersion) return@withTransaction false
+        dao.updateExtractedText(itemId, text, coverage, expectedVersion)
+        true
+    }
+
     suspend fun publishAiResult(itemId: String, expectedVersion: Int, description: String, concepts: String,
         status: String, documents: List<SearchDocumentEntity>, attempts: Int): Boolean = db.withTransaction {
         val current = dao.getItemById(itemId)
@@ -408,75 +415,81 @@ class LibraryRepository(private val context: Context, database: LibraryRoomDatab
         }
     }
 
-    // Encrypted Backup Export
+    private suspend fun backupSnapshot(): BackupManifest = db.withTransaction {
+        val allItems = dao.getAllItemsIncludingTrash()
+        val allCols = dao.getAllCollections()
+        val allAssets = dao.getAllAssets()
+        val allReminders = dao.getAllReminders()
+
+        val memberships = mutableListOf<BackupMembershipRecord>()
+        for (item in allItems) {
+            val colIds = dao.getCollectionIdsForItem(item.id)
+            for (cid in colIds) {
+                memberships.add(BackupMembershipRecord(item.id, cid))
+            }
+        }
+
+        BackupManifest(
+            items = allItems.map {
+                BackupItemRecord(
+                    id = it.id,
+                    title = it.title,
+                    content = it.content,
+                    kind = ItemKind.valueOf(it.kind),
+                    isFavorite = it.isFavorite,
+                    isTrash = it.isTrash,
+                    trashTimestamp = it.trashTimestamp,
+                    createdAt = it.createdAt,
+                    sourceDate = it.sourceDate,
+                    reminderTime = it.reminderTime,
+                    isReminderDone = it.isReminderDone,
+                    isReminderExact = it.isReminderExact,
+                    isReminderDateOnly = it.isReminderDateOnly,
+                    reminderLocalDate = it.reminderLocalDate,
+                    contentHash = it.contentHash,
+                    originalFileName = it.originalFileName,
+                    mimeType = it.mimeType,
+                    fileSizeBytes = it.fileSizeBytes,
+                    extractedText = it.extractedText,
+                    aiDescription = it.aiDescription,
+                    aiConcepts = it.aiConcepts,
+                    aiStatus = it.aiStatus
+                )
+            },
+            collections = allCols.map {
+                BackupCollectionRecord(it.id, it.name, it.iconName, it.colorHex, it.createdAt)
+            },
+            memberships = memberships,
+            reminders = allReminders.map {
+                BackupReminderRecord(it.id, it.itemId, it.title, it.dueMillis, it.isDone, it.isExact, it.isDateOnly, it.localDate)
+            },
+            assets = allAssets.map {
+                BackupAssetRecord(it.hash, it.relativePath, it.sizeBytes, it.mimeType, it.originalName, it.kind)
+            }
+        )
+    }
+
+    // Keep originals alive through streaming, but release the Room transaction after the metadata snapshot.
     suspend fun exportEncryptedBackup(uri: Uri, passphrase: CharArray): Boolean = withContext(Dispatchers.IO) {
-        try {
-            val allItems = dao.getAllItemsIncludingTrash()
-            val allCols = dao.getAllCollections()
-            val allAssets = dao.getAllAssets()
-            val allReminders = dao.getAllReminders()
-
-            val memberships = mutableListOf<BackupMembershipRecord>()
-            for (item in allItems) {
-                val colIds = dao.getCollectionIdsForItem(item.id)
-                for (cid in colIds) {
-                    memberships.add(BackupMembershipRecord(item.id, cid))
+        assetMutations.withLock {
+            try {
+                val manifest = backupSnapshot()
+                val output = context.contentResolver.openOutputStream(uri) ?: throw IOException("Cannot open backup destination")
+                output.use { out ->
+                    backupEngine.exportArchive(out, passphrase, manifest) { hash ->
+                        assetStore.getBlobFile(hash)
+                    }
                 }
+
+                val prefs = context.getSharedPreferences("personal_library_settings", Context.MODE_PRIVATE)
+                prefs.edit().putLong("last_successful_backup_time", System.currentTimeMillis()).apply()
+
+                true
+            } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+            catch (e: Exception) {
+                e.printStackTrace()
+                false
             }
-
-            val manifest = BackupManifest(
-                items = allItems.map {
-                    BackupItemRecord(
-                        id = it.id,
-                        title = it.title,
-                        content = it.content,
-                        kind = ItemKind.valueOf(it.kind),
-                        isFavorite = it.isFavorite,
-                        isTrash = it.isTrash,
-                        trashTimestamp = it.trashTimestamp,
-                        createdAt = it.createdAt,
-                        sourceDate = it.sourceDate,
-                        reminderTime = it.reminderTime,
-                        isReminderDone = it.isReminderDone,
-                        isReminderExact = it.isReminderExact,
-                        isReminderDateOnly = it.isReminderDateOnly,
-                        reminderLocalDate = it.reminderLocalDate,
-                        contentHash = it.contentHash,
-                        originalFileName = it.originalFileName,
-                        mimeType = it.mimeType,
-                        fileSizeBytes = it.fileSizeBytes,
-                        extractedText = it.extractedText,
-                        aiDescription = it.aiDescription,
-                        aiConcepts = it.aiConcepts,
-                        aiStatus = it.aiStatus
-                    )
-                },
-                collections = allCols.map {
-                    BackupCollectionRecord(it.id, it.name, it.iconName, it.colorHex, it.createdAt)
-                },
-                memberships = memberships,
-                reminders = allReminders.map {
-                    BackupReminderRecord(it.id, it.itemId, it.title, it.dueMillis, it.isDone, it.isExact, it.isDateOnly, it.localDate)
-                },
-                assets = allAssets.map {
-                    BackupAssetRecord(it.hash, it.relativePath, it.sizeBytes, it.mimeType, it.originalName, it.kind)
-                }
-            )
-
-            val output = context.contentResolver.openOutputStream(uri) ?: throw IOException("Cannot open backup destination")
-            output.use { out ->
-                backupEngine.exportArchive(out, passphrase, manifest) { hash ->
-                    assetStore.getBlobFile(hash)
-                }
-            }
-
-            val prefs = context.getSharedPreferences("personal_library_settings", Context.MODE_PRIVATE)
-            prefs.edit().putLong("last_successful_backup_time", System.currentTimeMillis()).apply()
-
-            true
-        } catch (e: Exception) {
-            e.printStackTrace()
-            false
         }
     }
 
@@ -498,7 +511,8 @@ class LibraryRepository(private val context: Context, database: LibraryRoomDatab
                     existingIds
                 )
             }
-        } catch (e: Exception) {
+        } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+        catch (e: Exception) {
             e.printStackTrace()
             null
         }

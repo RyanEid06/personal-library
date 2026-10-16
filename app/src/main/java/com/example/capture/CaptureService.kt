@@ -65,7 +65,7 @@ class CaptureService : Service() {
                     withContext(NonCancellable + Dispatchers.Main) {
                         stopForeground(STOP_FOREGROUND_REMOVE)
                         active = null
-                        stopSelfResult(startId)
+                        stopSelf()
                         // Release admission last, after foreground teardown and active-job reset.
                         store.finish(message, batchId)
                     }

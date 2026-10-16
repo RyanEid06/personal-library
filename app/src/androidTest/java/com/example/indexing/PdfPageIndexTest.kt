@@ -37,6 +37,16 @@ class PdfPageIndexTest {
             assertTrue(documents.filter { it.pageNumber == 1 }.any { it.textContent.contains("Chemistry", true) })
             assertTrue(repository.dao.searchFts("chemistry").any { it.id == item.id })
             assertEquals("EXCLUDED", repository.dao.getItemById(item.id)!!.aiStatus)
+            // A legacy item has flat extracted text but no numbered chunks. Rebuild locally before AI.
+            val current = repository.dao.getItemById(item.id)!!
+            repository.dao.deleteSearchDocumentsForItem(item.id)
+            repository.dao.updateExtractedText(item.id, "Legacy flattened chemistry and biology", "COMPLETE", current.localIndexVersion)
+            val worker = androidx.work.testing.TestListenableWorkerBuilder<DurableAiWorker>(context,
+                inputData = androidx.work.workDataOf("item_id" to item.id, "content_version" to current.localIndexVersion)).build()
+            assertEquals(androidx.work.ListenableWorker.Result.success(), worker.doWork())
+            assertEquals(current.localIndexVersion + 1, repository.dao.getItemById(item.id)!!.localIndexVersion)
+            assertEquals(setOf(1, 2), repository.dao.getSearchDocumentsForItem(item.id).mapNotNull { it.pageNumber }.toSet())
+            assertEquals("EXCLUDED", repository.dao.getItemById(item.id)!!.aiStatus)
         } finally { repository.deletePermanently(item.id); source.delete() }
     }
 }
