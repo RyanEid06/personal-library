@@ -31,6 +31,14 @@ class ReminderSchedulerTest {
         assertFalse("Past-due reminders should not be scheduled", scheduled)
     }
 
+    @Test fun replacingReminderWithPastTimeCancelsPreviouslyFutureAlarm() {
+        val manager = org.robolectric.Shadows.shadowOf(context.getSystemService(AlarmManager::class.java))
+        assertTrue(scheduler.schedule("zone_shift", "Date only", System.currentTimeMillis() + 60_000L, false))
+        assertEquals(1, manager.scheduledAlarms.size)
+        assertFalse(scheduler.schedule("zone_shift", "Date only", System.currentTimeMillis() - 60_000L, false))
+        assertTrue("Old-zone alarm must be removed even when new local due time is past", manager.scheduledAlarms.isEmpty())
+    }
+
     @Test
     fun testFutureReminderScheduledAndCancelled() {
         val future = System.currentTimeMillis() + 60_000L

@@ -37,6 +37,54 @@ class RepositoryIntegrityTest {
         db.openHelper.writableDatabase.execSQL("CREATE TRIGGER fail_item BEFORE INSERT ON items BEGIN SELECT RAISE(ABORT, 'injected item failure'); END")
     }
 
+    @Test fun collectionReplacementFailureKeepsPreviousPrivateMembership() = runBlocking {
+        val private = repository.createCollection("Private", "folder", "#ffffff")
+        val extra = repository.createCollection("Extra", "folder", "#ffffff")
+        val item = repository.createNote("Private note", "Private content", listOf(private.id))
+        failMemberships()
+        try {
+            repository.setItemCollections(item.id, listOf(private.id, extra.id))
+            fail("Expected injected membership failure")
+        } catch (_: android.database.sqlite.SQLiteException) { }
+        assertEquals(listOf(private.id), repository.dao.getCollectionIdsForItem(item.id))
+    }
+
+    @Test fun whatsAppReplacementInvalidatesOldExtractionChunksAndAnalysis() = runBlocking {
+        val chat = "13/10/2026, 09:00 - Ryan: notes.txt (file attached)"
+        repository.importWhatsAppMigration(chat, attachments = mapOf("notes.txt" to "old original".byteInputStream()))
+        val item = repository.dao.getAllActiveItems().single { it.originalFileName == "notes.txt" }
+        assertTrue(repository.publishLocalIndex(item.id, item.localIndexVersion, "old extraction", "COMPLETE", emptyList()))
+        val indexed = repository.dao.getItemById(item.id)!!
+        assertTrue(repository.publishAiResult(item.id, indexed.localIndexVersion, "old description", "old concepts", "READY",
+            listOf(SearchDocumentEntity("old_chunk", item.id, 0, textContent = "old original")), 1))
+        repository.dao.updateItem(indexed.copy(isFavorite = true, aiDescription = "old description", aiConcepts = "old concepts", aiStatus = "READY"))
+        repository.importWhatsAppMigration(chat, attachments = mapOf("notes.txt" to "replacement original".byteInputStream()))
+        val replaced = repository.dao.getItemById(item.id)!!
+        assertEquals(indexed.localIndexVersion + 1, replaced.localIndexVersion)
+        assertNull(replaced.extractedText)
+        assertNull(replaced.aiDescription)
+        assertEquals("PENDING", replaced.localIndexCoverage)
+        assertEquals("PENDING", replaced.aiStatus)
+        assertTrue(replaced.isFavorite)
+        assertTrue(repository.dao.getSearchDocumentsForItem(item.id).isEmpty())
+        assertNull(repository.dao.getAnalysisJob(item.id))
+        assertFalse(repository.publishAiResult(item.id, indexed.localIndexVersion, "stale", "stale", "READY", emptyList(), 1))
+        assertFalse(repository.publishLocalIndex(item.id, indexed.localIndexVersion, "stale", "COMPLETE", emptyList()))
+    }
+
+    @Test fun supplyingPreviouslyMissingWhatsAppAttachmentInvalidatesTextOnlyVersion() = runBlocking {
+        val chat = "13/10/2026, 09:00 - Ryan: missing.txt (file attached)"
+        repository.importWhatsAppMigration(chat)
+        val item = repository.dao.getAllActiveItems().single { it.originalFileName == "missing.txt" }
+        repository.publishLocalIndex(item.id, item.localIndexVersion, null, "COMPLETE", emptyList())
+        val before = repository.dao.getItemById(item.id)!!
+        repository.importWhatsAppMigration(chat, attachments = mapOf("missing.txt" to "found original".byteInputStream()))
+        val after = repository.dao.getItemById(item.id)!!
+        assertEquals(before.localIndexVersion + 1, after.localIndexVersion)
+        assertEquals("PENDING", after.localIndexCoverage)
+        assertFalse(repository.publishAiResult(item.id, before.localIndexVersion, "stale", "stale", "READY", emptyList(), 1))
+    }
+
     @Test fun captureMembershipFailureRollsBackItemRefcountAndNewBlob() = runBlocking {
         val bytes = "new blob rollback".toByteArray()
         failMemberships()

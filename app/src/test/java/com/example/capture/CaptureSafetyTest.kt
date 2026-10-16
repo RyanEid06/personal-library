@@ -21,6 +21,46 @@ import java.io.InputStream
 class CaptureSafetyTest {
     private val context: Context get() = ApplicationProvider.getApplicationContext()
 
+    @Test @org.robolectric.annotation.LooperMode(org.robolectric.annotation.LooperMode.Mode.PAUSED)
+    fun captureKeepsAdmissionClosedUntilTeardownAndAllowsNextBatch() = runBlocking {
+        val app = context as com.example.PersonalLibraryApp
+        app.captureState.finish("Reset test state")
+        val controller = org.robolectric.Robolectric.buildService(CaptureService::class.java).create()
+        val service = controller.get()
+        val repository = LibraryRepository(context)
+        fun intent(batch: String, text: String) = Intent(Intent.ACTION_SEND_MULTIPLE)
+            .putExtra(Intent.EXTRA_TEXT, text).putExtra("capture_batch_id", batch)
+        suspend fun waitForNote(text: String) {
+            withTimeout(10_000) {
+                while (repository.dao.getAllActiveItems().none { it.content == text }) delay(10)
+            }
+        }
+        suspend fun finishMainCleanup() {
+            withTimeout(10_000) {
+                while (app.captureState.state.value.saving) {
+                    org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+                    delay(10)
+                }
+            }
+        }
+        try {
+            val first = "First confirmed batch ${java.util.UUID.randomUUID()}"
+            assertTrue(app.captureState.begin("first", 1))
+            service.onStartCommand(intent("first", first), 0, 1)
+            waitForNote(first)
+            // The main looper has not performed foreground teardown yet.
+            delay(100)
+            assertFalse("A second batch cannot take admission before old service teardown", app.captureState.begin("too_early", 1))
+            finishMainCleanup()
+            val second = "Second confirmed batch ${java.util.UUID.randomUUID()}"
+            assertTrue(app.captureState.begin("second", 1))
+            service.onStartCommand(intent("second", second), 0, 2)
+            waitForNote(second)
+            finishMainCleanup()
+            assertEquals(1, app.captureState.state.value.saved)
+        } finally { controller.destroy() }
+    }
+
     @Test fun mergesClipAndStreamUrisAndRejectsPrivateFileAndNetworkUris() {
         val first = Uri.parse("content://transient/first")
         val second = Uri.parse("content://transient/second")
