@@ -431,6 +431,53 @@ describe('Production Server without Gemini Key or Secrets', () => {
 });
 
 describe('Request cancellation', () => {
+  test('deadline closes stalled body ingress without invoking the provider', async () => {
+    let providerCalls = 0;
+    class CountingProvider extends FakeGeminiProvider {
+      override async analyze(...args: Parameters<FakeGeminiProvider['analyze']>) {
+        providerCalls++;
+        return super.analyze(...args);
+      }
+    }
+    const app = createServer({ customProvider: new CountingProvider(), requestTimeoutMs: 80,
+      sessionSigningSecret: 'stalled-session', deviceEnrollmentSecret: 'stalled-enroll' });
+    let incoming: http.IncomingMessage | undefined;
+    let closed = false;
+    app.server.prependListener('request', req => {
+      incoming = req;
+      req.once('close', () => { closed = true; });
+    });
+    await new Promise<void>(resolve => app.server.listen(0, '127.0.0.1', resolve));
+    const address = app.server.address() as any;
+    let upload: http.ClientRequest | undefined;
+    try {
+      const token = app.registry.createSessionToken('stalled-test');
+      const result = await new Promise<{ status: number; raw: string }>((resolve, reject) => {
+        upload = http.request(`http://127.0.0.1:${address.port}/v1/ai/analyze`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json', 'Content-Length': '1000',
+            Connection: 'keep-alive', 'X-Device-Id': 'stalled-test', Authorization: `Bearer ${token}` }
+        }, res => {
+          let raw = '';
+          res.on('data', part => { raw += part; });
+          res.on('end', () => resolve({ status: res.statusCode || 0, raw }));
+          res.on('error', reject);
+        });
+        upload.on('error', reject);
+        upload.write('{"itemId":'); // Leave Content-Length deliberately incomplete.
+      });
+      assert.strictEqual(result.status, 504);
+      assert.strictEqual(JSON.parse(result.raw).error, 'REQUEST_TIMEOUT');
+      await new Promise(resolve => setTimeout(resolve, 100));
+      assert.strictEqual(closed, true, 'timeout must terminate stalled request ingress');
+      assert.strictEqual(incoming?.destroyed, true);
+      assert.strictEqual(providerCalls, 0);
+    } finally {
+      upload?.destroy();
+      app.server.closeAllConnections();
+      await new Promise<void>(resolve => app.server.close(() => resolve()));
+    }
+  });
+
   test('deadline aborts the provider and responds only with a timeout', async () => {
     let aborted = false;
     class WaitingProvider extends FakeGeminiProvider {

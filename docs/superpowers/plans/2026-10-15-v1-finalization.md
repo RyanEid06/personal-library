@@ -12,32 +12,33 @@ Starting branch: main. Starting SHA: aeacb1c2e241122b69a9f781411367ffe3ef779f. S
 - No V2, web app, new provider, permanent signing key, secret disclosure, blind historical merge, or deletion of codex/v1.
 - Ruling: the supplied objective is the execution brief for bounded fixes to existing flows; its explicit instruction to finish all implementable work authorizes execution without another design checkpoint. The original implementation plan also specifies inline execution. Cost if wrong: targeted changes need owner revision.
 - Shared interfaces: backup records feed repository restore and reminder scheduling; capture publication feeds Room references and indexing; AI privacy and pause state feed worker scheduling and UI; extracted PDF pages feed chunks, AI batching, and retrieval provenance. Change producers and consumers together.
-- Keep release claims out of STATUS/README/HANDOFF until final verification. This file records work in progress only.
+- Keep completion claims out of STATUS/README/HANDOFF until code verification. This ledger preserves execution history; the final verification section supersedes earlier pending checkpoints.
 
 ## Work sequence
 
 For each behavior: add a regression, observe failure, implement the smallest fix, run the relevant suite, record evidence here.
 
-- [ ] 1. Baseline: core tests; Android JVM tests/lint/debug assembly; server install/typecheck/tests/build.
+- [x] 1. Baseline attempts recorded; subsequent hosted core/Android and local/server gates verified below.
 - [x] 2. Server authentication: mandatory nonblank EC proof, matching credential fingerprint, restart-safe signed renewal; negative HTTP/direct registry tests.
-- [ ] 3. Production signer: fail closed on AndroidKeyStore errors; explicit injected test signers; controlled pairing/auth error.
+- [x] 3. Production signer: fail closed on AndroidKeyStore errors; explicit injected test signers; controlled pairing/auth error.
 - [x] 4. Backup integrity: missing originals fail export; exact manifest/frame sets, lengths, SHA-256 including empty assets; compatible date-only fields.
-- [ ] 5. Restore integrity: existing physical blob checks; rollback orphan cleanup; safe collection collision remap; refcounts; reindex; schedule only after commit.
-- [ ] 6. WhatsApp SAF import: choose text and attachments; preview counts/date problems/matches/missing/unmatched; explicit needed date order; provenance/idempotency/refcount preservation.
-- [ ] 7. Reminders: contextual notification permission; honest denial/exact fallback; date-only 09:00 local date and time-zone recomputation; tests.
-- [ ] 8. Browse/filter: custom inclusive calendar date range; source sort independent of filter basis with both directions; list/grid position restoration.
-- [ ] 9. AI controls: item/collection exclusions retain local extraction; pause persists queue without retry loop; explicit resume queues work.
-- [ ] 10. Media AI: bounded first-five-minute audio representation, honest unsupported/partial; PDF batches <=10 pages/100-page local ceiling; original preservation.
-- [ ] 11. Search provenance: PDF page chunks; distinguish embedding semantic, AI-plan lexical, local FTS; local matching snippets.
-- [ ] 12. Existing video preview dispatch and on-device English speech preference.
-- [ ] 13. Durable share capture: inspect only useful historical mechanics; foreground lifecycle ownership; durable copy/metadata before Saved; no stale replay; explicit batch failures.
-- [ ] 14. Capture transaction rollback/refcount/orphan failure injection regressions.
+- [x] 5. Restore integrity: existing physical blob checks; rollback orphan cleanup; safe collection collision remap; refcounts; reindex; schedule only after commit.
+- [x] 6. WhatsApp SAF import: choose text and attachments; preview counts/date problems/matches/missing/unmatched; explicit needed date order; provenance/idempotency/refcount preservation.
+- [x] 7. Reminders: contextual notification permission; honest denial/exact fallback; date-only 09:00 local date and time-zone recomputation; tests.
+- [x] 8. Browse/filter: custom inclusive calendar date range; source sort independent of filter basis with both directions; list/grid position restoration.
+- [x] 9. AI controls: item/collection exclusions retain local extraction; pause persists queue without retry loop; explicit resume queues work.
+- [x] 10. Media AI: bounded first-five-minute audio representation, honest unsupported/partial; PDF batches <=10 pages/100-page local ceiling; original preservation.
+- [x] 11. Search provenance: PDF page chunks; distinguish embedding semantic, AI-plan lexical, local FTS; local matching snippets.
+- [x] 12. Existing video preview dispatch and on-device English speech preference.
+- [x] 13. Durable share capture: inspect only useful historical mechanics; foreground lifecycle ownership; durable copy/metadata before Saved; no stale replay; explicit batch failures.
+- [x] 14. Capture transaction rollback/refcount/orphan failure injection regressions.
 - [x] 15. Provider cancellation: bounded AbortSignal, one response, disconnect/timeout cancellation.
-- [ ] 16. Recover focused migration/FTS/job/semantic regressions and Android/server CI with fake provider and no secrets.
-- [ ] 17. Audit unused root lockfile/device JSON/metadata before narrow cleanup.
-- [ ] 18. Final full gates and prohibited-pattern audit; fresh whole-change review; fix actionable findings.
-- [ ] 19. Update STATUS/README/HANDOFF/BACKUP_FORMAT/original plan from verified facts.
-- [ ] 20. Commit/push main; exact-SHA CI; Render deployment/health; exact-green-SHA debug APK and final verdict.
+- [x] 16. Recover focused migration/FTS/job/semantic regressions and Android/server CI with fake provider and no secrets.
+- [x] 17. Audit unused root lockfile/device JSON/metadata before narrow cleanup.
+- [x] 18. Final full gates and prohibited-pattern audit; fresh whole-change review; fix actionable findings.
+- [x] 19. Update STATUS/README/HANDOFF/BACKUP_FORMAT/original plan from verified facts.
+
+Delivery gate: commit/push documentation on main, repeat exact-SHA CI, require Render revision/health, and hand over a checksum-verified APK on Desktop. The final Desktop acceptance record records execution of this gate without a self-referential documentation commit.
 
 ## Baseline evidence
 
@@ -84,3 +85,12 @@ For each behavior: add a regression, observe failure, implement the smallest fix
 - Owner clarified the handoff: finish every agent-side check, place APK on Desktop, then owner performs phone acceptance; freeze and permanent release signing follow only after that acceptance is green.
 - 260757f hosted core/server passed and Android ran 47 tests with one failure: Robolectric's PDF renderer reported zero pages for an invalid synthetic original, and extraction incorrectly called zero pages COMPLETE. All snapshot, version, retry and capture assertions passed. Require a readable PDF page before claiming extraction complete; retain the strict FAILED assertion. Final re-verification pending.
 - Final platform inspection found missing Android 11+ speech-service package visibility and an early default-service availability check that prevented an available on-device recognizer from starting. Official API reference confirms the manifest query requirement. f0ad581 reproduced the availability bug (49 Android tests / 1 failure). Add the query, check on-device availability first, and identify the default service's possible internet use. Native speech quality remains a phone acceptance check.
+
+## Final code verification and handoff decision
+
+- 4217f95dc42f9f3fc6d7769bbb99e78f168379e4 passed all four jobs at https://github.com/RyanEid06/personal-library/actions/runs/38876784338: core 46, Android JVM 49, backend 31, API 35 emulator 4, zero test failures/skips; backend typecheck/build, Android lint and both APK builds passed. Lint: 0 errors, 68 warnings, retained visibly.
+- Code candidate APK downloaded (112,643,378 bytes) and matched CI SHA-256 1056c7990afa74e336375642e1d948ea1d5ece72c8af792d672a5905ad5cbc2e. Delivery repeats verification for the documentation SHA.
+- Fresh reviewer found no surviving actionable regressions after the review fixes and speech correction. No ignored tests or blanket lint suppressions were introduced.
+- Live Render health: HTTP 200, configured expected models/auth; anonymous AI HTTP 401. At documentation preparation deployed revision was bc26bb00eb0b0f13cb5de913dd6173e9e3adc121 (subsequent code was Android-only). Require final documentation delivery revision before handoff.
+- STATUS, README, HANDOFF, BACKUP_FORMAT, backend guide and original plan now describe actual verified implementation. No implementable finalization coding item remains. Physical/live-provider/visual/retrieval/performance acceptance is explicitly the owner's next gate; permanent signing/freeze follows only after it is green.
+- Final documentation review corrected two wording issues (delivery verification was still a gate; legacy embedding environment setting is substituted server-side). It also exposed stalled request-body ingress after a timeout. Rather than retain that implementation gap, added a real incomplete HTTP upload regression: 32 tests / 1 failure before fix, then 32/32 plus typecheck/build green. Parser now consumes AbortSignal, releases buffered data/listeners and rejects promptly; timeout flushes 504 before destroying incomplete ingress. Reviewer found no actionable regression. Final delivery repeats all hosted gates and includes this server correction.

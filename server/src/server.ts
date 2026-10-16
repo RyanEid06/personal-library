@@ -579,26 +579,50 @@ function parseLocalSearchPlan(query: string) {
   };
 }
 
-function parseJsonBody(req: http.IncomingMessage, limitBytes: number): Promise<any> {
+function parseJsonBody(req: http.IncomingMessage, limitBytes: number, signal: AbortSignal): Promise<any> {
   return new Promise((resolve, reject) => {
     let bytesReceived = 0;
     const chunks: Buffer[] = [];
+    let settled = false;
 
-    req.on('data', chunk => {
+    const cleanup = () => {
+      req.off('data', onData);
+      req.off('end', onEnd);
+      req.off('error', onError);
+      signal.removeEventListener('abort', onAbort);
+      chunks.length = 0;
+    };
+    const fail = (error: unknown) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(error);
+    };
+    const onError = (error: Error) => fail(error);
+    const onAbort = () => {
+      req.pause();
+      // A disconnected/timeout socket can emit its final error after cancellation.
+      req.once('error', () => {});
+      fail(signal.reason || new Error('REQUEST_ABORTED'));
+    };
+
+    const onData = (chunk: Buffer) => {
       bytesReceived += chunk.length;
       if (bytesReceived > limitBytes) {
-        req.destroy();
         const err = new Error('PAYLOAD_TOO_LARGE');
         (err as any).statusCode = 413;
-        reject(err);
+        fail(err);
+        req.destroy();
         return;
       }
       chunks.push(chunk);
-    });
+    };
 
-    req.on('end', () => {
+    const onEnd = () => {
       try {
         const raw = Buffer.concat(chunks).toString('utf-8');
+        settled = true;
+        cleanup();
         if (!raw.trim()) {
           resolve({});
           return;
@@ -610,9 +634,13 @@ function parseJsonBody(req: http.IncomingMessage, limitBytes: number): Promise<a
         (err as any).statusCode = 400;
         reject(err);
       }
-    });
+    };
 
-    req.on('error', err => reject(err));
+    if (signal.aborted) { onAbort(); return; }
+    req.on('data', onData);
+    req.once('end', onEnd);
+    req.once('error', onError);
+    signal.addEventListener('abort', onAbort, { once: true });
   });
 }
 
@@ -691,6 +719,11 @@ export function createServer(config?: Partial<ServerConfig>) {
 
     const timer = setTimeout(() => {
       if (!res.writableEnded) {
+        if (!req.complete) {
+          // Flush the one timeout response before terminating incomplete ingress.
+          res.setHeader('Connection', 'close');
+          res.once('finish', () => req.destroy());
+        }
         controller.abort(new Error('REQUEST_TIMEOUT'));
         sendResponse(504, { error: 'REQUEST_TIMEOUT', message: 'Request exceeded execution deadline' });
       }
@@ -738,7 +771,7 @@ export function createServer(config?: Partial<ServerConfig>) {
     // Enrollment: POST /v1/auth/enroll
     if (pathname === '/v1/auth/enroll' && req.method === 'POST') {
       try {
-        const body = await parseJsonBody(req, maxBodyBytes);
+        const body = await parseJsonBody(req, maxBodyBytes, controller.signal);
         const { deviceId, appVersion, challengeNonce, enrollmentSecret, publicKey, signature } = body;
         if (!deviceId || typeof deviceId !== 'string') {
           return sendResponse(400, { error: 'INVALID_REQUEST', message: 'Missing deviceId' });
@@ -769,7 +802,7 @@ export function createServer(config?: Partial<ServerConfig>) {
     // Session renewal: POST /v1/auth/session
     if (pathname === '/v1/auth/session' && req.method === 'POST') {
       try {
-        const body = await parseJsonBody(req, maxBodyBytes);
+        const body = await parseJsonBody(req, maxBodyBytes, controller.signal);
         const { deviceId, deviceCredential, challengeNonce, publicKey, signature } = body;
         if (!deviceId || !deviceCredential) {
           return sendResponse(400, { error: 'INVALID_REQUEST', message: 'deviceId and deviceCredential required' });
@@ -798,7 +831,7 @@ export function createServer(config?: Partial<ServerConfig>) {
     // Revocation: POST /v1/auth/revoke (Authenticated only)
     if (pathname === '/v1/auth/revoke' && req.method === 'POST') {
       try {
-        const body = await parseJsonBody(req, maxBodyBytes);
+        const body = await parseJsonBody(req, maxBodyBytes, controller.signal);
         const { deviceId } = body;
         if (!deviceId) return sendResponse(400, { error: 'INVALID_REQUEST' });
 
@@ -851,7 +884,7 @@ export function createServer(config?: Partial<ServerConfig>) {
     // Protected Route: POST /v1/ai/analyze
     if (pathname === '/v1/ai/analyze' && req.method === 'POST') {
       try {
-        const body = await parseJsonBody(req, maxBodyBytes);
+        const body = await parseJsonBody(req, maxBodyBytes, controller.signal);
         const { itemId, kind, textContent, originalFileName, mediaParts } = body;
         if (!itemId || !kind) {
           return sendResponse(400, { error: 'INVALID_REQUEST', message: 'itemId and kind are required' });
@@ -883,7 +916,7 @@ export function createServer(config?: Partial<ServerConfig>) {
     // Protected Route: POST /v1/ai/embed
     if (pathname === '/v1/ai/embed' && req.method === 'POST') {
       try {
-        const body = await parseJsonBody(req, maxBodyBytes);
+        const body = await parseJsonBody(req, maxBodyBytes, controller.signal);
         const { texts } = body;
         if (!Array.isArray(texts) || texts.length === 0) {
           return sendResponse(400, { error: 'INVALID_REQUEST', message: 'texts must be a non-empty array' });
@@ -907,7 +940,7 @@ export function createServer(config?: Partial<ServerConfig>) {
     // Protected Route: POST /v1/ai/search-plan
     if (pathname === '/v1/ai/search-plan' && req.method === 'POST') {
       try {
-        const body = await parseJsonBody(req, maxBodyBytes);
+        const body = await parseJsonBody(req, maxBodyBytes, controller.signal);
         const { query, knownCollections, nowIso } = body;
         if (!query || typeof query !== 'string') {
           return sendResponse(400, { error: 'INVALID_REQUEST', message: 'query string required' });

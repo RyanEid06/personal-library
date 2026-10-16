@@ -1,26 +1,49 @@
 # Personal Library
 
-An Android application built with Kotlin and Jetpack Compose to replace WhatsApp "Random Links" archives with durable local storage, organized browsing, local full-text search, and Gemini-assisted retrieval.
+A native Android library for saving WhatsApp shares, notes, links, media, documents, and arbitrary files. Originals and the authoritative library stay on the phone. Local search works offline; Gemini enrichment helps retrieve saved content by meaning.
 
-## Overview & Core Loop
+V1 implementation and automated gates are complete. Owner acceptance of a debug APK precedes the V1 freeze and official signing. See [verification status](docs/STATUS.md) and [phone handoff](docs/HANDOFF.md).
 
-The application provides a seamless **save -> find -> use** loop:
-- **Save from WhatsApp & Other Apps**: Android Share menu integration (`ACTION_SEND` and `ACTION_SEND_MULTIPLE`) allows sharing photos, videos, audio voice notes, links, documents, and text messages directly into Personal Library with one tap.
-- **Durable Local Storage**: Original files and documents are stored privately on-device in app-specific storage with SHA-256 deduplication and SQLite full-text search (`FTS4`). Originals remain available independently of WhatsApp.
-- **Type Filtering & Grouping**: Browse across Photos, Stickers, Notes & Text, Links, Audio, Videos, Documents, and Files. Filter or sort by saved date, source message date, or title.
-- **Folder-like Collections**: Logical collections (e.g. *Random Links*, *University & Grades*, *Important*, *Memes & Stickers*) plus computed views (*Favorites*, *Unfiled*, *Due Reminders*).
-- **Assisted Search & Voice**: Instant keyword search through local FTS4 and "Ask AI" natural language retrieval with match explanations. Includes English speech recognition via Android `SpeechRecognizer`.
-- **WhatsApp Migration Tool**: Built-in chat export parser to import previous "Random Links" chats, parsing dates, senders, notes, and media attachment references.
-- **Backup & Trash**: Versioned JSON backup export and staged restore with duplicate detection; 30-day Trash with restore and permanent purge; local storage breakdown.
-- **Reminders**: Local notifications scheduled via Android's `AlarmManager`.
+## V1 capabilities
 
-## Tech Stack & Architecture
+- Share Preview and foreground single/multiple-file capture, explicit cancellation/partial failures, durable originals, SHA-256 deduplication, and transactional reference accounting.
+- Library list/grid, collections, favorites, Trash, Saved/Source dates, custom ranges, grouping, and retained browse position.
+- Room schema 4 with explicit migrations, FTS4, bundled Latin OCR, bounded text/PDF extraction, page references, local snippets, and media previews with external Open/Share.
+- WhatsApp exported `.txt` file selection, optional separately selected attachments, preview before confirmation, conservative dates, provenance, and idempotent Random Links import. Extract ZIP packages before selecting files.
+- Versioned durable AI jobs, pause/resume, item/collection exclusions, Wi-Fi constraints, bounded retries and explicit Retry analysis. Exclusions preserve local extraction.
+- Bounded image/video/audio/PDF analysis, local 768-dimensional vectors, and distinct labels for Gemini semantic results, AI-plan lexical results, and local keyword search.
+- English voice input preferring available on-device recognition, identified default-service fallback, and editable transcripts using the typed-search pipeline.
+- Date-only reminders at 09:00 local, timed reminders, contextual notification permission, honest exact/inexact behavior, Snooze/Complete, and biometric/device-credential app lock.
+- Passphrase-protected Tink streaming encrypted backup with staged validation and transactional restore. See [backup format](docs/BACKUP_FORMAT.md).
 
-- **Runtime**: Android SDK 36 (target/compile), API 29 (minimum)
-- **UI**: Jetpack Compose, Material 3, Edge-to-Edge window insets
-- **Language**: Kotlin 2.2.10
-- **Database**: SQLite with FTS4 virtual table for local search indexing
-- **Image Loading**: Coil Compose 2.7.0
-- **AI Integration**: Gemini 3.5 Flash REST API integration with graceful local semantic fallback
-- **Network & Serialization**: Retrofit 2.12.0, OkHttp 4.10.0, Kotlinx Serialization 1.7.3
-- **Secrets Management**: Secrets Gradle Plugin configured with `.env` / `.env.example`
+## Build and verify
+
+Use JDK 21, Android platform `android-36.1` and build tools `36.0.0`. Pinned versions: Gradle 9.3.1, AGP 9.1.1, Kotlin 2.2.10, KSP 2.3.5, Room 2.7.0; Java 17 bytecode. Minimum API 29; target 36. Application ID: `com.personallibrary.app`; Android source namespace: `com.example`.
+
+```powershell
+./gradlew -PcoreOnly=true :core:test
+./gradlew :app:testDebugUnitTest :app:lintDebug :app:assembleDebug :app:assembleDebugAndroidTest
+# With an emulator/device connected:
+./gradlew :app:connectedDebugAndroidTest
+```
+
+Backend checks from `server/`:
+
+```powershell
+npm ci
+npm run typecheck
+npm test
+npm run build
+```
+
+[GitHub Actions](https://github.com/RyanEid06/personal-library/actions/workflows/android.yml) publishes exact-commit reports, debug APK and SHA-256. CI uses a fake provider; media instrumentation uses an API 35 x86_64 Google APIs emulator. Phone acceptance is separate.
+
+## Backend and privacy
+
+The default [Render backend](https://personal-library-backend-49w7.onrender.com/health) uses `gemini-3.8-flash` and `gemini-embedding-2`. Provider keys never belong in Android. Pair in Settings using the operator-managed enrollment secret entered privately on the phone; device authentication requires Android Keystore proof. See [backend setup](server/README.md).
+
+Automatic AI analysis sends bounded representations of eligible saved content to the backend/provider. Pause AI or exclude items/collections to control future uploads. Originals stay local. Local fallback is labeled separately from semantic AI. The backend keeps no content-library database; challenge replay tracking and per-device rate limits are in memory. Environment-configured device revocations survive restart.
+
+`metadata.json` is retained as legacy AI Studio descriptive metadata; Android/backend runtimes do not consume it. There is no web/Vite app. Historical `codex/v1` remains for reference; finalization is on owner-authorized `main`.
+
+No permanent release key, tag, or official release was created. Export an encrypted backup before a future signing transition and follow the [handoff guidance](docs/HANDOFF.md) if Android reports a signature conflict.
