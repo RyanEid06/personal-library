@@ -351,7 +351,7 @@ export class SdkGeminiProvider implements GeminiProvider {
     const prompt = `Analyze this saved personal library item. Return JSON with 'description' (concise 1-sentence summary under 200 characters), 'concepts' (3-5 comma separated keywords), and 'detectedDates' (array of YYYY-MM-DD or empty).
 Item Type: ${kind}
 Original Filename: ${originalFileName || 'N/A'}
-Text Content: ${textContent?.slice(0, 4000) || 'None provided'}
+Text Content: ${textContent?.slice(0, 32000) || 'None provided'}
 `;
 
     const contents: any[] = [{ text: prompt }];
@@ -865,7 +865,7 @@ export function createServer(config?: Partial<ServerConfig>) {
             if (!p.mimeType || !ALLOWED_MEDIA_MIMES.has(p.mimeType.toLowerCase())) {
               return sendResponse(400, { error: 'UNSUPPORTED_MIME_TYPE', message: `MIME type ${p.mimeType} not supported for media analysis` });
             }
-            if (p.dataBase64 && p.dataBase64.length > 1.5 * 1024 * 1024) {
+            if (p.dataBase64 && p.dataBase64.length > 2 * 1024 * 1024) {
               return sendResponse(413, { error: 'PAYLOAD_TOO_LARGE', message: 'Individual media part exceeds size limit' });
             }
           }

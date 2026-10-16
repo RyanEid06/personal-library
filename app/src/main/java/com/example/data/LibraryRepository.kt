@@ -55,6 +55,32 @@ class LibraryRepository(private val context: Context, database: LibraryRoomDatab
 
     val dao = db.libraryDao()
 
+    suspend fun publishLocalIndex(itemId: String, expectedVersion: Int, text: String?, coverage: String,
+        documents: List<SearchDocumentEntity>): Boolean = db.withTransaction {
+        val current = dao.getItemById(itemId)
+        if (current == null || current.isTrash || current.localIndexVersion != expectedVersion) return@withTransaction false
+        dao.updateExtractedText(itemId, text, coverage, expectedVersion + 1)
+        dao.deleteSearchDocumentsForItem(itemId)
+        if (documents.isNotEmpty()) dao.insertSearchDocuments(documents)
+        true
+    }
+
+    suspend fun publishAiResult(itemId: String, expectedVersion: Int, description: String, concepts: String,
+        status: String, documents: List<SearchDocumentEntity>, attempts: Int): Boolean = db.withTransaction {
+        val current = dao.getItemById(itemId)
+        if (current == null || current.isTrash || current.localIndexVersion != expectedVersion) return@withTransaction false
+        val preferences = context.getSharedPreferences("personal_library_settings", Context.MODE_PRIVATE)
+        if (preferences.getBoolean("ai_paused", false) || itemId in preferences.getStringSet("excluded_items", emptySet()).orEmpty() ||
+            dao.getCollectionIdsForItem(itemId).any { it in preferences.getStringSet("excluded_collections", emptySet()).orEmpty() }) return@withTransaction false
+        require(documents.all { it.itemId == itemId })
+        dao.updateAiMetadata(itemId, description, concepts, status)
+        dao.deleteSearchDocumentsForItem(itemId)
+        if (documents.isNotEmpty()) dao.insertSearchDocuments(documents)
+        dao.insertOrUpdateAnalysisJob(AnalysisJobEntity(itemId, expectedVersion, expectedVersion,
+            status = "COMPLETED", attempts = attempts))
+        true
+    }
+
     val assetStore = ManagedAssetStore(File(context.filesDir, "storage_root").toPath())
     private val backupEngine = EncryptedBackupEngine()
 
@@ -684,7 +710,7 @@ class LibraryRepository(private val context: Context, database: LibraryRoomDatab
                     val exportId = "whatsapp_export_${export.hash}"
                     if (dao.getItemById(exportId) == null) {
                         dao.insertItem(ItemEntity(id = exportId, title = "WhatsApp export", content = "Original WhatsApp export; imported in timezone ${java.util.TimeZone.getDefault().id}",
-                            kind = ItemKind.DOCUMENT.name, contentHash = export.hash, originalFileName = export.originalName,
+                            kind = ItemKind.DOCUMENT.name, contentHash = export.hash, originalFileName = "WhatsApp export.txt",
                             mimeType = "text/plain", fileSizeBytes = export.sizeBytes, aiStatus = "PENDING"))
                         dao.insertItemCollectionCrossRef(ItemCollectionCrossRef(exportId, randomLinks.id))
                     }

@@ -328,7 +328,7 @@ class AiGateway(private val context: Context) {
                             val body = response.body?.string() ?: throw AiGatewayException.ValidationException("Empty embed body")
                             val res = json.decodeFromString<EmbedResponse>(body)
 
-                            if (res.dimension != 768) {
+                            if (res.dimension != 768 || res.modelVersion != "gemini-embedding-2") {
                                 throw AiGatewayException.ValidationException("Expected 768 dimensions but received ${res.dimension}")
                             }
                             if (res.embeddings.size != texts.size) {

@@ -462,6 +462,19 @@ describe('Request cancellation', () => {
 });
 
 describe('Search plan provenance', () => {
+  test('SDK analysis keeps PDF text bounded and forwards bounded audio with its MIME', async () => {
+    const provider = new SdkGeminiProvider('synthetic-key', 'test-generation', 'test-embedding');
+    let contents: any[] = [];
+    (provider as any).ai = { models: { generateContent: async (request: any) => {
+      contents = request.contents;
+      return { text: JSON.stringify({ description: 'Synthetic summary', concepts: 'synthetic' }) };
+    } } };
+    await provider.analyze('synthetic', 'AUDIO', 'x'.repeat(32000) + 'MUST_BE_TRIMMED', 'bounded.m4a', [{ mimeType: 'audio/mp4', dataBase64: 'c3ludGhldGlj' }]);
+    assert.ok(contents[0].text.includes('x'.repeat(32000)));
+    assert.ok(!contents[0].text.includes('MUST_BE_TRIMMED'));
+    assert.strictEqual(contents[1].inlineData.mimeType, 'audio/mp4');
+    assert.strictEqual(contents[1].inlineData.data, 'c3ludGhldGlj');
+  });
   test('successful SDK plan identifies Gemini provenance', async () => {
     const provider = new SdkGeminiProvider('synthetic-key', 'test-generation', 'test-embedding');
     (provider as any).ai = { models: { generateContent: async () => ({ text: JSON.stringify({ concepts: ['chemistry'], targetKinds: ['TEXT'] }) }) } };

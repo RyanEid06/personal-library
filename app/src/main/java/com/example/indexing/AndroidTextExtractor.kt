@@ -10,6 +10,7 @@ import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import com.personallibrary.core.ExtractedText
+import com.personallibrary.core.ExtractedPage
 import com.personallibrary.core.TextExtraction
 import java.io.File
 import kotlin.math.max
@@ -43,6 +44,8 @@ object AndroidTextExtractor {
         ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY).use { descriptor ->
             PdfRenderer(descriptor).use { document ->
                 val text = StringBuilder()
+                val pages = mutableListOf<ExtractedPage>()
+                fun snapshot(partial: Boolean): ExtractedText = bounded(text.toString(), partial).copy(pages = pages.toList())
                 val count = minOf(document.pageCount, MAX_PDF_PAGES)
                 for (number in 0 until count) {
                     currentCoroutineContext().ensureActive()
@@ -73,12 +76,16 @@ object AndroidTextExtractor {
                             }
                             recognize(bitmap)
                         }
-                        text.append(content.take(TextExtraction.MAX_BYTES)).append('\n')
+                        val remaining = (TextExtraction.MAX_BYTES - text.toString().toByteArray(Charsets.UTF_8).size).coerceAtLeast(1)
+                        val boundedPage = TextExtraction.read(content.byteInputStream(), remaining)
+                        pages.add(ExtractedPage(number + 1, boundedPage.text))
+                        text.append(boundedPage.text).append('\n')
+                        if (boundedPage.coverage != "complete") return snapshot(true)
                     }
-                    onProgress(bounded(text.toString(), true))
-                    if (text.length >= TextExtraction.MAX_BYTES) return bounded(text.toString(), true)
+                    onProgress(snapshot(true))
+                    if (text.toString().toByteArray(Charsets.UTF_8).size >= TextExtraction.MAX_BYTES) return snapshot(true)
                 }
-                return bounded(text.toString(), document.pageCount > count)
+                return snapshot(document.pageCount > count)
             }
         }
     }

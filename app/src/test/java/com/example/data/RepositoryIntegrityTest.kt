@@ -24,6 +24,7 @@ class RepositoryIntegrityTest {
     private lateinit var context: Context
     @Before fun setup() {
         context = ApplicationProvider.getApplicationContext()
+        context.getSharedPreferences("personal_library_settings", 0).edit().clear().commit()
         db = Room.inMemoryDatabaseBuilder(context, LibraryRoomDatabase::class.java).addCallback(DATABASE_CALLBACK).build()
         repository = LibraryRepository(context, db)
     }
@@ -123,5 +124,20 @@ class RepositoryIntegrityTest {
         val export = repository.dao.getAllActiveItems().single { it.originalFileName == "WhatsApp export.txt" }
         assertArrayEquals(chat.toByteArray(), repository.assetStore.getBlobFile(export.contentHash!!)!!.readBytes())
         assertTrue(messages.all { "Sender: Ryan" in it.content && "13/10/2026" in it.content })
+    }
+
+    @Test fun staleAiCannotReplaceNewerMetadataOrPageChunks() = runBlocking {
+        val item = repository.createNote("Owner title", "New content", emptyList())
+        repository.dao.updateExtractedText(item.id, "new page", "COMPLETE", item.localIndexVersion + 1)
+        val page = SearchDocumentEntity("new-page", item.id, pageNumber = 7, textContent = "new page")
+        repository.dao.insertSearchDocument(page)
+        assertFalse(repository.publishAiResult(item.id, item.localIndexVersion, "stale", "stale", "READY", emptyList(), 1))
+        assertNull(repository.dao.getItemById(item.id)!!.aiDescription)
+        assertEquals(listOf(page), repository.dao.getSearchDocumentsForItem(item.id))
+        assertTrue(repository.publishAiResult(item.id, item.localIndexVersion + 1, "fresh", "chemistry", "READY", listOf(page), 1))
+        assertEquals("fresh", repository.dao.getItemById(item.id)!!.aiDescription)
+        repository.moveToTrash(item.id)
+        assertFalse(repository.publishAiResult(item.id, item.localIndexVersion + 1, "trashed", "stale", "READY", emptyList(), 1))
+        assertEquals("fresh", repository.dao.getItemById(item.id)!!.aiDescription)
     }
 }

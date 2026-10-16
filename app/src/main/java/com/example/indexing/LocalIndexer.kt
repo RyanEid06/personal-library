@@ -5,6 +5,7 @@ import androidx.work.*
 import com.example.data.AnalysisJobEntity
 import com.example.data.ItemEntity
 import com.example.data.LibraryRepository
+import com.example.data.SearchDocumentEntity
 import com.personallibrary.core.ExtractedText
 import com.personallibrary.core.TextExtraction
 import kotlinx.coroutines.Dispatchers
@@ -32,9 +33,7 @@ class LocalIndexer(
             // Text note or link: content is already owner text, no separate blob extraction needed
             val coverage = "COMPLETE"
             val newVersion = item.localIndexVersion + 1
-            repository.dao.updateExtractedText(item.id, null, coverage, newVersion)
-
-            queueAnalysis(item, newVersion)
+            if (repository.publishLocalIndex(item.id, item.localIndexVersion, null, coverage, emptyList())) queueAnalysis(item, newVersion)
             return@withContext ExtractedText(item.content, coverage)
         }
 
@@ -60,7 +59,7 @@ class LocalIndexer(
                     AndroidTextExtractor.pdf(blobFile) { progress ->
                         // Checkpoint save partial progress into extractedText WITHOUT destroying owner content
                         val current = repository.dao.getItemById(item.id)
-                        if (current != null && progress.text.isNotBlank()) {
+                        if (current != null && current.localIndexVersion == item.localIndexVersion && progress.text.isNotBlank()) {
                             repository.dao.updateExtractedText(
                                 item.id,
                                 progress.text,
@@ -72,20 +71,24 @@ class LocalIndexer(
                 }
                 else -> ExtractedText("", "UNSUPPORTED")
             }
-        } catch (_: Exception) {
+        } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+        catch (_: Exception) {
             ExtractedText("", "FAILED")
         }
 
         // Store extracted text in dedicated extractedText column, NEVER overwriting owner content!
         val newVersion = item.localIndexVersion + 1
-        repository.dao.updateExtractedText(
-            item.id,
-            extracted.text.ifBlank { null },
-            extracted.coverage,
-            newVersion
-        )
-
-        queueAnalysis(item, newVersion)
+        // Keep local page text even when remote analysis is excluded or unavailable.
+        var chunk = 0
+        val documents = extracted.pages.flatMap { page ->
+                page.text.chunked(600).filter { it.isNotBlank() }.map { text ->
+                    SearchDocumentEntity("local_${item.id}_${newVersion}_${chunk}", item.id, chunk++, page.number, text,
+                        coverage = extracted.coverage.uppercase())
+                }
+        }
+        if (repository.publishLocalIndex(item.id, item.localIndexVersion, extracted.text.ifBlank { null }, extracted.coverage, documents)) {
+            queueAnalysis(item, newVersion)
+        }
 
         extracted
     }

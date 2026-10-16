@@ -10,6 +10,9 @@ import androidx.work.WorkerParameters
 import com.example.ai.AiGateway
 import com.example.ai.AiGatewayException
 import com.example.ai.MediaPart
+import com.example.ai.AnalyzeResponse
+import com.personallibrary.core.ExtractedPage
+import com.personallibrary.core.PdfAnalysisBounds
 import com.example.data.AnalysisJobEntity
 import com.example.data.LibraryRepository
 import com.example.data.SearchDocumentEntity
@@ -36,6 +39,8 @@ class DurableAiWorker(
         if (initialItem.isTrash) return@withContext Result.success()
 
         suspend fun mayUpload(): Boolean {
+            val latest = repository.dao.getItemById(itemId)
+            if (latest == null || latest.isTrash || latest.localIndexVersion != expectedVersion) return false
             val colIds = repository.dao.getCollectionIdsForItem(itemId)
             val excludedCols = prefs.getStringSet("excluded_collections", emptySet()).orEmpty()
             val excludedItems = prefs.getStringSet("excluded_items", emptySet()).orEmpty()
@@ -82,6 +87,7 @@ class DurableAiWorker(
 
             // Extract bounded media parts if applicable
             val mediaParts = mutableListOf<MediaPart>()
+            var mediaPartial = false
             val blobFile = initialItem.contentHash?.let { repository.getBlobFile(it) }
 
             if (blobFile != null && blobFile.exists()) {
@@ -94,11 +100,24 @@ class DurableAiWorker(
                         }
                         mime.startsWith("video/") -> {
                             mediaParts.addAll(extractBoundedVideoFrames(blobFile))
+                            mediaPartial = true
+                        }
+                        mime.startsWith("audio/") || initialItem.kind == "AUDIO" -> {
+                            val bounded = BoundedAudioExtractor.extract(blobFile, applicationContext.cacheDir)
+                            mediaParts.add(MediaPart("audio/mp4", Base64.encodeToString(bounded.bytes, Base64.NO_WRAP)))
+                            mediaPartial = bounded.partial
                         }
                     }
-                } catch (_: Exception) {
-                    // Media bounding fallback: proceed without media part if corrupted
+                } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+                catch (_: Exception) {
+                    mediaPartial = true
                 }
+            }
+
+            if (initialItem.kind == "AUDIO" && mediaParts.isEmpty()) {
+                repository.publishAiResult(itemId, expectedVersion, "Automatic audio analysis unavailable: a bounded representation could not be produced.",
+                    "", "UNSUPPORTED", repository.dao.getSearchDocumentsForItem(itemId), runAttemptCount + 1)
+                return@withContext Result.success()
             }
 
             val textForAnalysis = buildString {
@@ -109,14 +128,32 @@ class DurableAiWorker(
                 }
             }
 
-            if (!mayUpload()) return@withContext Result.success()
-            val analysis = aiGateway.analyze(
-                itemId = initialItem.id,
-                kind = initialItem.kind,
-                textContent = textForAnalysis.ifBlank { null },
-                originalFileName = initialItem.originalFileName,
-                mediaParts = mediaParts
-            )
+            val localDocs = repository.dao.getSearchDocumentsForItem(itemId)
+            val pages = localDocs.filter { it.pageNumber != null }.groupBy { it.pageNumber!! }.toSortedMap().map { (number, docs) ->
+                ExtractedPage(number, docs.sortedBy { it.chunkIndex }.joinToString("") { it.textContent })
+            }
+            val isPdf = initialItem.mimeType == "application/pdf" || initialItem.originalFileName?.endsWith(".pdf", true) == true
+            val batches = if (isPdf) PdfAnalysisBounds.batches(pages) else emptyList()
+            val responses = mutableListOf<AnalyzeResponse>()
+            if (batches.isNotEmpty()) {
+                for (batch in batches) {
+                    if (!mayUpload()) return@withContext Result.success()
+                    responses.add(aiGateway.analyze(itemId, initialItem.kind, batch.text, initialItem.originalFileName))
+                }
+            } else {
+                if (!mayUpload()) return@withContext Result.success()
+                responses.add(aiGateway.analyze(itemId, initialItem.kind, textForAnalysis.take(PdfAnalysisBounds.MAX_PROMPT_CHARS).ifBlank { null },
+                    initialItem.originalFileName, mediaParts))
+            }
+            val boundedPartial = mediaPartial || batches.any { it.partial } ||
+                (isPdf && (pages.isEmpty() || initialItem.localIndexCoverage.equals("partial", true))) ||
+                (!isPdf && textForAnalysis.length > PdfAnalysisBounds.MAX_PROMPT_CHARS)
+            val analysis = AnalyzeResponse(itemId,
+                responses.mapIndexed { index, response ->
+                    batches.getOrNull(index)?.let { "Pages ${it.pageNumbers.first()}–${it.pageNumbers.last()}: ${response.description}" } ?: response.description
+                }.joinToString("\n").take(8000),
+                responses.flatMap { it.concepts.split(',') }.map { it.trim() }.filter { it.isNotEmpty() }.distinct().take(40).joinToString(", ").take(1500),
+                coverage = if (boundedPartial || responses.any { !it.coverage.equals("COMPLETE", true) }) "PARTIAL" else "COMPLETE")
 
             // --- STALE AI RESULT PROTECTION ---
             // Re-read item from database to ensure content has not changed while network call was running
@@ -127,19 +164,11 @@ class DurableAiWorker(
             }
             if (!mayUpload()) return@withContext Result.success()
 
-            // Targeted update of AI-only fields
-            repository.dao.updateAiMetadata(
-                id = currentItem.id,
-                aiDescription = analysis.description,
-                aiConcepts = analysis.concepts,
-                aiStatus = "READY"
-            )
-
             // --- CHUNKED SEMANTIC EMBEDDINGS ---
-            val chunks = createChunksForItem(currentItem, analysis.description, analysis.concepts)
+            val chunks = createChunksForItem(currentItem, analysis.description, analysis.concepts, localDocs)
+            val allEmbeddedDocs = mutableListOf<SearchDocumentEntity>()
             if (chunks.isNotEmpty()) {
                 // Embed in batches of at most 32 chunks
-                val allEmbeddedDocs = mutableListOf<SearchDocumentEntity>()
                 val batchSize = 32
                 for (chunkBatch in chunks.chunked(batchSize)) {
                     if (!mayUpload()) return@withContext Result.success()
@@ -148,7 +177,7 @@ class DurableAiWorker(
                     for (i in chunkBatch.indices) {
                         val chunkInfo = chunkBatch[i]
                         val vec = vectors.getOrNull(i)
-                        if (vec != null && vec.size == 768) {
+                        if (vec != null && vec.size == 768 && vec.all { it.isFinite() }) {
                             allEmbeddedDocs.add(
                                 SearchDocumentEntity(
                                     id = "doc_${currentItem.id}_${expectedVersion}_${chunkInfo.index}",
@@ -159,34 +188,24 @@ class DurableAiWorker(
                                     embedding = vec.joinToString(","),
                                     embeddingDimension = 768,
                                     modelVersion = "gemini-embedding-2",
-                                    coverage = analysis.coverage
+                                    coverage = if (isPdf || chunks.size >= 40) "PARTIAL" else analysis.coverage
                                 )
                             )
                         }
                     }
                 }
 
-                // Replace old search documents safely
-                repository.dao.deleteSearchDocumentsForItem(currentItem.id)
-                if (allEmbeddedDocs.isNotEmpty()) {
-                    repository.dao.insertSearchDocuments(allEmbeddedDocs)
-                }
             }
-
-            repository.dao.insertOrUpdateAnalysisJob(
-                AnalysisJobEntity(
-                    itemId = itemId,
-                    expectedContentVersion = expectedVersion,
-                    indexVersion = expectedVersion,
-                    status = "COMPLETED",
-                    attempts = runAttemptCount + 1,
-                    updatedAt = System.currentTimeMillis()
-                )
-            )
+            if (!mayUpload()) return@withContext Result.success()
+            // Keep local page chunks that were not selected for embedding, preserving page provenance.
+            val unembeddedPages = localDocs.filter { local -> local.pageNumber != null && chunks.none { it.pageNumber == local.pageNumber && it.text == local.textContent } }
+            repository.publishAiResult(itemId, expectedVersion, analysis.description, analysis.concepts,
+                if (analysis.coverage == "COMPLETE") "READY" else "PARTIAL", allEmbeddedDocs + unembeddedPages, runAttemptCount + 1)
 
             Result.success()
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
+            if (!mayUpload()) return@withContext Result.success()
             val isPermanent = e is AiGatewayException.UnconfiguredException ||
                 e is AiGatewayException.UnpairedException
 
@@ -215,7 +234,7 @@ class DurableAiWorker(
 
     private data class ChunkInfo(val index: Int, val text: String, val pageNumber: Int? = null)
 
-    private fun createChunksForItem(item: com.example.data.ItemEntity, aiDesc: String?, aiConcepts: String?): List<ChunkInfo> {
+    private fun createChunksForItem(item: com.example.data.ItemEntity, aiDesc: String?, aiConcepts: String?, localDocs: List<SearchDocumentEntity>): List<ChunkInfo> {
         val chunks = mutableListOf<ChunkInfo>()
         var chunkIndex = 0
 
@@ -232,13 +251,20 @@ class DurableAiWorker(
         // Chunk owner content (notes, text, links)
         if (item.content.isNotBlank()) {
             val contentChunks = splitTextIntoBoundedChunks(item.content, 600)
-            for (c in contentChunks) {
+            for (c in contentChunks.take(24)) {
                 chunks.add(ChunkInfo(chunkIndex++, c))
             }
         }
 
         // Chunk extracted text (OCR or PDF)
-        if (!item.extractedText.isNullOrBlank()) {
+        val pageDocs = localDocs.filter { it.pageNumber != null }.groupBy { it.pageNumber }.toSortedMap(compareBy { it ?: 0 })
+        if (pageDocs.isNotEmpty()) {
+            for ((page, documents) in pageDocs) {
+                for (document in documents.sortedBy { it.chunkIndex }.take(3)) {
+                    chunks.add(ChunkInfo(chunkIndex++, document.textContent.take(600), page))
+                }
+            }
+        } else if (!item.extractedText.isNullOrBlank()) {
             val extractedChunks = splitTextIntoBoundedChunks(item.extractedText, 600)
             for (c in extractedChunks.take(15)) { // Bounded max chunks per item
                 chunks.add(ChunkInfo(chunkIndex++, c))

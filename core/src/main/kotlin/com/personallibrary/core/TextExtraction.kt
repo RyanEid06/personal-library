@@ -6,7 +6,8 @@ import java.nio.ByteBuffer
 import java.nio.CharBuffer
 import java.nio.charset.CodingErrorAction
 
-data class ExtractedText(val text: String, val coverage: String)
+data class ExtractedPage(val number: Int, val text: String)
+data class ExtractedText(val text: String, val coverage: String, val pages: List<ExtractedPage> = emptyList())
 
 object TextExtraction {
     const val MAX_BYTES = 1024 * 1024

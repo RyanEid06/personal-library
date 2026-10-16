@@ -100,4 +100,6 @@ dependencies {
     testImplementation(libs.androidx.test.ext.junit)
     testImplementation(libs.androidx.room.testing)
     testImplementation("androidx.work:work-testing:2.10.0")
+    androidTestImplementation(libs.androidx.test.ext.junit)
+    androidTestImplementation("androidx.test:runner:1.6.2")
 }
