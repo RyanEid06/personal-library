@@ -184,22 +184,26 @@ internal fun startListening(
     onResult: (String) -> Unit,
     setRecognizer: (SpeechRecognizer) -> Unit
 ) {
-    if (!SpeechRecognizer.isRecognitionAvailable(context)) {
+    var onDevice = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && SpeechRecognizer.isOnDeviceRecognitionAvailable(context)
+    if (!onDevice && !SpeechRecognizer.isRecognitionAvailable(context)) {
         onStatus("Speech recognition is not available on this device")
         return
     }
 
-    var onDevice = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && SpeechRecognizer.isOnDeviceRecognitionAvailable(context)
     val recognizer = if (onDevice) {
         try {
             SpeechRecognizer.createOnDeviceSpeechRecognizer(context)
         } catch (_: Exception) {
             onDevice = false
-            onStatus("Using the device's default speech service")
+            if (!SpeechRecognizer.isRecognitionAvailable(context)) {
+                onStatus("Speech recognition is not available on this device")
+                return
+            }
+            onStatus("Using the default speech service (may use internet)")
             SpeechRecognizer.createSpeechRecognizer(context)
         }
     } else {
-        onStatus("Using the device's default speech service")
+        onStatus("Using the default speech service (may use internet)")
         SpeechRecognizer.createSpeechRecognizer(context)
     }
     setRecognizer(recognizer)
@@ -214,7 +218,7 @@ internal fun startListening(
     recognizer.setRecognitionListener(object : RecognitionListener {
         override fun onReadyForSpeech(params: Bundle?) {
             onListeningState(true)
-            onStatus(if (onDevice) "Listening on device..." else "Listening with default speech service...")
+            onStatus(if (onDevice) "Listening on device..." else "Listening with default speech service (may use internet)...")
         }
 
         override fun onBeginningOfSpeech() {
