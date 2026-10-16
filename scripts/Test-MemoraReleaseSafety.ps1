@@ -87,6 +87,46 @@ try {
         Require ((Get-Content $report -Raw | ConvertFrom-Json).apkSha256 -eq $valid.apkSha256)
         Require (@(Get-ChildItem -LiteralPath $directory -Filter 'success*.pending').Count -eq 0)
     }
+    Check 'both artifacts are staged before publication and recorded together' {
+        $first = Join-Path $directory 'pair-arm.apk'; $second = Join-Path $directory 'pair-universal.apk'
+        'synthetic ARM64' | Set-Content $first; 'synthetic universal' | Set-Content $second
+        $pair = @()
+        foreach ($variant in @('arm64','universal')) {
+            $source = if ($variant -eq 'arm64') { $first } else { $second }
+            $record = $valid.Clone(); $record.abiVariant=$variant
+            $record.apkSha256=(Get-FileHash $source -Algorithm SHA256).Hash; $record.apkBytes=(Get-Item $source).Length
+            $pair += @{ ApkPath=$source; OutputPath=(Join-Path $directory "pair-$variant-official.apk"); Record=$record }
+        }
+        Publish-MemoraReleaseSet -Artifacts $pair -LedgerPath (Join-Path $directory 'pair-ledger.json') -ReportPath (Join-Path $directory 'pair-report.json')
+        $report = Get-Content (Join-Path $directory 'pair-report.json') -Raw | ConvertFrom-Json
+        Require ($report.artifacts.Count -eq 2)
+        foreach ($artifact in $pair) { Require ((Get-FileHash $artifact.OutputPath -Algorithm SHA256).Hash -eq $artifact.Record.apkSha256) }
+        $pair[1].Record.apkSha256='0' * 64
+        $pair[0].OutputPath=Join-Path $directory 'rejected-arm.apk'; $pair[1].OutputPath=Join-Path $directory 'rejected-universal.apk'
+        Reject { Publish-MemoraReleaseSet -Artifacts $pair -LedgerPath (Join-Path $directory 'rejected-ledger.json') -ReportPath (Join-Path $directory 'rejected-report.json') }
+        Require (-not (Test-Path $pair[0].OutputPath) -and -not (Test-Path (Join-Path $directory 'rejected-ledger.json')))
+        $script:publicationPair=$pair
+    }
+    Check 'mixed source artifact pair cannot be published' {
+        $script:publicationPair[1].Record.sourceSha='b' * 40
+        Reject { Publish-MemoraReleaseSet -Artifacts $script:publicationPair -LedgerPath (Join-Path $directory 'mixed-ledger.json') -ReportPath (Join-Path $directory 'mixed-report.json') }
+        Require (-not (Test-Path (Join-Path $directory 'mixed-ledger.json')))
+    }
+    foreach ($corruption in @('bad-hash','mixed-source','missing-artifact','wrong-variant','wrong-primary')) {
+        Check "corrupt previous pair ledger fails closed: $corruption" {
+            $record=Get-Content (Join-Path $directory 'pair-ledger.json') -Raw | ConvertFrom-Json
+            switch ($corruption) {
+                'bad-hash' { $record.artifacts[1].apkSha256='invalid' }
+                'mixed-source' { $record.artifacts[1].sourceSha='b' * 40 }
+                'missing-artifact' { $record.artifacts=@($record.artifacts[0]) }
+                'wrong-variant' { $record.artifacts[1].abiVariant='arm64' }
+                'wrong-primary' { $record.apkSha256='0' * 64 }
+            }
+            $ledger=Join-Path $directory 'corrupt-pair.json'
+            $record | ConvertTo-Json -Depth 8 | Set-Content $ledger
+            Reject { Assert-MemoraReleaseVersionAvailable -LedgerPath $ledger -VersionCode 2 -SourceSha ('a' * 40) }
+        }
+    }
     if ($failures.Count) { throw "$($failures.Count) release safety regressions failed." }
     Write-Output "Memora release safety: $passed tests passed. No production key or signing used."
 } finally {

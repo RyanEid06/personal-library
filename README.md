@@ -8,6 +8,8 @@ V1 implementation is complete. The owner has supplied the permanent signing iden
 
 ## V1 capabilities
 
+Final release packaging enables R8 and resource shrinking. One source/version produces `Memora-v1.0.0-arm64-official.apk` for ARM64 phones and `Memora-v1.0.0-universal.apk` retaining all four existing ABIs. The [owner release command](docs/branding/memora/RELEASE.md) verifies both permanently signed APKs before Desktop publication. `optimizedCheck` is a nonofficial, nondebuggable, debug-signed verification build; CI tests optimized code as well as debug without production signing credentials.
+
 - Share Preview and foreground single/multiple-file capture, explicit cancellation/partial failures, durable originals, SHA-256 deduplication, and transactional reference accounting.
 - Library list/grid, collections, favorites, Trash, Saved/Source dates, custom ranges, grouping, and retained browse position.
 - Room schema 4 with explicit migrations, FTS4, bundled Latin OCR, bounded text/PDF extraction, page references, local snippets, and media previews with external Open/Share.
@@ -27,6 +29,8 @@ Use JDK 21, Android platform `android-36.1` and build tools `36.0.0`. Pinned ver
 ./gradlew :app:testDebugUnitTest :app:lintDebug :app:assembleDebug :app:assembleDebugAndroidTest
 # With an emulator/device connected:
 ./gradlew :app:connectedDebugAndroidTest
+# Nonofficial optimized runtime verification:
+./gradlew :app:connectedOptimizedCheckAndroidTest -PmemoraOptimizedTests=true --no-configuration-cache
 ```
 
 Backend checks from `server/`:
@@ -48,4 +52,4 @@ Automatic AI analysis sends bounded representations of eligible saved content to
 
 `metadata.json` is retained as legacy AI Studio descriptive metadata; Android/backend runtimes do not consume it. There is no web/Vite app. The owner requested removing obsolete `codex/v1`; its complete history was verified in a local Git bundle before deleting the remote branch. Finalization is on owner-authorized `main`; see the release ledger for recovery evidence.
 
-No permanent release key, tag, or official release was created. Export an encrypted backup before a future signing transition and follow the [handoff guidance](docs/HANDOFF.md) if Android reports a signature conflict.
+The owner-created permanent release key stays outside Git. No release tag or public GitHub Release is part of this pass. Export an encrypted backup before a signing transition and follow the [handoff guidance](docs/HANDOFF.md) if Android reports a signature conflict.

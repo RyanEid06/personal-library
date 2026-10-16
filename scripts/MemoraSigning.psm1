@@ -114,7 +114,7 @@ function Restore-MemoraReleaseEnvironment {
 }
 
 function Assert-MemoraReleaseRecord {
-    param($Record)
+    param($Record,[switch]$ArtifactOnly)
     try {
         $identity = Get-MemoraSigningIdentity
         if (-not $Record -or $Record.schemaVersion -ne 1 -or
@@ -124,6 +124,19 @@ function Assert-MemoraReleaseRecord {
             $Record.applicationId -ne 'com.personallibrary.app' -or $Record.certificateSha256 -ne $identity.CertificateSha256 -or
             $Record.apkSha256 -isnot [string] -or $Record.apkSha256 -notmatch '^[0-9A-Fa-f]{64}$' -or
             ($Record.apkBytes -isnot [int] -and $Record.apkBytes -isnot [long]) -or $Record.apkBytes -le 0) { throw 'Invalid provenance.' }
+        $hasArtifacts = ($Record -is [Collections.IDictionary] -and $Record.Contains('artifacts')) -or $null -ne $Record.PSObject.Properties['artifacts']
+        if ($hasArtifacts) {
+            if ($ArtifactOnly -or $Record.artifacts -isnot [array] -or $Record.artifacts.Count -ne 2 -or
+                (@($Record.artifacts | ForEach-Object { $_.abiVariant } | Sort-Object -Unique) -join ',') -ne 'arm64,universal') { throw 'Invalid release artifact pair.' }
+            foreach ($artifact in $Record.artifacts) {
+                Assert-MemoraReleaseRecord -Record $artifact -ArtifactOnly
+                foreach ($field in @('sourceSha','versionCode','versionName','applicationId','certificateSha256')) {
+                    if ($artifact.$field -ne $Record.$field) { throw 'Mixed artifact provenance.' }
+                }
+            }
+            $arm = @($Record.artifacts | Where-Object { $_.abiVariant -eq 'arm64' })[0]
+            if ($Record.abiVariant -ne 'arm64' -or $Record.apkSha256 -ne $arm.apkSha256 -or $Record.apkBytes -ne $arm.apkBytes) { throw 'Primary artifact provenance mismatch.' }
+        }
     } catch { throw 'Previous/new release record is invalid. No version reuse or publication is allowed.' }
 }
 
@@ -142,7 +155,7 @@ function Save-MemoraReleaseRecord {
     Assert-MemoraReleaseRecord $Record
     $temporary = $Path + '.' + [Guid]::NewGuid().ToString('N') + '.pending'
     try {
-        $Record | ConvertTo-Json | Set-Content -LiteralPath $temporary -Encoding utf8
+        $Record | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $temporary -Encoding utf8
         if (Test-Path -LiteralPath $Path) { [IO.File]::Replace($temporary,$Path,[System.Management.Automation.Language.NullString]::Value) }
         else { [IO.File]::Move($temporary,$Path) }
     } finally { if (Test-Path -LiteralPath $temporary) { Remove-Item -LiteralPath $temporary -Force } }
@@ -163,4 +176,34 @@ function Publish-MemoraReleaseArtifact {
     } finally { if (Test-Path -LiteralPath $pending) { Remove-Item -LiteralPath $pending -Force } }
 }
 
-Export-ModuleMember -Function Get-MemoraSigningIdentity,Save-MemoraSigningCredential,Read-MemoraSigningCredential,Invoke-MemoraReleaseTool,Restore-MemoraReleaseEnvironment,Assert-MemoraReleaseVersionAvailable,Publish-MemoraReleaseArtifact
+function Publish-MemoraReleaseSet {
+    param([Parameter(Mandatory)][array]$Artifacts,[string]$LedgerPath,[string]$ReportPath)
+    if ($Artifacts.Count -ne 2 -or (@($Artifacts | ForEach-Object { $_.Record.abiVariant } | Sort-Object -Unique) -join ',') -ne 'arm64,universal') { throw 'Release requires ARM64 and universal artifacts.' }
+    $primary = @($Artifacts | Where-Object { $_.Record.abiVariant -eq 'arm64' })[0].Record
+    $pending = @()
+    try {
+        foreach ($artifact in $Artifacts) {
+            Assert-MemoraReleaseRecord $artifact.Record
+            foreach ($field in @('sourceSha','versionCode','versionName','applicationId','certificateSha256')) {
+                if ($artifact.Record[$field] -ne $primary[$field]) { throw 'Release artifact identities/source do not match.' }
+            }
+            $staging = $artifact.OutputPath + '.' + [Guid]::NewGuid().ToString('N') + '.pending'
+            $pending += @{ Path=$staging; Artifact=$artifact }
+            Copy-Item -LiteralPath $artifact.ApkPath -Destination $staging
+            if ((Get-FileHash -LiteralPath $staging -Algorithm SHA256).Hash -ne $artifact.Record.apkSha256 -or (Get-Item -LiteralPath $staging).Length -ne $artifact.Record.apkBytes) { throw 'Release staging checksum/size mismatch.' }
+        }
+        # No Desktop artifact is exposed before BOTH are staged and provenance is durable.
+        $record = @{}; foreach ($key in $primary.Keys) { $record[$key]=$primary[$key] }
+        $record.artifacts = @($Artifacts | ForEach-Object { $_.Record })
+        Save-MemoraReleaseRecord -Path $LedgerPath -Record $record
+        foreach ($item in $pending) {
+            Move-Item -LiteralPath $item.Path -Destination $item.Artifact.OutputPath -Force
+            if ((Get-FileHash -LiteralPath $item.Artifact.OutputPath -Algorithm SHA256).Hash -ne $item.Artifact.Record.apkSha256) { throw 'Desktop final checksum verification failed.' }
+        }
+        Save-MemoraReleaseRecord -Path $ReportPath -Record $record
+    } finally {
+        foreach ($item in $pending) { if (Test-Path -LiteralPath $item.Path) { Remove-Item -LiteralPath $item.Path -Force } }
+    }
+}
+
+Export-ModuleMember -Function Get-MemoraSigningIdentity,Save-MemoraSigningCredential,Read-MemoraSigningCredential,Invoke-MemoraReleaseTool,Restore-MemoraReleaseEnvironment,Assert-MemoraReleaseVersionAvailable,Publish-MemoraReleaseArtifact,Publish-MemoraReleaseSet

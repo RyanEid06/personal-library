@@ -20,10 +20,13 @@ jobs:
         run: |
           ./scripts/Test-MemoraSigning.ps1
           ./scripts/Test-MemoraReleaseSafety.ps1
+          ./scripts/Test-MemoraApk.ps1
           powershell -NoProfile -ExecutionPolicy Bypass -File scripts/Test-MemoraSigning.ps1
           if ($LASTEXITCODE -ne 0) { throw 'Windows PowerShell DPAPI regressions failed' }
           powershell -NoProfile -ExecutionPolicy Bypass -File scripts/Test-MemoraReleaseSafety.ps1
           if ($LASTEXITCODE -ne 0) { throw 'Windows PowerShell release safety regressions failed' }
+          powershell -NoProfile -ExecutionPolicy Bypass -File scripts/Test-MemoraApk.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'Windows PowerShell APK inspection regressions failed' }
 
   core:
     runs-on: ubuntu-latest
@@ -64,6 +67,20 @@ jobs:
           cache-provider: basic
       - run: chmod +x gradlew
       - run: ./gradlew :app:testDebugUnitTest :app:lintDebug :app:assembleDebug :app:assembleDebugAndroidTest --stacktrace
+      - name: Build R8/resource-shrunk verification APKs without the permanent signing key
+        run: ./gradlew :app:assembleOptimizedCheck -PmemoraPhoneApks=true --no-configuration-cache --stacktrace
+      - name: Inspect exact ARM64/universal contents and preserve bundled offline OCR
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path app/build/reports/optimization -Force | Out-Null
+          ./scripts/Measure-MemoraApks.ps1 -Arm64Apk app/build/outputs/apk/optimizedCheck/app-arm64-v8a-optimizedCheck.apk -UniversalApk app/build/outputs/apk/optimizedCheck/app-universal-optimizedCheck.apk -BaselineApk app/build/outputs/apk/debug/app-debug.apk -OutputPath app/build/reports/optimization/size-analysis.json
+          if (-not (Test-Path app/build/outputs/mapping/optimizedCheck/mapping.txt)) { throw 'R8 mapping missing' }
+          foreach ($apk in Get-ChildItem app/build/outputs/apk/optimizedCheck/*.apk) {
+            & "$env:ANDROID_HOME/build-tools/36.0.0/zipalign" -c -P 16 4 $apk.FullName
+            if ($LASTEXITCODE -ne 0) { throw '16 KB APK alignment failed' }
+            & "$env:ANDROID_HOME/build-tools/36.0.0/apksigner" verify $apk.FullName
+            if ($LASTEXITCODE -ne 0) { throw 'Verification APK signature failed' }
+          }
       - name: Release signing fails closed without the permanent identity
         shell: bash
         run: |
@@ -103,6 +120,14 @@ jobs:
         with:
           name: personal-library-debug-${{ github.sha }}
           path: app/build/outputs/apk/debug/app-debug.apk*
+      - uses: actions/upload-artifact@v7
+        if: success()
+        with:
+          name: memora-optimized-verification-${{ github.sha }}
+          path: |
+            app/build/outputs/apk/optimizedCheck/*.apk
+            app/build/outputs/mapping/optimizedCheck
+            app/build/reports/optimization
 
   server:
     runs-on: ubuntu-latest
@@ -158,6 +183,17 @@ jobs:
             adb exec-out run-as com.personallibrary.app cat files/memora-dark.png > app/build/reports/branding/memora-dark.png
             adb exec-out run-as com.personallibrary.app cat files/memora-light.png > app/build/reports/branding/memora-light.png
             python3 -c 'from pathlib import Path; files=list(Path("app/build/reports/branding").glob("*.png")); assert len(files)==2; assert all(p.read_bytes().startswith(bytes.fromhex("89504e470d0a1a0a")) for p in files), "Invalid branding screenshot artifact"'
+            ./gradlew :app:assembleOptimizedCheck -PmemoraPhoneApks=true --no-configuration-cache --stacktrace
+            mkdir -p app/build/reports/optimized-launch
+            adb install -r app/build/outputs/apk/optimizedCheck/app-universal-optimizedCheck.apk
+            adb shell am force-stop com.personallibrary.app
+            adb logcat -c
+            adb shell am start -W -n com.personallibrary.app/com.example.MainActivity > app/build/reports/optimized-launch/start.txt
+            grep -q 'Status: ok' app/build/reports/optimized-launch/start.txt
+            sleep 3
+            adb shell pidof com.personallibrary.app > app/build/reports/optimized-launch/pid.txt
+            adb logcat -d > app/build/reports/optimized-launch/logcat.txt
+            ./gradlew :app:connectedOptimizedCheckAndroidTest -PmemoraOptimizedTests=true --no-configuration-cache --stacktrace
       - uses: actions/upload-artifact@v7
         if: always()
         with:
@@ -166,3 +202,4 @@ jobs:
             app/build/reports/androidTests
             app/build/outputs/androidTest-results
             app/build/reports/branding
+            app/build/reports/optimized-launch

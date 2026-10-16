@@ -25,6 +25,8 @@ if (providers.environmentVariable("RELEASE_STORE_PASSWORD").isPresent || provide
 }
 val releaseStorePassword = providers.environmentVariable("RELEASE_STORE_PASSWORD").orNull
 val releaseKeyPassword = providers.environmentVariable("RELEASE_KEY_PASSWORD").orNull
+val phoneApks = providers.gradleProperty("memoraPhoneApks").map { it.toBoolean() }.getOrElse(false)
+val optimizedTests = providers.gradleProperty("memoraOptimizedTests").map { it.toBoolean() }.getOrElse(false)
 
 abstract class VerifyMemoraReleaseSigning : DefaultTask() {
     @TaskAction
@@ -102,7 +104,8 @@ android {
     buildTypes {
         release {
             isCrunchPngs = false
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -111,6 +114,26 @@ android {
         }
         debug {
             // Standard Android debug signing is automatic
+        }
+        // Exercises release optimization in CI without giving CI the permanent key.
+        // This build is verification-only and must never be published as official.
+        create("optimizedCheck") {
+            initWith(getByName("release"))
+            signingConfig = signingConfigs.getByName("debug")
+            matchingFallbacks += "release"
+        }
+    }
+
+    testBuildType = if (optimizedTests) "optimizedCheck" else "debug"
+
+    // Opt-in keeps normal debug/emulator tasks unchanged. The universal output
+    // retains all dependency ABIs; the ARM64 split is a standalone phone APK.
+    splits {
+        abi {
+            isEnable = phoneApks
+            reset()
+            include("arm64-v8a")
+            isUniversalApk = true
         }
     }
 

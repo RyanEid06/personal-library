@@ -4,7 +4,9 @@ V1 finalization code is complete. The owner has now authorized the final Memora 
 
 ## Installation
 
-Export an encrypted backup of an existing library before changing installs. Keep its passphrase safely. The intended official Desktop artifact is `Memora-v1.0.0-official.apk`, only after successful permanent-signature verification. A debug-signed installation cannot be updated by this different permanent certificate. Stop before uninstalling a valuable existing library and preserve/export its data. Nothing is uninstalled automatically. Future official updates must keep the same package/certificate and increase versionCode.
+Final packaging produces `Memora-v1.0.0-arm64-official.apk` for phones whose Android OS supports arm64-v8a, plus `Memora-v1.0.0-universal.apk` containing arm64-v8a/armeabi-v7a/x86/x86_64. Both require Android 10 or newer and share the same source/version/permanent certificate. Follow [the release procedure](branding/memora/RELEASE.md). Debug-signed `optimizedCheck` artifacts are verification-only. Signed delivery is pending until both Desktop signatures/hashes are verified.
+
+Export an encrypted backup of an existing library before changing installs. Keep its passphrase safely. The intended primary Desktop artifact is `Memora-v1.0.0-arm64-official.apk`, only after successful permanent-signature verification. A debug-signed installation cannot be updated by this different permanent certificate. Stop before uninstalling a valuable existing library and preserve/export its data. Nothing is uninstalled automatically. Future official updates must keep the same package/certificate and increase versionCode.
 
 Report the failing action, device/Android version and visible message. Never send enrollment/API secrets or personal library content in diagnostics.
 

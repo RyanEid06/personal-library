@@ -1,5 +1,18 @@
 # V1 verification status
 
+## Final optimized completion pass — 16 October 2026
+
+Starting clean main/origin/main: `41d9cf9e57dcb56715cce9a2af599be405c5a743`, whose five-job CI run 38913661940 succeeded. The inherited agent-authored size prototype was preserved in ignored release artifacts before replacement by tested PowerShell APK inspection.
+
+- IMPLEMENTED: R8/resource shrinking with existing optimized default/consumer rules; opt-in ARM64 plus genuine universal APK splits; safe dual-artifact permanent-signing/publication command; nonofficial nondebuggable optimized runtime verification variant. No app feature/dependency changes or new keep/dontwarn rules.
+- AUTOMATED VERIFIED locally: core/Android/lint/debug/test-APK baseline and backend typecheck/32 tests/build; R8 split assembly and optimized instrumentation APK compilation; exact ABI sets and native/offline asset hash preservation. Windows DPAPI 15, release safety 19 and APK inspection 9 tests pass in both PS7 and PS5.1. Review found corrupt nested universal provenance was accepted; five regressions reproduced and verified its correction.
+- CI VERIFIED / EMULATOR VERIFIED: the final source requires its own terminal-success CI. Its API 35 emulator runs appearance/audio/PDF plus real OCR, Room/Tink backup/restore and initialization tests against debug and optimized code. Debug-only success cannot certify optimized runtime.
+- LIVE BACKEND VERIFIED: HTTP 200/status ok at `944632929215f4a01f0404c85913acb52b80cc51`, auth/AI configured and expected models. Backend source unchanged; no forced redeployment.
+- PHYSICAL DEVICE PENDING: no connected phone or local emulator; real WhatsApp/OEM voice/reminders/lock, paired Gemini, restore/accessibility/retrieval acceptance remains owner work.
+- SIGNED ARTIFACTS PENDING: initial inspection found neither DPAPI profile nor process signing passwords. No permanent-signed APK is claimed until both Desktop files pass verification.
+
+Final exact source SHA, CI results and any external signing limitation are recorded after verification in ignored `artifacts/release-v1/FINAL_VERIFICATION.md`. Actual signed hashes/sizes belong in `official-release.json` and `official-size-analysis.json`. Generated records identify exact HEAD without changing the source they certify. Historical sections below are earlier checkpoints.
+
 ## Final permanent release pass — 16 October 2026
 
 Starting SHA: `71dbfa187bcba5b37c7ed3ab7c834627915cd514`, clean main matching origin/main. The owner explicitly authorized stabilization, permanent signing using the existing canonical key, and the official Desktop APK. [Release procedure/audit](branding/memora/RELEASE.md), [public signing identity](branding/memora/SIGNING_IDENTITY.md), and [release ledger](superpowers/plans/2026-10-16-memora-v1-release.md) record this scope.
