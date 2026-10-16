@@ -684,7 +684,7 @@ fun SharePreviewDialog(
                 Spacer(modifier = Modifier.height(12.dp))
 
                 Text(
-                    text = "Personal Library received content from another app. Save it locally into your library:",
+                    text = "Memora received content from another app. Save it locally into your library:",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

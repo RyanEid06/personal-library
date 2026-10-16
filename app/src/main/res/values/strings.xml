@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">Personal Library</string>
+    <string name="app_name">Memora</string>
     <string name="destination_library">Library</string>
     <string name="destination_collections">Collections</string>
     <string name="destination_search">Search</string>

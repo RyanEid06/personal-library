@@ -31,6 +31,7 @@ import com.example.model.*
 import com.example.ui.MainViewModel
 import com.example.ui.components.ItemCard
 import com.example.ui.components.ItemGridCard
+import com.example.ui.components.MemoraWordmark
 import com.example.ui.components.TypeFilterChipStrip
 import com.personallibrary.core.model.DateRange
 import java.time.Instant
@@ -98,11 +99,7 @@ fun LibraryScreen(
             TopAppBar(
                 title = {
                     Column {
-                        Text(
-                            text = "Personal Library",
-                            style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.Bold
-                        )
+                        MemoraWordmark(Modifier.height(40.dp).widthIn(max = 200.dp).fillMaxWidth())
                         Text(
                             text = "${items.size} items • ${dateBasis.label}",
                             style = MaterialTheme.typography.bodySmall,

@@ -9,8 +9,10 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.SystemBarStyle
 import androidx.activity.viewModels
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.*
@@ -58,7 +60,13 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
         }
 
         setContent {
-            PersonalLibraryTheme {
+            val themeMode by viewModel.themeMode.collectAsState()
+            val darkTheme = themeMode.isDark(isSystemInDarkTheme())
+            SideEffect {
+                val bars = SystemBarStyle.auto(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT) { darkTheme }
+                enableEdgeToEdge(statusBarStyle = bars, navigationBarStyle = bars)
+            }
+            PersonalLibraryTheme(darkTheme = darkTheme) {
                 val isLocked by viewModel.appLockManager.isLocked.collectAsState()
                 if (isLocked) {
                     Surface(
@@ -78,7 +86,7 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
                             )
                             Spacer(modifier = Modifier.height(16.dp))
                             Text(
-                                "Personal Library is Locked",
+                                "Memora is Locked",
                                 style = MaterialTheme.typography.titleLarge,
                                 fontWeight = FontWeight.Bold
                             )

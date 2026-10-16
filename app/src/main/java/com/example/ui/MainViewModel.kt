@@ -14,6 +14,8 @@ import com.example.indexing.LocalIndexer
 import com.example.model.*
 import com.example.reminder.ReminderScheduler
 import com.example.security.AppLockManager
+import com.example.ui.theme.ThemeMode
+import com.example.ui.theme.ThemePreferences
 import com.personallibrary.core.backup.RestorePreview
 import com.personallibrary.core.migration.DateOrder
 import com.personallibrary.core.model.SemanticVectorMath
@@ -58,6 +60,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val captureState = (application as com.example.PersonalLibraryApp).captureState.state
 
     private val prefs = application.getSharedPreferences("personal_library_settings", Context.MODE_PRIVATE)
+    private val themePreferences = ThemePreferences(prefs)
+    val themeMode = themePreferences.mode
+
+    fun setThemeMode(mode: ThemeMode) = themePreferences.setMode(mode)
 
     private val _items = MutableStateFlow<List<ItemWithCollections>>(emptyList())
     val items: StateFlow<List<ItemWithCollections>> = _items.asStateFlow()

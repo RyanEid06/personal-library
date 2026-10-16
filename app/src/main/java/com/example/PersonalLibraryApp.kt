@@ -39,7 +39,7 @@ class PersonalLibraryApp : Application(), ImageLoaderFactory {
                 ReminderReceiver.CHANNEL_NAME,
                 NotificationManager.IMPORTANCE_HIGH
             ).apply {
-                description = "Notifications for saved personal library items and reminders"
+                description = "Notifications for saved Memora items and reminders"
                 enableVibration(true)
             }
             val manager = getSystemService(NotificationManager::class.java)

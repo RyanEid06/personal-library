@@ -66,7 +66,7 @@ class AppLockManager(private val context: Context) {
         })
 
         val promptInfo = BiometricPrompt.PromptInfo.Builder()
-            .setTitle("Unlock Personal Library")
+            .setTitle("Unlock Memora")
             .setSubtitle("Authenticate using biometric or device credential")
             .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG or BiometricManager.Authenticators.DEVICE_CREDENTIAL)
             .build()

@@ -18,7 +18,7 @@ class ReminderReceiver : BroadcastReceiver() {
 
     companion object {
         const val CHANNEL_ID = "personal_library_reminders"
-        const val CHANNEL_NAME = "Personal Library Reminders"
+        const val CHANNEL_NAME = "Memora Reminders"
         const val EXTRA_ITEM_ID = "extra_item_id"
         const val EXTRA_ITEM_TITLE = "extra_item_title"
         const val ACTION_COMPLETE = "com.example.reminder.ACTION_COMPLETE"
@@ -71,7 +71,7 @@ class ReminderReceiver : BroadcastReceiver() {
                 CHANNEL_NAME,
                 NotificationManager.IMPORTANCE_HIGH
             ).apply {
-                description = "Reminders for saved personal library items"
+                description = "Reminders for saved Memora items"
                 enableVibration(true)
             }
             notificationManager.createNotificationChannel(channel)
@@ -92,8 +92,8 @@ class ReminderReceiver : BroadcastReceiver() {
         val appLockPrefs = context.getSharedPreferences("app_lock_prefs", Context.MODE_PRIVATE)
         val isLockEnabled = appLockPrefs.getBoolean("lock_enabled", false)
 
-        val title = if (isLockEnabled) "Personal Library Reminder" else "Reminder: $itemTitle"
-        val message = if (isLockEnabled) "You have a protected item reminder" else "Tap to view this saved item in your Personal Library"
+        val title = if (isLockEnabled) "Memora Reminder" else "Reminder: $itemTitle"
+        val message = if (isLockEnabled) "You have a protected item reminder" else "Tap to view this saved item in Memora"
 
         // Snooze Intent (15 minutes)
         val snoozeIntent = Intent(context, ReminderReceiver::class.java).apply {

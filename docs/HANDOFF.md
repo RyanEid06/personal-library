@@ -1,15 +1,16 @@
-# V1 owner handoff
+# Memora V1 owner handoff
 
-V1 code and automated gates are complete. Delivery is a **debug test APK**, version 1.0.0 / code 1, application ID `com.personallibrary.app`. [STATUS](STATUS.md) records code evidence; the Desktop acceptance record records final delivery SHA, CI, deployment and artifact hash.
+V1 finalization code and automated gates are complete. The owner subsequently requested Memora branding and a saved Light/Dark/System choice; that delivery is a **debug test APK**, version 1.0.0 / code 2, application ID `com.personallibrary.app`. The exact branding CI and artifact verification are recorded in the new Desktop acceptance record; original V1 evidence remains in [STATUS](STATUS.md).
 
 ## Installation
 
-Export an encrypted backup of an existing library before changing installs. Keep its passphrase safely. Install `Personal-Library-V1-<commit>-test.apk` from Desktop. If Android reports a signature conflict, record the message and stop before uninstalling a valuable existing library: CI debug signing and eventual official signing are separate identities.
+Export an encrypted backup of an existing library before changing installs. Keep its passphrase safely. Install `Memora-V1-<commit>-test.apk` from Desktop. If Android reports a signature conflict, record the message and stop before uninstalling a valuable existing library: CI debug signing and eventual official signing are separate identities.
 
 Report the failing action, device/Android version and visible message. Never send enrollment/API secrets or personal library content in diagnostics.
 
 ## Phone acceptance
 
+- [ ] Check the Memora launcher/name and both Library wordmarks. In Settings -> Appearance choose Light, Dark and System; check immediate change, app restart and phone theme changes while System is selected. Verify header actions, item counts and status/navigation bar contrast. [Exact RGB palette and original artwork](branding/memora/README.md).
 - [ ] Share actual WhatsApp text, link, photo/screenshot, sticker, video, audio/voice note, PDF/document, unknown file and multi-file batch. Check captions, previews, Open/Share, cancel and partial failure. Leave the screen during a large save, then save another batch. Saved must mean durable originals. With disposable content, confirm source deletion does not remove the library copy.
 - [ ] Import a disposable WhatsApp `.txt` and separately selected attachments. Verify preview counts, unresolved dates, matched/missing/unmatched files. Repeat: no duplicate messages or inflated storage references. Supply a previously missing attachment and verify search refreshes. Extract ZIP packages first.
 - [ ] Browse list/grid, collections, Favorites, Unfiled and Trash; check custom ranges, Saved/Source dates, both source sort directions, grouping and retained position. Test offline local snippets/OCR/PDF page references. Restore Trash and verify permanent purge preserves originals still referenced by other items.

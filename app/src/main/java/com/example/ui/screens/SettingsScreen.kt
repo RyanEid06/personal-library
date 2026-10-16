@@ -9,6 +9,8 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.automirrored.filled.Input
@@ -18,6 +20,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
@@ -27,6 +30,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import com.example.ui.MainViewModel
+import com.example.ui.theme.ThemeMode
 import com.example.ui.components.EncryptedBackupPassphraseDialog
 import com.example.ui.components.WhatsAppFileImportDialog
 import com.personallibrary.core.backup.RestorePreview
@@ -46,6 +50,7 @@ fun SettingsScreen(
     val stats by viewModel.storageStats.collectAsState()
     val isPaired by viewModel.isBackendPaired.collectAsState()
     val lastBackup by viewModel.lastSuccessfulBackup.collectAsState()
+    val themeMode by viewModel.themeMode.collectAsState()
 
     val prefs = remember { context.getSharedPreferences("personal_library_settings", Context.MODE_PRIVATE) }
     var pauseAi by remember { mutableStateOf(prefs.getBoolean("ai_paused", false)) }
@@ -291,6 +296,34 @@ fun SettingsScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+            ) {
+                Column(Modifier.padding(18.dp)) {
+                    Text("Appearance", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Text("System follows your phone's light or dark setting.",
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Column(Modifier.selectableGroup()) {
+                        ThemeMode.entries.forEach { mode ->
+                            Row(
+                                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
+                                    .selectable(selected = themeMode == mode, role = Role.RadioButton,
+                                        onClick = { viewModel.setThemeMode(mode) })
+                                    .testTag("theme_mode_${mode.name.lowercase(Locale.ROOT)}"),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                RadioButton(selected = themeMode == mode, onClick = null)
+                                Spacer(Modifier.width(12.dp))
+                                Text(mode.label, style = MaterialTheme.typography.bodyLarge)
+                            }
+                        }
+                    }
+                }
+            }
+
             // Storage Statistics Card
             Card(
                 shape = RoundedCornerShape(16.dp),

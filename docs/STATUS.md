@@ -1,5 +1,13 @@
 # V1 verification status
 
+## Memora branding follow-up
+
+The owner subsequently supplied final Memora artwork and authorized a bounded appearance update: shared launcher icon, matching Library wordmarks, user-facing name, and saved Light/Dark/System selection. Version code advances to 2; app/database/preferences/auth/backup identifiers are preserved. Theme resolution regressed from the old system-only behavior (3 tests, 2 failures), then all 3 passed. Two Android preference regressions and one API 35 interactive appearance/recreation test extend the existing gates; final exact-commit results and screenshots accompany the replacement Desktop APK. [Artwork, resource preparation and stable RGB palette](branding/memora/README.md).
+
+The tables below retain the prior V1 finalization evidence; branding delivery must independently pass the same complete workflow before replacing the old Desktop handoff. No permanent signing or freeze is authorized by this update.
+
+## Prior V1 finalization
+
 Updated 16 October 2026 after all four Android/core code checkpoint CI jobs passed and the final backend cancellation regression passed locally. **V1 CODE-COMPLETE; owner phone acceptance, freeze and official signing pending.** No unfinished coding item remains from the finalization objective. Any defect discovered during acceptance must be fixed and reverified before freeze.
 
 Starting main: `aeacb1c2e241122b69a9f781411367ffe3ef779f`.
