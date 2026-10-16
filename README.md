@@ -46,6 +46,6 @@ The default [Render backend](https://personal-library-backend-49w7.onrender.com/
 
 Automatic AI analysis sends bounded representations of eligible saved content to the backend/provider. Pause AI or exclude items/collections to control future uploads. Originals stay local. Local fallback is labeled separately from semantic AI. The backend keeps no content-library database; challenge replay tracking and per-device rate limits are in memory. Environment-configured device revocations survive restart.
 
-`metadata.json` is retained as legacy AI Studio descriptive metadata; Android/backend runtimes do not consume it. There is no web/Vite app. Historical `codex/v1` remains for reference; finalization is on owner-authorized `main`.
+`metadata.json` is retained as legacy AI Studio descriptive metadata; Android/backend runtimes do not consume it. There is no web/Vite app. The owner requested removing obsolete `codex/v1`; its complete history was verified in a local Git bundle before deleting the remote branch. Finalization is on owner-authorized `main`; see the release ledger for recovery evidence.
 
 No permanent release key, tag, or official release was created. Export an encrypted backup before a future signing transition and follow the [handoff guidance](docs/HANDOFF.md) if Android reports a signature conflict.

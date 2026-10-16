@@ -29,7 +29,8 @@ try {
             Reject { $credential.KeyPassword.Copy() }
         } finally {
             $locked.Dispose(); $credential.StorePassword.Dispose(); $credential.KeyPassword.Dispose()
-            [Environment]::SetEnvironmentVariable('MEMORA_TEST_TRANSIENT',$previous,'Process')
+            if ($null -eq $previous) { [Environment]::SetEnvironmentVariable('MEMORA_TEST_TRANSIENT',[System.Management.Automation.Language.NullString]::Value,'Process') }
+            else { [Environment]::SetEnvironmentVariable('MEMORA_TEST_TRANSIENT',$previous,'Process') }
         }
     }
     Check 'empty existing release ledger fails closed' {
