@@ -6,6 +6,8 @@ import androidx.test.core.app.ApplicationProvider
 import com.personallibrary.core.backup.*
 import com.personallibrary.core.model.ItemKind
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.cancel
 import org.junit.Assert.*
 import org.junit.Before
 import org.junit.After
@@ -35,6 +37,39 @@ class RepositoryIntegrityTest {
     }
     private suspend fun failItems() {
         db.openHelper.writableDatabase.execSQL("CREATE TRIGGER fail_item BEFORE INSERT ON items BEGIN SELECT RAISE(ABORT, 'injected item failure'); END")
+    }
+
+    @Test fun exportUsesOneMetadataSnapshotDuringConcurrentCollectionAssignment() = runBlocking {
+        val armed = java.util.concurrent.atomic.AtomicBoolean(false)
+        val changed = java.util.concurrent.CountDownLatch(1)
+        val scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO)
+        lateinit var exporting: LibraryRepository
+        lateinit var itemId: String
+        val snapshotDb = Room.inMemoryDatabaseBuilder(context, LibraryRoomDatabase::class.java).addCallback(DATABASE_CALLBACK)
+            .setQueryCallback({ sql, _ ->
+                if (sql.contains("SELECT * FROM reminders", true) && armed.compareAndSet(true, false)) {
+                    scope.launch {
+                        try {
+                            val collection = exporting.createCollection("Created during export", "folder", "#ffffff")
+                            exporting.setItemCollections(itemId, listOf(collection.id))
+                        } finally { changed.countDown() }
+                    }
+                    changed.await(1, java.util.concurrent.TimeUnit.SECONDS)
+                }
+            }, java.util.concurrent.Executor { it.run() }).build()
+        exporting = LibraryRepository(context, snapshotDb)
+        val destination = File.createTempFile("snapshot-", ".plb", context.cacheDir)
+        try {
+            itemId = exporting.createNote("Snapshot", "Concurrent metadata", emptyList()).id
+            armed.set(true)
+            assertTrue(exporting.exportEncryptedBackup(android.net.Uri.fromFile(destination), "snapshot-passphrase".toCharArray()))
+            val preview = exporting.inspectBackup(android.net.Uri.fromFile(destination), "snapshot-passphrase".toCharArray())!!
+            try {
+                val collectionIds = preview.manifest.collections.map { it.id }.toSet()
+                assertTrue("Every exported membership must belong to the same snapshot", preview.manifest.memberships.all { it.collectionId in collectionIds })
+            } finally { preview.stagingDir.deleteRecursively() }
+            assertTrue(changed.await(5, java.util.concurrent.TimeUnit.SECONDS))
+        } finally { scope.cancel(); snapshotDb.close(); destination.delete() }
     }
 
     @Test fun collectionReplacementFailureKeepsPreviousPrivateMembership() = runBlocking {

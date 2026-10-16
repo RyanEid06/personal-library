@@ -38,6 +38,23 @@ class AiQueuePrivacyTest {
         val after = manager.getWorkInfosForUniqueWork("ai_job_${item.id}").get().filter { !it.state.isFinished }.single()
         assertEquals(before.id, after.id)
         assertEquals(2, repository.dao.getAnalysisJob(item.id)!!.attempts)
+        repository.dao.insertOrUpdateAnalysisJob(job.copy(status = "PROCESSING", attempts = 4))
+        indexer.enqueuePendingAnalysisJobs()
+        assertEquals("PROCESSING", repository.dao.getAnalysisJob(item.id)!!.status)
+        assertEquals(before.id, manager.getWorkInfosForUniqueWork("ai_job_${item.id}").get().filter { !it.state.isFinished }.single().id)
+    }
+
+    @Test fun legacyPdfTextWithoutPagesIsReindexedBeforeRemoteWork() = runBlocking {
+        val repository = LibraryRepository(context)
+        val item = repository.captureStream("corrupt synthetic pdf".byteInputStream(), "legacy.pdf", "application/pdf")
+        repository.dao.updateExtractedText(item.id, "Legacy flattened text from 40 pages", "COMPLETE", item.localIndexVersion)
+        val worker = TestListenableWorkerBuilder<DurableAiWorker>(context,
+            inputData = workDataOf("item_id" to item.id, "content_version" to item.localIndexVersion)).build()
+        assertEquals(ListenableWorker.Result.success(), worker.doWork())
+        val after = repository.dao.getItemById(item.id)!!
+        assertEquals(item.localIndexVersion + 1, after.localIndexVersion)
+        assertNull("Unverifiable old page text must never enter the fallback prompt", after.extractedText)
+        assertEquals("FAILED", after.localIndexCoverage.uppercase())
     }
 
     @Test fun automaticRecoveryDoesNotResurrectTerminalFailures() = runBlocking {
