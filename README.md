@@ -2,7 +2,7 @@
 
 A native Android library for saving WhatsApp shares, notes, links, media, documents, and arbitrary files. Originals and the authoritative library stay on the phone. Local search works offline; Gemini enrichment helps retrieve saved content by meaning.
 
-Memora is the owner's chosen product name. Settings -> Appearance offers saved **Light / Dark / System** choices (System by default). The same launcher icon serves both modes; the Library header selects the matching transparent wordmark. The existing fixed palette keeps branding independent of wallpaper colors. [Artwork originals, preparation and exact RGB colors](docs/branding/memora/README.md) are preserved in the repository. Stable application/database/preference identifiers and encrypted backup format remain unchanged.
+Memora is the owner's chosen product name. Settings -> Appearance offers saved **Light / Dark / System** choices (System by default). The same launcher icon serves both modes. The Library header shows the current item count and date basis directly alongside its controls. The existing fixed palette is independent of wallpaper colors. [Artwork originals, preparation and exact RGB colors](docs/branding/memora/README.md) are preserved in the repository. Stable application/database/preference identifiers and encrypted backup format remain unchanged.
 
 V1 implementation is complete. The owner has supplied the permanent signing identity and authorized the final official V1 pass. Exact-source automated verification and the owner-local signed build must finish before an official APK is delivered; physical-phone acceptance remains separate. See [verification status](docs/STATUS.md), [permanent release procedure](docs/branding/memora/RELEASE.md), and [phone handoff](docs/HANDOFF.md).
 

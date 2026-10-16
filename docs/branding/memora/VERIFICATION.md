@@ -1,6 +1,12 @@
 # Memora appearance delivery ledger
 
-Scope authorized by the owner on 16 October 2026: preserve the three final artwork originals, apply the shared launcher and matching Library wordmarks, rename the visible app to Memora, save Light/Dark/System, provide RGB colors, and replace the previous three Desktop handoff files after all automated gates pass. Stop after delivery; phone acceptance precedes freeze and permanent signing.
+## Current header revision
+
+The owner's later instruction removes the Memora logo/name from the Library header in both Light and Dark modes. Current item count and date basis appear directly alongside the existing controls. The updated appearance instrumentation verifies the information/action row, absent branding, actual mode colors, saved selection and Activity recreation, and captures both themes. Local Android JVM 54/54, lint 0 errors/80 existing warnings, debug/optimized builds and both test-APK compilations pass; actual split inspection preserves bundled OCR and the required ABIs. Final exact-source hosted runtime results, screenshots and conditional permanent signing are recorded in ignored `artifacts/release-v1/FINAL_VERIFICATION.md` under the [final optimized release plan](../../superpowers/plans/2026-10-16-final-optimized-release.md).
+
+## Original appearance checkpoint
+
+Scope originally authorized by the owner on 16 October 2026: preserve the three final artwork originals, apply the shared launcher and matching Library wordmarks, rename the visible app to Memora, save Light/Dark/System, provide RGB colors, and replace the previous three Desktop handoff files after all automated gates pass. The final release-completion authorization and current header revision above supersede that earlier delivery checkpoint.
 
 Starting commit: `944632929215f4a01f0404c85913acb52b80cc51`, owner-authorized `main`. The previous chat left only this appearance update uncommitted. Application ID, database, auth, preference store names and backup format stay compatible; version code is 2.
 

@@ -24,6 +24,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.ItemWithCollections
@@ -31,7 +32,6 @@ import com.example.model.*
 import com.example.ui.MainViewModel
 import com.example.ui.components.ItemCard
 import com.example.ui.components.ItemGridCard
-import com.example.ui.components.MemoraWordmark
 import com.example.ui.components.TypeFilterChipStrip
 import com.personallibrary.core.model.DateRange
 import java.time.Instant
@@ -98,14 +98,13 @@ fun LibraryScreen(
         topBar = {
             TopAppBar(
                 title = {
-                    Column {
-                        MemoraWordmark(Modifier.height(40.dp).widthIn(max = 200.dp).fillMaxWidth())
-                        Text(
-                            text = "${items.size} items • ${dateBasis.label}",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.outline
-                        )
-                    }
+                    Text(
+                        text = "${items.size} items • ${dateBasis.label}",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
                 },
                 actions = {
                     if (isBatchMode) {

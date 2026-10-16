@@ -2,42 +2,66 @@ package com.example.ui
 
 import android.content.res.Configuration
 import android.graphics.Bitmap
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.graphics.toPixelMap
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.test.espresso.Espresso
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.example.MainActivity
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
+import kotlin.math.roundToInt
 
 @RunWith(AndroidJUnit4::class)
 class MemoraAppearanceTest {
     @get:Rule val compose = createAndroidComposeRule<MainActivity>()
 
-    @Test fun settingsPersistAppearanceAndUseMatchingWordmarks() {
+    @Test fun settingsPersistAppearanceAndKeepLibraryInfoAtTop() {
         compose.onNodeWithTag("settings_top_button").performClick()
         compose.onNodeWithTag("theme_mode_dark").performClick().assertIsSelected()
         Espresso.pressBack()
-        compose.onNodeWithTag("memora_wordmark_dark").assertExists()
+        assertCleanHeader(dark = true)
         screenshot("memora-dark.png")
 
         compose.activityRule.scenario.recreate()
-        compose.onNodeWithTag("memora_wordmark_dark").assertExists()
+        assertCleanHeader(dark = true)
         compose.onNodeWithTag("settings_top_button").performClick()
         compose.onNodeWithTag("theme_mode_dark").assertIsSelected()
         compose.onNodeWithTag("theme_mode_light").performClick().assertIsSelected()
         Espresso.pressBack()
-        compose.onNodeWithTag("memora_wordmark_light").assertExists()
+        assertCleanHeader(dark = false)
         screenshot("memora-light.png")
 
         compose.onNodeWithTag("settings_top_button").performClick()
         compose.onNodeWithTag("theme_mode_system").performClick().assertIsSelected()
         Espresso.pressBack()
         val dark = compose.activity.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK == Configuration.UI_MODE_NIGHT_YES
-        compose.onNodeWithTag(if (dark) "memora_wordmark_dark" else "memora_wordmark_light").assertExists()
+        assertCleanHeader(dark)
+    }
+
+    private fun assertCleanHeader(dark: Boolean) {
+        val info = compose.onNodeWithText("items • Saved Date", substring = true)
+            .assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        val settings = compose.onNodeWithTag("settings_top_button")
+            .assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        compose.onNodeWithTag("toggle_layout_button").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Memora").assertDoesNotExist()
+        assertTrue("Library information must share the top action row",
+            info.center.y >= settings.top && info.center.y <= settings.bottom)
+
+        val root = compose.onRoot()
+        val rootBounds = root.fetchSemanticsNode().boundsInRoot
+        val image = root.captureToImage()
+        val y = (info.center.y - rootBounds.top).roundToInt()
+        assertEquals("Header surface must follow the selected appearance",
+            if (dark) 0xFF1E293B.toInt() else 0xFFFFFFFF.toInt(),
+            image.toPixelMap()[1, y].toArgb())
     }
 
     private fun screenshot(name: String) {
