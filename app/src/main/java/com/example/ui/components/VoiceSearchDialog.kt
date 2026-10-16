@@ -177,7 +177,7 @@ fun VoiceSearchDialog(
     }
 }
 
-private fun startListening(
+internal fun startListening(
     context: Context,
     onListeningState: (Boolean) -> Unit,
     onStatus: (String) -> Unit,
