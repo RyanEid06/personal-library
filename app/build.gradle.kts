@@ -1,5 +1,8 @@
+import java.io.File
 import java.security.KeyStore
 import java.security.MessageDigest
+import java.security.PrivateKey
+import java.security.cert.X509Certificate
 import java.security.interfaces.RSAPublicKey
 
 plugins {
@@ -26,8 +29,8 @@ abstract class VerifyMemoraReleaseSigning : DefaultTask() {
         val missing = names.filter { values[it].isNullOrBlank() }
         check(missing.isEmpty()) { "Memora release signing requires: ${missing.joinToString()}. Use scripts/Build-MemoraRelease.ps1; unsigned official releases are forbidden." }
         check(values["RELEASE_KEY_ALIAS"] == "memora-release") { "Memora release alias must be memora-release." }
-        val canonical = java.io.File(System.getProperty("user.home"), "Documents/Memora-Signing/memora-release.p12").canonicalFile
-        val keystore = java.io.File(values.getValue("RELEASE_KEYSTORE_PATH")!!).canonicalFile
+        val canonical = File(System.getProperty("user.home"), "Documents/Memora-Signing/memora-release.p12").canonicalFile
+        val keystore = File(values.getValue("RELEASE_KEYSTORE_PATH")!!).canonicalFile
         check(keystore == canonical && keystore.isFile) { "Memora release requires the canonical Documents/Memora-Signing/memora-release.p12 file." }
         val hash = MessageDigest.getInstance("SHA-256").digest(keystore.readBytes()).joinToString("") { "%02X".format(it) }
         check(hash == "908E801EE64FAD19978A8D30E3E5951C4A3955BF59154AEA32182F0EF1C2FAD8") { "Memora permanent keystore file hash mismatch." }
@@ -37,8 +40,8 @@ abstract class VerifyMemoraReleaseSigning : DefaultTask() {
             val store = KeyStore.getInstance("PKCS12")
             keystore.inputStream().use { store.load(it, storePass) }
             check(store.isKeyEntry("memora-release"))
-            check(store.getKey("memora-release", keyPass) is java.security.PrivateKey)
-            val cert = store.getCertificate("memora-release") as java.security.cert.X509Certificate
+            check(store.getKey("memora-release", keyPass) is PrivateKey)
+            val cert = store.getCertificate("memora-release") as X509Certificate
             cert.checkValidity()
             check((cert.publicKey as RSAPublicKey).modulus.bitLength() == 4096)
             val fingerprint = MessageDigest.getInstance("SHA-256").digest(cert.encoded).joinToString("") { "%02X".format(it) }
