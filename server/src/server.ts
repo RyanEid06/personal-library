@@ -254,8 +254,8 @@ export class DeviceRegistry {
     deviceId: string,
     deviceCredential: string,
     challengeNonce: string,
-    publicKey?: string,
-    signature?: string
+    publicKey: string | undefined,
+    signature: string | undefined
   ): { sessionToken: string; expiresInSeconds: number } {
     if (this.revokedDevices.has(deviceId)) {
       const err = new Error('DEVICE_REVOKED');

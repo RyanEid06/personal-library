@@ -43,6 +43,7 @@ object AndroidTextExtractor {
     suspend fun pdf(file: File, onProgress: suspend (ExtractedText) -> Unit = {}): ExtractedText {
         ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY).use { descriptor ->
             PdfRenderer(descriptor).use { document ->
+                require(document.pageCount > 0) { "PDF has no readable pages" }
                 val text = StringBuilder()
                 val pages = mutableListOf<ExtractedPage>()
                 fun snapshot(partial: Boolean): ExtractedText = bounded(text.toString(), partial).copy(pages = pages.toList())
