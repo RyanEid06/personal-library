@@ -13,6 +13,8 @@ Starting clean main/origin/main: `41d9cf9e57dcb56715cce9a2af599be405c5a743`, who
 
 Final exact source SHA, CI results and any external signing limitation are recorded after verification in ignored `artifacts/release-v1/FINAL_VERIFICATION.md`. Actual signed hashes/sizes belong in `official-release.json` and `official-size-analysis.json`. Generated records identify exact HEAD without changing the source they certify. Historical sections below are earlier checkpoints.
 
+Candidate `58d239e3af70abbfd7180196b74f9fd9cb450d67` passed core, Android, server and signing-workflow in [38921709237](https://github.com/RyanEid06/personal-library/actions/runs/38921709237). Its emulator job exposed a test-runner defect before the new runtime tests could execute: the backup coroutine test inferred a nullable `Unit` return and compiled to a JVM `kotlin.Unit` method rather than JUnit's required `void`. Explicit `runBlocking<Unit>` makes the return contract unambiguous; local recompilation confirms all three release test methods are `void`. Assertions and production code are unchanged. Both instrumentation variants and all required jobs must pass on the final source before signing.
+
 ## Final permanent release pass — 16 October 2026
 
 Starting SHA: `71dbfa187bcba5b37c7ed3ab7c834627915cd514`, clean main matching origin/main. The owner explicitly authorized stabilization, permanent signing using the existing canonical key, and the official Desktop APK. [Release procedure/audit](branding/memora/RELEASE.md), [public signing identity](branding/memora/SIGNING_IDENTITY.md), and [release ledger](superpowers/plans/2026-10-16-memora-v1-release.md) record this scope.

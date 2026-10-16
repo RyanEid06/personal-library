@@ -28,7 +28,7 @@ import java.io.File
 /** Runs against debug AND the nondebuggable, R8/resource-shrunk verification build. */
 @RunWith(AndroidJUnit4::class)
 class ReleaseRuntimeTest {
-    @Test fun roomManagedOriginalAndTinkBackupRoundTripAfterShrinking() = runBlocking {
+    @Test fun roomManagedOriginalAndTinkBackupRoundTripAfterShrinking() = runBlocking<Unit> {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val settings = context.getSharedPreferences("personal_library_settings", 0)
         val paused = settings.getBoolean("ai_paused", false)
@@ -57,7 +57,7 @@ class ReleaseRuntimeTest {
         }
     }
 
-    @Test fun bundledOcrRecognizesTextAfterShrinking() = runBlocking {
+    @Test fun bundledOcrRecognizesTextAfterShrinking() = runBlocking<Unit> {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val image = File.createTempFile("release-ocr-", ".png", context.cacheDir)
         val bitmap = Bitmap.createBitmap(900, 260, Bitmap.Config.ARGB_8888)
