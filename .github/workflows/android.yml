@@ -14,15 +14,17 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: '21'
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-provider: basic
       - run: chmod +x gradlew
       - run: ./gradlew -PcoreOnly=true :core:test --stacktrace
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: core-results-${{ github.sha }}
@@ -32,8 +34,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: '21'
@@ -42,19 +44,46 @@ jobs:
           packages: platform-tools
           log-accepted-android-sdk-licenses: false
       - run: sdkmanager 'platforms;android-36.1' 'build-tools;36.0.0'
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-provider: basic
       - run: chmod +x gradlew
       - run: ./gradlew :app:testDebugUnitTest :app:lintDebug :app:assembleDebug :app:assembleDebugAndroidTest --stacktrace
+      - name: Release signing fails closed without the permanent identity
+        shell: bash
+        run: |
+          mkdir -p app/build/reports/release-signing
+          report=app/build/reports/release-signing
+          if ./gradlew :app:assembleRelease --no-configuration-cache --console=plain > "$report/missing.log" 2>&1; then
+            echo 'ERROR: release build succeeded without signing credentials'; exit 1
+          fi
+          grep -q 'Memora release signing requires:' "$report/missing.log"
+          if find app/build/outputs/apk/release -name '*.apk' -print -quit 2>/dev/null | grep -q .; then
+            echo 'ERROR: missing-credential build produced a release APK'; exit 1
+          fi
+          if RELEASE_KEYSTORE_PATH=/nonexistent/memora.p12 RELEASE_STORE_PASSWORD=synthetic-test RELEASE_KEY_PASSWORD=synthetic-test RELEASE_KEY_ALIAS=wrong-alias ./gradlew :app:verifyMemoraReleaseSigning --no-configuration-cache --console=plain > "$report/wrong-alias.log" 2>&1; then
+            echo 'ERROR: wrong alias accepted'; exit 1
+          fi
+          grep -q 'Memora release alias must be memora-release' "$report/wrong-alias.log"
+          if RELEASE_KEYSTORE_PATH=/nonexistent/memora.p12 RELEASE_STORE_PASSWORD=synthetic-test RELEASE_KEY_PASSWORD=synthetic-test RELEASE_KEY_ALIAS=memora-release ./gradlew :app:verifyMemoraReleaseSigning --no-configuration-cache --console=plain > "$report/wrong-path.log" 2>&1; then
+            echo 'ERROR: wrong keystore path accepted'; exit 1
+          fi
+          grep -q 'Memora release requires the canonical' "$report/wrong-path.log"
+          if RELEASE_STORE_PASSWORD=synthetic-test ./gradlew :app:verifyMemoraReleaseSigning --configuration-cache --console=plain > "$report/cache.log" 2>&1; then
+            echo 'ERROR: signing secrets allowed in configuration cache'; exit 1
+          fi
+          grep -q 'Memora signing requires --no-configuration-cache' "$report/cache.log"
+          echo 'Release signing negative checks passed (missing credentials, alias, path, configuration cache).'
       - name: Record debug APK checksum
         run: |
           cd app/build/outputs/apk/debug
           sha256sum app-debug.apk > app-debug.apk.sha256
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: android-results-${{ github.sha }}
           path: app/build/reports
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: success()
         with:
           name: personal-library-debug-${{ github.sha }}
@@ -67,8 +96,8 @@ jobs:
       run:
         working-directory: server
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: '24'
           cache: npm
@@ -83,8 +112,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: '21'
@@ -93,7 +122,9 @@ jobs:
           packages: platform-tools
           log-accepted-android-sdk-licenses: false
       - run: sdkmanager 'platforms;android-36.1' 'build-tools;36.0.0'
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-provider: basic
       - run: chmod +x gradlew
       - name: Enable KVM
         run: |
@@ -111,7 +142,7 @@ jobs:
             mkdir -p app/build/reports/branding
             adb exec-out run-as com.personallibrary.app cat files/memora-dark.png > app/build/reports/branding/memora-dark.png
             adb exec-out run-as com.personallibrary.app cat files/memora-light.png > app/build/reports/branding/memora-light.png
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: emulator-results-${{ github.sha }}

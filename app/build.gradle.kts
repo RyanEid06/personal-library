@@ -1,8 +1,66 @@
+import java.security.KeyStore
+import java.security.MessageDigest
+import java.security.interfaces.RSAPublicKey
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.google.devtools.ksp)
+}
+
+// Release secrets must never be serialized into Gradle's configuration cache.
+val releaseStorePassword = providers.environmentVariable("RELEASE_STORE_PASSWORD").orNull
+val releaseKeyPassword = providers.environmentVariable("RELEASE_KEY_PASSWORD").orNull
+if (!releaseStorePassword.isNullOrBlank() || !releaseKeyPassword.isNullOrBlank()) {
+    check(!gradle.startParameter.isConfigurationCacheRequested) {
+        "Memora signing requires --no-configuration-cache. Never use build scans or debug logging with signing credentials."
+    }
+}
+
+abstract class VerifyMemoraReleaseSigning : DefaultTask() {
+    @TaskAction
+    fun verifyIdentity() {
+        val names = listOf("RELEASE_KEYSTORE_PATH", "RELEASE_STORE_PASSWORD", "RELEASE_KEY_ALIAS", "RELEASE_KEY_PASSWORD")
+        val values = names.associateWith { System.getenv(it) }
+        val missing = names.filter { values[it].isNullOrBlank() }
+        check(missing.isEmpty()) { "Memora release signing requires: ${missing.joinToString()}. Use scripts/Build-MemoraRelease.ps1; unsigned official releases are forbidden." }
+        check(values["RELEASE_KEY_ALIAS"] == "memora-release") { "Memora release alias must be memora-release." }
+        val canonical = java.io.File(System.getProperty("user.home"), "Documents/Memora-Signing/memora-release.p12").canonicalFile
+        val keystore = java.io.File(values.getValue("RELEASE_KEYSTORE_PATH")!!).canonicalFile
+        check(keystore == canonical && keystore.isFile) { "Memora release requires the canonical Documents/Memora-Signing/memora-release.p12 file." }
+        val hash = MessageDigest.getInstance("SHA-256").digest(keystore.readBytes()).joinToString("") { "%02X".format(it) }
+        check(hash == "908E801EE64FAD19978A8D30E3E5951C4A3955BF59154AEA32182F0EF1C2FAD8") { "Memora permanent keystore file hash mismatch." }
+        val storePass = values.getValue("RELEASE_STORE_PASSWORD")!!.toCharArray()
+        val keyPass = values.getValue("RELEASE_KEY_PASSWORD")!!.toCharArray()
+        try {
+            val store = KeyStore.getInstance("PKCS12")
+            keystore.inputStream().use { store.load(it, storePass) }
+            check(store.isKeyEntry("memora-release"))
+            check(store.getKey("memora-release", keyPass) is java.security.PrivateKey)
+            val cert = store.getCertificate("memora-release") as java.security.cert.X509Certificate
+            cert.checkValidity()
+            check((cert.publicKey as RSAPublicKey).modulus.bitLength() == 4096)
+            val fingerprint = MessageDigest.getInstance("SHA-256").digest(cert.encoded).joinToString("") { "%02X".format(it) }
+            check(fingerprint == "98686D31BFE4370CC30024439B56D9E72DE71C081951D31F5D4FDD31D4EB0598")
+        } catch (_: Exception) {
+            throw GradleException("Memora permanent signing certificate, alias or password validation failed. No official APK may be published.")
+        } finally {
+            storePass.fill('\u0000')
+            keyPass.fill('\u0000')
+        }
+    }
+}
+
+val verifyMemoraReleaseSigning = tasks.register<VerifyMemoraReleaseSigning>("verifyMemoraReleaseSigning") {
+    group = "verification"
+    description = "Reject missing credentials or any identity other than the owner's permanent Memora key."
+    notCompatibleWithConfigurationCache("Permanent signing credentials must not be persisted.")
+}
+tasks.configureEach {
+    if (name.contains("Release", ignoreCase = true) && name != "verifyMemoraReleaseSigning") {
+        dependsOn(verifyMemoraReleaseSigning)
+    }
 }
 
 android {
@@ -24,14 +82,12 @@ android {
         create("release") {
             val keystorePath = System.getenv("RELEASE_KEYSTORE_PATH")
             if (!keystorePath.isNullOrBlank()) {
-                val f = file(keystorePath)
-                if (f.exists()) {
-                    storeFile = f
-                    storePassword = System.getenv("RELEASE_STORE_PASSWORD") ?: ""
-                    keyAlias = System.getenv("RELEASE_KEY_ALIAS") ?: ""
-                    keyPassword = System.getenv("RELEASE_KEY_PASSWORD") ?: ""
-                }
+                storeFile = file(keystorePath)
             }
+            storeType = "PKCS12"
+            storePassword = releaseStorePassword
+            keyAlias = System.getenv("RELEASE_KEY_ALIAS")
+            keyPassword = releaseKeyPassword
         }
     }
 
@@ -43,10 +99,7 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
-            val releaseConfig = signingConfigs.getByName("release")
-            if (releaseConfig.storeFile != null && releaseConfig.storeFile!!.exists()) {
-                signingConfig = releaseConfig
-            }
+            signingConfig = signingConfigs.getByName("release")
         }
         debug {
             // Standard Android debug signing is automatic
@@ -102,6 +155,7 @@ dependencies {
     testImplementation("androidx.work:work-testing:2.10.0")
     androidTestImplementation(libs.androidx.test.ext.junit)
     androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("androidx.test.espresso:espresso-core:3.6.1")
     androidTestImplementation("androidx.work:work-testing:2.10.0")
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
