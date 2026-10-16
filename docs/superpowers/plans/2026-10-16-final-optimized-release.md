@@ -37,6 +37,10 @@
 
 ## Progress ledger
 
+- Access correction local verification: optimized target plus test assembly passed in 4m4s; both apksigner checks passed (nonofficial debug identity). The actual target DEX changed from one inaccessible inheritance edge to zero; test-to-target mapped-class linkage remains zero missing classes. Only `CollectionsKt__IterablesKt` permits access widening. Existing runtime instrumentation remains the failing regression and requires hosted execution; static/build success is not runtime acceptance.
+
+- Continuation starting SHA `0740ab6b0bafa73b1bae36856999b278e9124a98`, clean main matching remote. Preserved run `38951276808` completed with core 46/46, Android JVM 54/54, server 32/32, signing checks 43/43 in both runtimes, and lint 0 errors/81 existing warnings. Emulator debug passed 8/8 and untouched optimized launch passed; optimized instrumentation crashed before tests with a single cross-package inheritance access error. Local DEX reproduces `ey` extending package-private `kotlin.collections.CollectionsKt__IterablesKt`. Permit access widening only on that exact test-facing keep declaration, then rebuild and audit actual DEX before pushing. Release optimization is unchanged. New source necessarily triggers a new full workflow; no passing job is manually rerun. Current-source CI APK content/signature/ABI/alignment/size checks passed and screenshots were visually inspected; those nonofficial results do not establish permanent signing or runtime acceptance.
+
 - Starting main/origin/main: 41d9cf9e57dcb56715cce9a2af599be405c5a743, fetched; baseline CI 38913661940 success. Earlier untracked scripts/verify_apk_optimization.py is an agent-authored prototype, inspected and preserved until its replacement is verified.
 - No DPAPI credential profile exists at initial inspection. Canonical keystore remains outside repository. Signing is deferred until actual signing step; no password retrieval attempted.
 - Ruling: user explicitly selected main and supplied the approved release design and execution sequence; reuse this checkout and execute without another design/worktree approval. Cost if wrong: changes land on main, as requested.

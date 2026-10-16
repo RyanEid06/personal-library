@@ -1011,7 +1011,9 @@
   public static java.util.List listOfNotNull(java.lang.Object);
   public static void throwIndexOverflow();
 }
--keep class kotlin.collections.CollectionsKt__IterablesKt {
+# Its unkept subclass can be repackaged by R8. Permit widening this package-private
+# base so the instrumented target retains a legal inheritance boundary.
+-keep,allowaccessmodification class kotlin.collections.CollectionsKt__IterablesKt {
   public static int collectionSizeOrDefault(java.lang.Iterable, int);
 }
 -keep class kotlin.collections.CollectionsKt__MutableCollectionsKt {
