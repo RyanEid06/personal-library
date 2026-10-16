@@ -121,6 +121,9 @@ android {
             initWith(getByName("release"))
             signingConfig = signingConfigs.getByName("debug")
             matchingFallbacks += "release"
+            if (optimizedTests) {
+                proguardFiles("optimized-test-rules.pro")
+            }
         }
     }
 
