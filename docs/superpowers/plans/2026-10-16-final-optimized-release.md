@@ -37,7 +37,7 @@
 
 ## Progress ledger
 
-The first official `v1.0.0` release is published at https://github.com/RyanEid06/personal-library/releases/tag/v1.0.0. The release tag points at the exact source certified by the five-job green run; APK hashes, sizes, certificate, Desktop paths and CI evidence are recorded in `artifacts/release-v1/FINAL_VERIFICATION.md`. Physical phone acceptance remains owner work. The checkpoint notes below retain historical diagnosis and are not current blockers.
+The first official `v1.0.0` release is published at https://github.com/RyanEid06/personal-library/releases/tag/v1.0.0. The permanent-signed APKs were built from `1c42f958f3e663d2e547a266670bae4fb54e5214` after its five-job run `38959696966` passed. The release-tag documentation commit contains no Android/build/signing changes and received its own five-job green run. APK hashes, sizes, certificate, release assets and CI evidence are recorded in `artifacts/release-v1/FINAL_VERIFICATION.md`. Physical phone acceptance remains owner work. The checkpoint notes below retain historical diagnosis and are not current blockers.
 
 - Untouched optimized ARM64/universal assembly passed in 3m52s with all three public registrar constructors present in actual DEX. Both signatures and 16 KB zipalign checks passed; exact ABIs, native/offline asset preservation and ELF checks passed against same-source debug. Nonofficial measured sizes remain 18,134,652 / 48,171,575 bytes. The real OCR runtime regression awaits exact corrected-source CI; all earlier passing jobs remain preserved and no manual passing-job retry is requested.
 
