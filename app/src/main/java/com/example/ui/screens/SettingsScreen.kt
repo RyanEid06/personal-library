@@ -33,8 +33,13 @@ import com.example.ui.MainViewModel
 import com.example.ui.theme.ThemeMode
 import com.example.ui.components.EncryptedBackupPassphraseDialog
 import com.example.ui.components.WhatsAppFileImportDialog
+import com.personallibrary.core.backup.BackupMode
 import com.personallibrary.core.backup.RestorePreview
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -64,6 +69,24 @@ fun SettingsScreen(
     var pendingRestoreUri by remember { mutableStateOf<Uri?>(null) }
     var restorePreviewState by remember { mutableStateOf<RestorePreview?>(null) }
     var showRestorePreviewDialog by remember { mutableStateOf(false) }
+    var restoreCommitStarted by remember { mutableStateOf(false) }
+    val latestRestorePreview by rememberUpdatedState(restorePreviewState)
+    val latestRestoreCommitStarted by rememberUpdatedState(restoreCommitStarted)
+
+    DisposableEffect(Unit) {
+        onDispose {
+            latestRestorePreview?.takeUnless { latestRestoreCommitStarted }?.let(viewModel::discardRestorePreview)
+            pendingExportPassphrase?.fill('\u0000')
+            pendingExportPassphrase = null
+        }
+    }
+
+    DisposableEffect(restorePreviewState) {
+        val preview = restorePreviewState
+        onDispose {
+            if (preview != null && !latestRestoreCommitStarted) viewModel.discardRestorePreview(preview)
+        }
+    }
 
     var showPairingDialog by remember { mutableStateOf(false) }
     var pairingSecretInput by remember { mutableStateOf("") }
@@ -74,16 +97,27 @@ fun SettingsScreen(
     val exportBackupLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("application/octet-stream")
     ) { uri: Uri? ->
-        if (uri != null && pendingExportPassphrase != null) {
+        val passphrase = pendingExportPassphrase
+        pendingExportPassphrase = null
+        if (uri != null && passphrase != null) {
             coroutineScope.launch {
-                val success = viewModel.exportEncryptedBackup(uri, pendingExportPassphrase!!)
-                pendingExportPassphrase = null
-                if (success) {
-                    Toast.makeText(context, "Encrypted backup exported successfully (.plb)", Toast.LENGTH_LONG).show()
-                } else {
-                    Toast.makeText(context, "Failed to export encrypted backup", Toast.LENGTH_SHORT).show()
+                try {
+                    val success = viewModel.exportEncryptedBackup(uri, passphrase)
+                    if (success) {
+                        Toast.makeText(context, "Encrypted backup exported successfully (.plb)", Toast.LENGTH_LONG).show()
+                    } else {
+                        Toast.makeText(context, "Failed to export encrypted backup", Toast.LENGTH_SHORT).show()
+                    }
+                } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) {
+                    Toast.makeText(context, "Failed to export encrypted backup", Toast.LENGTH_LONG).show()
+                } finally {
+                    passphrase.fill('\u0000')
                 }
             }
+        } else {
+            passphrase?.fill('\u0000')
         }
     }
 
@@ -100,11 +134,18 @@ fun SettingsScreen(
         EncryptedBackupPassphraseDialog(
             title = "Export Encrypted Backup",
             actionButtonText = "Choose Destination",
+            mode = BackupMode.EXPORT,
             onDismiss = { showExportPassphraseDialog = false },
             onConfirm = { pass ->
                 pendingExportPassphrase = pass
                 showExportPassphraseDialog = false
-                exportBackupLauncher.launch("PersonalLibrary_Backup_${System.currentTimeMillis()}.plb")
+                try {
+                    exportBackupLauncher.launch("PersonalLibrary_Backup_${System.currentTimeMillis()}.plb")
+                } catch (_: Exception) {
+                    pendingExportPassphrase?.fill('\u0000')
+                    pendingExportPassphrase = null
+                    Toast.makeText(context, "Could not open the backup destination picker", Toast.LENGTH_LONG).show()
+                }
             }
         )
     }
@@ -113,6 +154,7 @@ fun SettingsScreen(
         EncryptedBackupPassphraseDialog(
             title = "Decrypt & Inspect Backup",
             actionButtonText = "Inspect Archive",
+            mode = BackupMode.RESTORE,
             onDismiss = {
                 showRestorePassphraseDialog = false
                 pendingRestoreUri = null
@@ -120,16 +162,36 @@ fun SettingsScreen(
             onConfirm = { pass ->
                 showRestorePassphraseDialog = false
                 val targetUri = pendingRestoreUri
+                pendingRestoreUri = null
                 if (targetUri != null) {
                     coroutineScope.launch {
-                        val preview = viewModel.inspectBackup(targetUri, pass)
-                        if (preview != null) {
-                            restorePreviewState = preview
-                            showRestorePreviewDialog = true
-                        } else {
-                            Toast.makeText(context, "Incorrect passphrase or invalid encrypted backup archive", Toast.LENGTH_LONG).show()
+                        val callerContext = currentCoroutineContext()
+                        var stagedPreview: RestorePreview? = null
+                        var previewTransferred = false
+                        try {
+                            stagedPreview = withContext(NonCancellable) {
+                                viewModel.inspectBackup(targetUri, pass)
+                            }
+                            callerContext.ensureActive()
+                            if (stagedPreview != null) {
+                                restorePreviewState = stagedPreview
+                                restoreCommitStarted = false
+                                showRestorePreviewDialog = true
+                                previewTransferred = true
+                            } else {
+                                Toast.makeText(context, "Could not inspect the backup. Check the passphrase and archive, then try again.", Toast.LENGTH_LONG).show()
+                            }
+                        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                            throw cancelled
+                        } catch (_: Exception) {
+                            Toast.makeText(context, "Could not inspect the backup. Check the passphrase and archive, then try again.", Toast.LENGTH_LONG).show()
+                        } finally {
+                            if (!previewTransferred) stagedPreview?.let(viewModel::discardRestorePreview)
+                            pass.fill('\u0000')
                         }
                     }
+                } else {
+                    pass.fill('\u0000')
                 }
             }
         )
@@ -140,8 +202,10 @@ fun SettingsScreen(
         val newItems = (preview.manifest.items.size - preview.existingDuplicateCount).coerceAtLeast(0)
         AlertDialog(
             onDismissRequest = {
-                showRestorePreviewDialog = false
-                restorePreviewState = null
+                if (!restoreCommitStarted) {
+                    showRestorePreviewDialog = false
+                    restorePreviewState = null
+                }
             },
             title = { Text("Restore Archive Preview") },
             text = {
@@ -163,22 +227,34 @@ fun SettingsScreen(
                 Button(
                     onClick = {
                         val target = restorePreviewState
-                        showRestorePreviewDialog = false
-                        restorePreviewState = null
-                        if (target != null) {
+                        if (target != null && !restoreCommitStarted) {
+                            restoreCommitStarted = true
                             coroutineScope.launch {
-                                val count = viewModel.commitRestore(target)
-                                Toast.makeText(context, "Restored $count items successfully", Toast.LENGTH_LONG).show()
+                                try {
+                                    val count = viewModel.commitRestore(target)
+                                    Toast.makeText(context, "Restored $count items successfully", Toast.LENGTH_LONG).show()
+                                } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                                    throw cancelled
+                                } catch (_: Exception) {
+                                    Toast.makeText(context, "Restore failed. Please retry with the same backup.", Toast.LENGTH_LONG).show()
+                                } finally {
+                                    viewModel.discardRestorePreview(target)
+                                    restorePreviewState = null
+                                    showRestorePreviewDialog = false
+                                    restoreCommitStarted = false
+                                }
                             }
                         }
                     },
+                    enabled = !restoreCommitStarted,
                     modifier = Modifier.testTag("confirm_restore_button")
                 ) {
-                    Text("Commit Restore")
+                    Text(if (restoreCommitStarted) "Restoring…" else "Commit Restore")
                 }
             },
             dismissButton = {
                 TextButton(
+                    enabled = !restoreCommitStarted,
                     onClick = {
                         showRestorePreviewDialog = false
                         restorePreviewState = null

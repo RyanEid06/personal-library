@@ -41,9 +41,19 @@ fun SearchScreen(
     val filteredItems by viewModel.localSearchResults.collectAsState()
     val collections by viewModel.collections.collectAsState()
     val selectedKind by viewModel.selectedKind.collectAsState()
+    val snackbarHost = remember { SnackbarHostState() }
+    LaunchedEffect(viewModel) {
+        viewModel.movedToTrash.collect { ids ->
+            val message = if (ids.size == 1) "Moved to Trash" else "${ids.size} items moved to Trash"
+            if (snackbarHost.showSnackbar(message, actionLabel = "UNDO", withDismissAction = true) == SnackbarResult.ActionPerformed) {
+                viewModel.undoTrash(ids)
+            }
+        }
+    }
 
     Scaffold(
         modifier = modifier.fillMaxSize(),
+        snackbarHost = { SnackbarHost(snackbarHost) },
         topBar = {
             TopAppBar(
                 title = {

@@ -31,7 +31,29 @@ fun TrashScreen(
 ) {
     val trashItems by viewModel.trashItems.collectAsState()
     var showEmptyTrashConfirm by remember { mutableStateOf(false) }
+    var pendingPermanentDeleteId by remember { mutableStateOf<String?>(null) }
     val dateFormatter = remember { SimpleDateFormat("MMM d, yyyy", Locale.getDefault()) }
+
+    pendingPermanentDeleteId?.let { itemId ->
+        AlertDialog(
+            onDismissRequest = { pendingPermanentDeleteId = null },
+            title = { Text("Delete Forever?") },
+            text = { Text("This item and its stored content will be permanently deleted. This action cannot be undone.") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        viewModel.deletePermanently(itemId)
+                        pendingPermanentDeleteId = null
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                    modifier = Modifier.testTag("confirm_perm_delete_button")
+                ) { Text("Delete Forever") }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingPermanentDeleteId = null }) { Text("Cancel") }
+            }
+        )
+    }
 
     if (showEmptyTrashConfirm) {
         AlertDialog(
@@ -190,7 +212,7 @@ fun TrashScreen(
                                     )
                                 }
                                 IconButton(
-                                    onClick = { viewModel.deletePermanently(item.id) },
+                                    onClick = { pendingPermanentDeleteId = item.id },
                                     modifier = Modifier.testTag("perm_delete_btn_${item.id}")
                                 ) {
                                     Icon(

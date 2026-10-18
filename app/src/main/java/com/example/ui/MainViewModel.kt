@@ -25,6 +25,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -51,6 +52,9 @@ data class GroupedLibrarySection(
 
 @OptIn(FlowPreview::class)
 class MainViewModel(application: Application) : AndroidViewModel(application) {
+
+    private val trashEvents = Channel<List<String>>(Channel.UNLIMITED)
+    val movedToTrash = trashEvents.receiveAsFlow()
 
     val repository = LibraryRepository(application)
     val appLockManager = AppLockManager(application)
@@ -141,6 +145,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     init {
         // Enforce 30-day automatic Trash expiry on startup
         viewModelScope.launch(Dispatchers.IO) {
+            repository.cleanAbandonedRestoreStages()
             repository.reconcileStorage()
             repository.purgeExpiredTrash()
             com.example.indexing.LocalIndexWorker.enqueue(application)
@@ -543,9 +548,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun moveToTrash(id: String) {
         viewModelScope.launch(Dispatchers.IO) {
-            repository.moveToTrash(id)
-            reminderScheduler.cancel(id)
+            val ids = repository.moveToTrash(listOf(id))
+            if (ids.isNotEmpty()) trashEvents.send(ids)
         }
+    }
+
+    fun undoTrash(ids: List<String>) {
+        viewModelScope.launch(Dispatchers.IO) { repository.restoreFromTrash(ids) }
     }
 
     fun restoreFromTrash(id: String) {
@@ -556,7 +565,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun deletePermanently(id: String) {
         viewModelScope.launch(Dispatchers.IO) {
-            repository.deletePermanently(id)
+            repository.deletePermanently(id, requireTrash = true)
         }
     }
 
@@ -706,11 +715,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun batchMoveToTrash() {
         val ids = _selectedItemIds.value
         viewModelScope.launch(Dispatchers.IO) {
-            for (id in ids) {
-                repository.moveToTrash(id)
-                reminderScheduler.cancel(id)
-            }
+            val affected = repository.moveToTrash(ids)
             clearSelection()
+            if (affected.isNotEmpty()) trashEvents.send(affected)
         }
     }
 
@@ -738,6 +745,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     suspend fun inspectBackup(uri: Uri, passphrase: CharArray): RestorePreview? {
         return repository.inspectBackup(uri, passphrase)
+    }
+
+    fun discardRestorePreview(preview: RestorePreview) {
+        // Cleanup survives cancellation of the screen's composition scope.
+        viewModelScope.launch(kotlinx.coroutines.NonCancellable + Dispatchers.IO) { repository.discardRestorePreview(preview) }
     }
 
     suspend fun commitRestore(preview: RestorePreview, keepBoth: Boolean = false): Int {
@@ -768,8 +780,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun clearCache() {
         viewModelScope.launch(Dispatchers.IO) {
-            getApplication<Application>().cacheDir.deleteRecursively()
-            getApplication<Application>().cacheDir.mkdirs()
+            // A restore preview owns private staging until commit/cancel. Cache cleanup must not
+            // remove that active session; the staging owner separately retries abandoned cleanup.
+            getApplication<Application>().cacheDir.listFiles()?.filterNot { it.name == "staging" }?.forEach { it.deleteRecursively() }
+            repository.cleanAbandonedRestoreStages()
             updateStorageStats()
         }
     }

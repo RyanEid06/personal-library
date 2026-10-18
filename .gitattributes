@@ -3,3 +3,6 @@
 *.jar binary
 *.png binary
 *.webp binary
+
+# Preserve the owner's immutable pasted specification byte-for-byte, including Markdown hard breaks.
+docs/CODEX_V1_0_1_MASTER_PROMPT.md -text whitespace=-trailing-space

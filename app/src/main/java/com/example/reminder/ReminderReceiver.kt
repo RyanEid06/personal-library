@@ -21,49 +21,61 @@ class ReminderReceiver : BroadcastReceiver() {
         const val CHANNEL_NAME = "Memora Reminders"
         const val EXTRA_ITEM_ID = "extra_item_id"
         const val EXTRA_ITEM_TITLE = "extra_item_title"
+        const val EXTRA_REMINDER_TIME = "extra_reminder_time"
         const val ACTION_COMPLETE = "com.example.reminder.ACTION_COMPLETE"
         const val ACTION_SNOOZE = "com.example.reminder.ACTION_SNOOZE"
     }
 
     override fun onReceive(context: Context, intent: Intent) {
+        if (intent.getStringExtra(EXTRA_ITEM_ID) == null) return
+        val pending = goAsync()
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                handleIntent(context, intent, LibraryRepository(context))
+            } finally {
+                pending.finish()
+            }
+        }
+    }
+
+    internal suspend fun handleIntent(context: Context, intent: Intent, repository: LibraryRepository) {
         val itemId = intent.getStringExtra(EXTRA_ITEM_ID) ?: return
         val action = intent.action
         val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        val item = repository.dao.getItemById(itemId)
+        val reminder = repository.dao.getReminderByItemId(itemId)
+        if (!ReminderScheduler.isActiveSource(item, reminder)) {
+            ReminderScheduler(context).cancel(itemId)
+            cancelNotification(notificationManager, itemId)
+            return
+        }
+        val current = requireNotNull(reminder)
+        // An old delivered alarm/action must not mutate or announce a replacement reminder.
+        if (intent.hasExtra(EXTRA_REMINDER_TIME) && intent.getLongExtra(EXTRA_REMINDER_TIME, Long.MIN_VALUE) != current.dueMillis) return
+        // Legacy notifications lack a generation timestamp; their actions cannot affect a future replacement.
+        if (current.dueMillis > System.currentTimeMillis()) return
 
         if (action == ACTION_COMPLETE) {
-            val pending = goAsync()
-            val repository = LibraryRepository(context)
-            CoroutineScope(Dispatchers.IO).launch {
-                try {
-                    repository.completeReminder(itemId)
-                    notificationManager.cancel(itemId.hashCode())
-                } finally {
-                    pending.finish()
-                }
-            }
+            repository.completeReminder(itemId)
+            ReminderScheduler(context).cancel(itemId)
+            cancelNotification(notificationManager, itemId)
             return
         }
 
         if (action == ACTION_SNOOZE) {
-            val pending = goAsync()
-            val repository = LibraryRepository(context)
             val scheduler = ReminderScheduler(context)
-            CoroutineScope(Dispatchers.IO).launch {
-                try {
-                    val snoozeUntil = System.currentTimeMillis() + (15 * 60 * 1000L) // 15 mins
-                    repository.snoozeReminder(itemId, snoozeUntil)
-                    scheduler.schedule(itemId, intent.getStringExtra(EXTRA_ITEM_TITLE) ?: "Reminder", snoozeUntil)
-                    notificationManager.cancel(itemId.hashCode())
-                } finally {
-                    pending.finish()
-                }
+            val snoozeUntil = System.currentTimeMillis() + (15 * 60 * 1000L)
+            repository.snoozeReminder(itemId, snoozeUntil)
+            repository.dao.getItemById(itemId)?.let { latest ->
+                scheduler.scheduleRestored(latest, repository.dao.getReminderByItemId(itemId))
             }
+            cancelNotification(notificationManager, itemId)
             return
         }
 
         // Standard alarm trigger: build and show reminder notification
         if (!ReminderScheduler(context).notificationsEnabled()) return
-        val itemTitle = intent.getStringExtra(EXTRA_ITEM_TITLE) ?: "Library Reminder"
+        val itemTitle = requireNotNull(item).title
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
@@ -78,6 +90,7 @@ class ReminderReceiver : BroadcastReceiver() {
         }
 
         val launchIntent = Intent(context, MainActivity::class.java).apply {
+            data = ReminderScheduler.itemUri(itemId)
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
             putExtra(EXTRA_ITEM_ID, itemId)
         }
@@ -98,8 +111,10 @@ class ReminderReceiver : BroadcastReceiver() {
         // Snooze Intent (15 minutes)
         val snoozeIntent = Intent(context, ReminderReceiver::class.java).apply {
             this.action = ACTION_SNOOZE
+            data = ReminderScheduler.itemUri(itemId)
             putExtra(EXTRA_ITEM_ID, itemId)
             putExtra(EXTRA_ITEM_TITLE, itemTitle)
+            putExtra(EXTRA_REMINDER_TIME, current.dueMillis)
         }
         val snoozePendingIntent = PendingIntent.getBroadcast(
             context,
@@ -111,7 +126,9 @@ class ReminderReceiver : BroadcastReceiver() {
         // Complete Intent
         val completeIntent = Intent(context, ReminderReceiver::class.java).apply {
             this.action = ACTION_COMPLETE
+            data = ReminderScheduler.itemUri(itemId)
             putExtra(EXTRA_ITEM_ID, itemId)
+            putExtra(EXTRA_REMINDER_TIME, current.dueMillis)
         }
         val completePendingIntent = PendingIntent.getBroadcast(
             context,
@@ -131,6 +148,11 @@ class ReminderReceiver : BroadcastReceiver() {
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .build()
 
-        notificationManager.notify(itemId.hashCode(), notification)
+        notificationManager.notify(itemId, 0, notification)
+    }
+
+    private fun cancelNotification(manager: NotificationManager, itemId: String) {
+        manager.cancel(itemId, 0)
+        manager.cancel(itemId.hashCode()) // Retire notifications created before item-specific tags.
     }
 }

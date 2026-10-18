@@ -14,6 +14,7 @@ import com.personallibrary.core.backup.BackupMembershipRecord
 import com.personallibrary.core.backup.BackupReminderRecord
 import com.personallibrary.core.backup.EncryptedBackupEngine
 import com.personallibrary.core.backup.RestorePreview
+import com.personallibrary.core.backup.RestoreStaging
 import com.personallibrary.core.migration.DateOrder
 import com.personallibrary.core.migration.WhatsAppExportParser
 import com.personallibrary.core.model.ItemKind
@@ -24,6 +25,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.io.IOException
@@ -98,6 +100,13 @@ class LibraryRepository(private val context: Context, database: LibraryRoomDatab
 
     val assetStore = ManagedAssetStore(File(context.filesDir, "storage_root").toPath())
     private val backupEngine = EncryptedBackupEngine()
+    private val restoreStaging = RestoreStaging(File(context.cacheDir, "staging"))
+
+    suspend fun cleanAbandonedRestoreStages() = withContext(Dispatchers.IO) { restoreStaging.cleanAbandoned() }
+
+    suspend fun discardRestorePreview(preview: RestorePreview) = withContext(NonCancellable + Dispatchers.IO) {
+        restoreStaging.discard(preview)
+    }
 
     suspend fun reconcileStorage() = withContext(Dispatchers.IO) {
         assetMutations.withLock {
@@ -251,19 +260,59 @@ class LibraryRepository(private val context: Context, database: LibraryRoomDatab
     }
 
     suspend fun moveToTrash(id: String) = withContext(Dispatchers.IO) {
-        dao.moveToTrash(id, System.currentTimeMillis())
+        moveToTrash(listOf(id))
     }
 
     suspend fun restoreFromTrash(id: String) = withContext(Dispatchers.IO) {
-        dao.restoreFromTrash(id)
+        restoreFromTrash(listOf(id))
     }
 
-    suspend fun deletePermanently(id: String) = withContext(Dispatchers.IO) {
+    suspend fun moveToTrash(ids: Collection<String>): List<String> = withContext(Dispatchers.IO) {
+        val affected = db.withTransaction {
+            val timestamp = System.currentTimeMillis()
+            ids.distinct().filter { id ->
+                val item = dao.getItemById(id)
+                if (item != null && !item.isTrash) { dao.moveToTrash(id, timestamp); true } else false
+            }
+        }
+        withContext(NonCancellable) {
+            val scheduler = ReminderScheduler(context)
+            affected.forEach(scheduler::cancel)
+        }
+        affected
+    }
+
+    suspend fun restoreFromTrash(ids: Collection<String>): List<String> = withContext(Dispatchers.IO) {
+        val affected = db.withTransaction {
+            ids.distinct().filter { id ->
+                val item = dao.getItemById(id)
+                if (item == null || !item.isTrash) false else {
+                    dao.restoreFromTrash(id)
+                    val reminder = dao.getReminderByItemId(id)
+                    if (reminder?.isDateOnly == true && reminder.localDate != null) {
+                        val due = com.personallibrary.core.ReminderDate.atNine(reminder.localDate)
+                        dao.insertReminder(reminder.copy(dueMillis = due))
+                        dao.setReminder(id, due, reminder.isExact, true, reminder.localDate)
+                        dao.setReminderDone(id, reminder.isDone)
+                    }
+                    true
+                }
+            }
+        }
+        withContext(NonCancellable) {
+            val scheduler = ReminderScheduler(context)
+            for (id in affected) dao.getItemById(id)?.let { scheduler.scheduleRestored(it, dao.getReminderByItemId(id)) }
+        }
+        affected
+    }
+
+    suspend fun deletePermanently(id: String, requireTrash: Boolean = false) = withContext(Dispatchers.IO) {
         assetMutations.withLock {
         var orphanHash: String? = null
+        var deleted = false
         db.withTransaction {
         val item = dao.getItemById(id)
-        if (item != null) {
+        if (item != null && (!requireTrash || item.isTrash)) {
             val hash = item.contentHash
             if (hash != null) {
                 val asset = dao.getAssetByHash(hash)
@@ -282,16 +331,18 @@ class LibraryRepository(private val context: Context, database: LibraryRoomDatab
             dao.deleteSearchDocumentsForItem(id)
             dao.deleteAnalysisJob(id)
             dao.deleteItemPermanently(id)
+            deleted = true
         }
         }
         orphanHash?.let { removeUnreferencedBlobs(listOf(it)) }
+        if (deleted) ReminderScheduler(context).cancel(id)
         }
     }
 
     suspend fun emptyTrash() = withContext(Dispatchers.IO) {
         val trash = dao.observeTrashItems().first()
         for (item in trash) {
-            deletePermanently(item.id)
+            deletePermanently(item.id, requireTrash = true)
         }
     }
 
@@ -301,7 +352,7 @@ class LibraryRepository(private val context: Context, database: LibraryRoomDatab
         for (item in trash) {
             val ts = item.trashTimestamp ?: item.createdAt
             if (ts < cutoff) {
-                deletePermanently(item.id)
+                deletePermanently(item.id, requireTrash = true)
             }
         }
     }
@@ -343,10 +394,14 @@ class LibraryRepository(private val context: Context, database: LibraryRoomDatab
     }
 
     suspend fun snoozeReminder(id: String, newDueMillis: Long) = withContext(Dispatchers.IO) {
+        db.withTransaction {
+        val item = dao.getItemById(id) ?: return@withTransaction
         val rem = dao.getReminderByItemId(id)
-        val isExact = rem?.isExact ?: true
+        if (item.isTrash || item.isReminderDone || rem == null || rem.isDone) return@withTransaction
+        val isExact = rem.isExact
         dao.setReminder(id, newDueMillis, isExact, false, null)
-        if (rem != null) dao.insertReminder(rem.copy(dueMillis = newDueMillis, isDateOnly = false, localDate = null, isDone = false))
+        dao.insertReminder(rem.copy(dueMillis = newDueMillis, isDateOnly = false, localDate = null, isDone = false))
+        }
     }
 
     suspend fun createCollection(name: String, iconName: String, colorHex: String): CollectionEntity = withContext(Dispatchers.IO) {
@@ -500,21 +555,27 @@ class LibraryRepository(private val context: Context, database: LibraryRoomDatab
     }
 
     // Encrypted Backup Inspect & Restore
-    suspend fun inspectBackup(uri: Uri, passphrase: CharArray): RestorePreview? = withContext(Dispatchers.IO) {
-        try {
-            val existingIds = dao.getAllItemsIncludingTrash().map { it.id }.toSet()
-            context.contentResolver.openInputStream(uri)?.use { inStream ->
-                backupEngine.inspectAndStage(
-                    inStream,
-                    passphrase,
-                    File(context.cacheDir, "staging").apply { mkdirs() }.toPath(),
-                    existingIds
-                )
+    suspend fun inspectBackup(uri: Uri, passphrase: CharArray): RestorePreview? {
+        var preview: RestorePreview? = null
+        return try {
+            withContext(Dispatchers.IO) {
+                val existingIds = dao.getAllItemsIncludingTrash().map { it.id }.toSet()
+                preview = context.contentResolver.openInputStream(uri)?.use { inStream ->
+                    restoreStaging.inspect(inStream, passphrase, existingIds)
+                }
+                kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                preview
             }
-        } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
-        catch (e: Exception) {
-            e.printStackTrace()
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            // Includes prompt cancellation while returning from the IO dispatcher.
+            preview?.let { discardRestorePreview(it) }
+            throw cancelled
+        }
+        catch (_: Exception) {
+            preview?.let { discardRestorePreview(it) }
             null
+        } finally {
+            passphrase.fill('\u0000')
         }
     }
 
@@ -650,7 +711,7 @@ class LibraryRepository(private val context: Context, database: LibraryRoomDatab
                         dao.insertReminder(remEntity)
                         dao.setReminder(finalItemId, dueMillis, remEntity.isExact, rem.isDateOnly, rem.localDate)
                         dao.setReminderDone(finalItemId, rem.isDone)
-                        if (!rem.isDone && dueMillis > System.currentTimeMillis()) remindersToSchedule.add(remEntity to dueMillis)
+                        if (!rem.isDone && dueMillis > System.currentTimeMillis() && dao.getItemById(finalItemId)?.isTrash == false) remindersToSchedule.add(remEntity to dueMillis)
                     }
                 }
 
@@ -685,8 +746,8 @@ class LibraryRepository(private val context: Context, database: LibraryRoomDatab
 
             // 3. External Alarm Scheduling strictly AFTER Room transaction succeeds
             val scheduler = ReminderScheduler(context)
-            for ((rem, dueMillis) in remindersToSchedule) {
-                scheduler.schedule(rem.itemId, rem.title, dueMillis, rem.isExact)
+            for ((rem, _) in remindersToSchedule) {
+                dao.getItemById(rem.itemId)?.let { scheduler.scheduleRestored(it, dao.getReminderByItemId(rem.itemId)) }
             }
 
             // 4. Rebuild FTS
@@ -703,7 +764,11 @@ class LibraryRepository(private val context: Context, database: LibraryRoomDatab
             }
 
         } finally {
-            try { removeUnreferencedBlobs(publishedHashes) } finally { preview.stagingDir.deleteRecursively() }
+            try { removeUnreferencedBlobs(publishedHashes) } finally {
+                // Hand-built previews are also used by existing transactional restore tests.
+                if (preview.stagingDir.parentFile?.canonicalFile == File(context.cacheDir, "staging").canonicalFile) restoreStaging.discard(preview)
+                else preview.stagingDir.deleteRecursively()
+            }
         }
 
         importedCount

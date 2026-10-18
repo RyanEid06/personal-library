@@ -37,6 +37,10 @@ import com.example.data.CollectionEntity
 import com.example.data.ItemEntity
 import com.example.data.ItemWithCollections
 import com.example.model.SharePayload
+import com.personallibrary.core.backup.BackupMode
+import com.personallibrary.core.backup.BackupPassphraseError
+import com.personallibrary.core.backup.BackupPassphrasePolicy
+import com.personallibrary.core.backup.EncryptedBackupEngine
 import com.personallibrary.core.migration.DateOrder
 import java.io.File
 import java.text.SimpleDateFormat
@@ -763,12 +767,21 @@ fun SharePreviewDialog(
 fun EncryptedBackupPassphraseDialog(
     title: String,
     actionButtonText: String,
+    mode: BackupMode,
     onDismiss: () -> Unit,
     onConfirm: (CharArray) -> Unit
 ) {
     var passphrase by remember { mutableStateOf("") }
     var confirmPassphrase by remember { mutableStateOf("") }
-    val isExport = actionButtonText.contains("Export", ignoreCase = true)
+    val isExport = mode == BackupMode.EXPORT
+    val validationError = BackupPassphrasePolicy.validate(mode, passphrase, confirmPassphrase)
+
+    DisposableEffect(Unit) {
+        onDispose {
+            passphrase = ""
+            confirmPassphrase = ""
+        }
+    }
 
     Dialog(onDismissRequest = onDismiss) {
         Surface(
@@ -780,7 +793,7 @@ fun EncryptedBackupPassphraseDialog(
                 Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    text = if (isExport) "Enter a passphrase to encrypt your backup with AES-256-GCM authenticated encryption."
+                    text = if (isExport) "Enter a passphrase of at least ${EncryptedBackupEngine.MIN_PASSPHRASE_LENGTH} characters to encrypt your backup. This passphrase cannot be recovered if you lose it."
                     else "Enter the passphrase used to encrypt this backup archive.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -817,17 +830,30 @@ fun EncryptedBackupPassphraseDialog(
                 ) {
                     TextButton(onClick = onDismiss) { Text("Cancel") }
                     Spacer(modifier = Modifier.width(8.dp))
-                    val canSubmit = if (isExport) passphrase.isNotBlank() && passphrase == confirmPassphrase else passphrase.isNotBlank()
                     Button(
                         onClick = {
-                            onConfirm(passphrase.toCharArray())
-                            onDismiss()
+                            val submittedPassphrase = passphrase.toCharArray()
+                            passphrase = ""
+                            confirmPassphrase = ""
+                            onConfirm(submittedPassphrase)
                         },
-                        enabled = canSubmit,
+                        enabled = validationError == null,
                         modifier = Modifier.testTag("submit_passphrase_button")
                     ) {
                         Text(actionButtonText)
                     }
+                }
+                if (validationError != null) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = when (validationError) {
+                            BackupPassphraseError.REQUIRED -> "Enter a passphrase."
+                            BackupPassphraseError.TOO_SHORT -> "Use at least ${EncryptedBackupEngine.MIN_PASSPHRASE_LENGTH} characters."
+                            BackupPassphraseError.MISMATCH -> "The passphrases do not match."
+                        },
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall
+                    )
                 }
             }
         }

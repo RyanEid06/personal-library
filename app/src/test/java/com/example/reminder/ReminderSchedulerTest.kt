@@ -59,4 +59,39 @@ class ReminderSchedulerTest {
         org.robolectric.Shadows.shadowOf(context as android.app.Application).denyPermissions(android.Manifest.permission.POST_NOTIFICATIONS)
         assertTrue(scheduler.schedule("legacy", "Deliverable", System.currentTimeMillis() + 60_000))
     }
+
+    @Test fun collidingItemHashesKeepIndependentAlarmsAndCancellation() {
+        assertEquals("Aa".hashCode(), "BB".hashCode())
+        val manager = org.robolectric.Shadows.shadowOf(context.getSystemService(AlarmManager::class.java))
+        assertTrue(scheduler.schedule("Aa", "First", System.currentTimeMillis() + 60_000, false))
+        assertTrue(scheduler.schedule("BB", "Second", System.currentTimeMillis() + 120_000, false))
+        assertEquals(2, manager.scheduledAlarms.size)
+        scheduler.cancel("Aa")
+        assertEquals(1, manager.scheduledAlarms.size)
+        val remaining = org.robolectric.Shadows.shadowOf(manager.scheduledAlarms.single().operation).savedIntent
+        assertEquals("BB", remaining.getStringExtra(ReminderReceiver.EXTRA_ITEM_ID))
+    }
+
+    @Test fun replacingLegacyAlarmMigratesToOneItemSpecificAlarm() {
+        val manager = context.getSystemService(AlarmManager::class.java)
+        val legacy = android.app.PendingIntent.getBroadcast(context, "legacy".hashCode(),
+            android.content.Intent(context, ReminderReceiver::class.java), android.app.PendingIntent.FLAG_IMMUTABLE)
+        manager.set(AlarmManager.RTC_WAKEUP, System.currentTimeMillis() + 60_000, legacy)
+        assertTrue(scheduler.schedule("legacy", "Migrated", System.currentTimeMillis() + 120_000, false))
+        val alarms = org.robolectric.Shadows.shadowOf(manager).scheduledAlarms
+        assertEquals(1, alarms.size)
+        assertNotNull(org.robolectric.Shadows.shadowOf(alarms.single().operation).savedIntent.data)
+    }
+
+    @Test fun cancellationRemovesDeliveredItemAndLegacyNotifications() {
+        val manager = context.getSystemService(android.app.NotificationManager::class.java)
+        manager.createNotificationChannel(android.app.NotificationChannel("synthetic", "Synthetic", android.app.NotificationManager.IMPORTANCE_DEFAULT))
+        val notification = android.app.Notification.Builder(context, "synthetic").setSmallIcon(android.R.drawable.ic_dialog_info).build()
+        manager.notify("removed", 0, notification)
+        manager.notify("removed".hashCode(), notification)
+        manager.notify("kept", 0, notification)
+        scheduler.cancel("removed")
+        assertEquals(1, org.robolectric.Shadows.shadowOf(manager).allNotifications.size)
+        assertNotNull(org.robolectric.Shadows.shadowOf(manager).getNotification("kept", 0))
+    }
 }
