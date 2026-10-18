@@ -36,17 +36,18 @@ class DurableAiWorker(
         val expectedVersion = initialItem.localIndexVersion
         val requestedVersion = inputData.getInt("content_version", expectedVersion)
         if (requestedVersion != expectedVersion) return@withContext Result.success()
+        val previousJob = repository.dao.getAnalysisJob(itemId)
+        val metadataOnly = previousJob?.takeIf { it.expectedContentVersion == expectedVersion }?.metadataOnly == true
         val isPdf = initialItem.mimeType == "application/pdf" || initialItem.originalFileName?.endsWith(".pdf", true) == true
-        if (isPdf && !initialItem.extractedText.isNullOrBlank() && repository.dao.getSearchDocumentsForItem(itemId).none { it.pageNumber != null }) {
+        if (!metadataOnly && isPdf && !initialItem.extractedText.isNullOrBlank() && repository.dao.getSearchDocumentsForItem(itemId).none { it.pageNumber != null }) {
             // Upgrade flattened legacy extraction locally before any bounded page upload can begin.
             LocalIndexer(applicationContext, repository).indexItem(initialItem)
             return@withContext Result.success()
         }
-        val previousJob = repository.dao.getAnalysisJob(itemId)
         val attempts = previousJob?.takeIf { it.expectedContentVersion == expectedVersion }?.attempts ?: 0
         // Persist the ceiling across WorkManager recovery and process restarts.
         if (attempts >= 4) {
-            repository.updateAnalysisJobIfCurrent(AnalysisJobEntity(itemId, expectedVersion, expectedVersion, status = "NEEDS_RETRY", attempts = attempts))
+            repository.updateAnalysisJobIfCurrent(AnalysisJobEntity(itemId, expectedVersion, expectedVersion, status = "NEEDS_RETRY", attempts = attempts, metadataOnly = metadataOnly))
             return@withContext Result.failure()
         }
         val attempt = attempts + 1
@@ -66,7 +67,7 @@ class DurableAiWorker(
                 val status = if (excluded) "EXCLUDED" else "QUEUED"
                 val recordedAttempts = repository.dao.getAnalysisJob(itemId)?.takeIf { it.expectedContentVersion == expectedVersion }?.attempts ?: attempts
                 repository.updateAnalysisJobIfCurrent(AnalysisJobEntity(itemId = itemId, expectedContentVersion = expectedVersion,
-                    indexVersion = expectedVersion, status = status, attempts = recordedAttempts))
+                    indexVersion = expectedVersion, status = status, attempts = recordedAttempts, metadataOnly = metadataOnly))
                 return false
             }
             return true
@@ -81,6 +82,7 @@ class DurableAiWorker(
                         itemId = itemId,
                         expectedContentVersion = expectedVersion,
                         indexVersion = expectedVersion,
+                        metadataOnly = metadataOnly,
                         attempts = attempts,
                         status = "NEEDS_RETRY",
                         lastErrorClass = "UNPAIRED",
@@ -97,6 +99,7 @@ class DurableAiWorker(
                     itemId = itemId,
                     expectedContentVersion = expectedVersion,
                     indexVersion = expectedVersion,
+                    metadataOnly = metadataOnly,
                     status = "PROCESSING",
                     attempts = attempt,
                     updatedAt = System.currentTimeMillis()
@@ -106,7 +109,7 @@ class DurableAiWorker(
             // Extract bounded media parts if applicable
             val mediaParts = mutableListOf<MediaPart>()
             var mediaPartial = false
-            val blobFile = initialItem.contentHash?.let { repository.getBlobFile(it) }
+            val blobFile = if (metadataOnly) null else initialItem.contentHash?.let { repository.getBlobFile(it) }
 
             if (blobFile != null && blobFile.exists()) {
                 val mime = (initialItem.mimeType ?: "").lowercase()
@@ -132,7 +135,7 @@ class DurableAiWorker(
                 }
             }
 
-            if (initialItem.kind == "AUDIO" && mediaParts.isEmpty()) {
+            if (!metadataOnly && initialItem.kind == "AUDIO" && mediaParts.isEmpty()) {
                 repository.publishAiResult(itemId, expectedVersion, "Automatic audio analysis unavailable: a bounded representation could not be produced.",
                     "", "UNSUPPORTED", repository.dao.getSearchDocumentsForItem(itemId), attempt)
                 return@withContext Result.success()
@@ -152,7 +155,9 @@ class DurableAiWorker(
             }
             val batches = if (isPdf) PdfAnalysisBounds.batches(pages) else emptyList()
             val responses = mutableListOf<AnalyzeResponse>()
-            if (batches.isNotEmpty()) {
+            if (metadataOnly) {
+                // Re-embed the cached representation; never upload or analyze original media for a rename.
+            } else if (batches.isNotEmpty()) {
                 for (batch in batches) {
                     if (!mayUpload()) return@withContext Result.success()
                     responses.add(aiGateway.analyze(itemId, initialItem.kind, batch.text, initialItem.originalFileName))
@@ -165,7 +170,9 @@ class DurableAiWorker(
             val boundedPartial = mediaPartial || batches.any { it.partial } ||
                 (isPdf && (pages.isEmpty() || initialItem.localIndexCoverage.equals("partial", true))) ||
                 (!isPdf && textForAnalysis.length > PdfAnalysisBounds.MAX_PROMPT_CHARS)
-            val analysis = AnalyzeResponse(itemId,
+            val analysis = if (metadataOnly) AnalyzeResponse(itemId, initialItem.aiDescription.orEmpty(), initialItem.aiConcepts.orEmpty(),
+                coverage = if (initialItem.aiStatus == "PARTIAL" || initialItem.localIndexCoverage.equals("PARTIAL", true) ||
+                    localDocs.any { it.coverage.equals("PARTIAL", true) }) "PARTIAL" else "COMPLETE") else AnalyzeResponse(itemId,
                 responses.mapIndexed { index, response ->
                     batches.getOrNull(index)?.let { "Pages ${it.pageNumbers.first()}–${it.pageNumbers.last()}: ${response.description}" } ?: response.description
                 }.joinToString("\n").take(8000),
@@ -232,6 +239,7 @@ class DurableAiWorker(
                     itemId = itemId,
                     expectedContentVersion = expectedVersion,
                     indexVersion = expectedVersion,
+                    metadataOnly = metadataOnly,
                     status = status,
                     attempts = attempt,
                     lastErrorClass = e::class.java.simpleName,
@@ -248,75 +256,77 @@ class DurableAiWorker(
         }
     }
 
-    private data class ChunkInfo(val index: Int, val text: String, val pageNumber: Int? = null)
+    companion object {
+        internal data class ChunkInfo(val index: Int, val text: String, val pageNumber: Int? = null)
 
-    private fun createChunksForItem(item: com.example.data.ItemEntity, aiDesc: String?, aiConcepts: String?, localDocs: List<SearchDocumentEntity>): List<ChunkInfo> {
-        val chunks = mutableListOf<ChunkInfo>()
-        var chunkIndex = 0
+        internal fun createChunksForItem(item: com.example.data.ItemEntity, aiDesc: String?, aiConcepts: String?, localDocs: List<SearchDocumentEntity>): List<ChunkInfo> {
+            val chunks = mutableListOf<ChunkInfo>()
+            var chunkIndex = 0
 
-        // Primary summary chunk
-        val headerSummary = buildString {
-            append(item.title).append(". ")
-            if (!aiDesc.isNullOrBlank()) append(aiDesc).append(". ")
-            if (!aiConcepts.isNullOrBlank()) append(aiConcepts)
-        }.trim()
-        if (headerSummary.isNotBlank()) {
-            chunks.add(ChunkInfo(chunkIndex++, headerSummary.take(1000)))
-        }
-
-        // Chunk owner content (notes, text, links)
-        if (item.content.isNotBlank()) {
-            val contentChunks = splitTextIntoBoundedChunks(item.content, 600)
-            for (c in contentChunks.take(24)) {
-                chunks.add(ChunkInfo(chunkIndex++, c))
+            // Primary summary chunk
+            val headerSummary = buildString {
+                append(item.title).append(". ")
+                if (!aiDesc.isNullOrBlank()) append(aiDesc).append(". ")
+                if (!aiConcepts.isNullOrBlank()) append(aiConcepts)
+            }.trim()
+            if (headerSummary.isNotBlank()) {
+                chunks.add(ChunkInfo(chunkIndex++, headerSummary.take(1000)))
             }
-        }
 
-        // Chunk extracted text (OCR or PDF)
-        val pageDocs = localDocs.filter { it.pageNumber != null }.groupBy { it.pageNumber }.toSortedMap(compareBy { it ?: 0 })
-        if (pageDocs.isNotEmpty()) {
-            for ((page, documents) in pageDocs) {
-                for (document in documents.sortedBy { it.chunkIndex }.take(3)) {
-                    chunks.add(ChunkInfo(chunkIndex++, document.textContent.take(600), page))
+            // Chunk owner content (notes, text, links)
+            if (item.content.isNotBlank()) {
+                val contentChunks = splitTextIntoBoundedChunks(item.content, 600)
+                for (c in contentChunks.take(24)) {
+                    chunks.add(ChunkInfo(chunkIndex++, c))
                 }
             }
-        } else if (!item.extractedText.isNullOrBlank()) {
-            val extractedChunks = splitTextIntoBoundedChunks(item.extractedText, 600)
-            for (c in extractedChunks.take(15)) { // Bounded max chunks per item
-                chunks.add(ChunkInfo(chunkIndex++, c))
+
+            // Chunk extracted text (OCR or PDF)
+            val pageDocs = localDocs.filter { it.pageNumber != null }.groupBy { it.pageNumber }.toSortedMap(compareBy { it ?: 0 })
+            if (pageDocs.isNotEmpty()) {
+                for ((page, documents) in pageDocs) {
+                    for (document in documents.sortedBy { it.chunkIndex }.take(3)) {
+                        chunks.add(ChunkInfo(chunkIndex++, document.textContent.take(600), page))
+                    }
+                }
+            } else if (!item.extractedText.isNullOrBlank()) {
+                val extractedChunks = splitTextIntoBoundedChunks(item.extractedText, 600)
+                for (c in extractedChunks.take(15)) { // Bounded max chunks per item
+                    chunks.add(ChunkInfo(chunkIndex++, c))
+                }
             }
+
+            return chunks
         }
 
-        return chunks
-    }
+        private fun splitTextIntoBoundedChunks(text: String, targetSize: Int): List<String> {
+            val result = mutableListOf<String>()
+            val paragraphs = text.split("\n\n").filter { it.isNotBlank() }
 
-    private fun splitTextIntoBoundedChunks(text: String, targetSize: Int): List<String> {
-        val result = mutableListOf<String>()
-        val paragraphs = text.split("\n\n").filter { it.isNotBlank() }
-
-        var current = StringBuilder()
-        for (para in paragraphs) {
-            if (current.length + para.length > targetSize && current.isNotEmpty()) {
+            var current = StringBuilder()
+            for (para in paragraphs) {
+                if (current.length + para.length > targetSize && current.isNotEmpty()) {
+                    result.add(current.toString().trim())
+                    current = StringBuilder()
+                }
+                if (para.length > targetSize) {
+                    // Split large paragraph by sentence or size
+                    var start = 0
+                    while (start < para.length) {
+                        val end = minOf(start + targetSize, para.length)
+                        result.add(para.substring(start, end).trim())
+                        start = end
+                    }
+                } else {
+                    if (current.isNotEmpty()) current.append("\n\n")
+                    current.append(para)
+                }
+            }
+            if (current.isNotEmpty()) {
                 result.add(current.toString().trim())
-                current = StringBuilder()
             }
-            if (para.length > targetSize) {
-                // Split large paragraph by sentence or size
-                var start = 0
-                while (start < para.length) {
-                    val end = minOf(start + targetSize, para.length)
-                    result.add(para.substring(start, end).trim())
-                    start = end
-                }
-            } else {
-                if (current.isNotEmpty()) current.append("\n\n")
-                current.append(para)
-            }
+            return result
         }
-        if (current.isNotEmpty()) {
-            result.add(current.toString().trim())
-        }
-        return result
     }
 
     private fun extractBoundedImagePart(file: File): MediaPart? {

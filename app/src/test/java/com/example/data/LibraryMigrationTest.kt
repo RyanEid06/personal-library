@@ -11,10 +11,60 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import java.io.File
+import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.json.*
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
 class LibraryMigrationTest {
+
+    @Test fun actualVersion4DatabaseOpensThroughRoom5WithoutLosingRowsOrFts() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val name = "migration4_${java.util.UUID.randomUUID()}.db"
+        val schema = Json.parseToJsonElement(File("schemas/com.example.data.LibraryRoomDatabase/4.json").readText()).jsonObject.getValue("database").jsonObject
+        val helper = FrameworkSQLiteOpenHelperFactory().create(
+            androidx.sqlite.db.SupportSQLiteOpenHelper.Configuration.builder(context).name(name)
+                .callback(object : androidx.sqlite.db.SupportSQLiteOpenHelper.Callback(4) {
+                    override fun onCreate(db: SupportSQLiteDatabase) {
+                        schema.getValue("entities").jsonArray.forEach { value ->
+                            val entity = value.jsonObject
+                            val table = entity.getValue("tableName").jsonPrimitive.content
+                            db.execSQL(entity.getValue("createSql").jsonPrimitive.content.replace("\${TABLE_NAME}", table))
+                            entity["indices"]?.jsonArray?.forEach { index ->
+                                db.execSQL(index.jsonObject.getValue("createSql").jsonPrimitive.content.replace("\${TABLE_NAME}", table))
+                            }
+                        }
+                        schema.getValue("setupQueries").jsonArray.forEach { db.execSQL(it.jsonPrimitive.content) }
+                    }
+                    override fun onUpgrade(db: SupportSQLiteDatabase, oldVersion: Int, newVersion: Int) = Unit
+                }).build())
+        helper.writableDatabase.apply {
+            execSQL("INSERT INTO collections VALUES('legacy','Random Links','chat','#ffffff',1)")
+            execSQL("INSERT INTO collections VALUES('other','Other','folder','#000000',2)")
+            execSQL("INSERT INTO items(id,title,content,kind,isFavorite,isTrash,createdAt,isReminderDone,isReminderExact,isReminderDateOnly,fileSizeBytes,localIndexCoverage,localIndexVersion,aiStatus) VALUES('item','MigrationTitle','MigrationBody','TEXT',0,0,123,0,1,0,0,'COMPLETE',7,'READY')")
+            execSQL("INSERT INTO item_collection_cross_ref VALUES('item','legacy')")
+            execSQL("INSERT INTO search_documents(id,itemId,chunkIndex,textContent,embeddingDimension,modelVersion,coverage) VALUES('doc','item',0,'Preserved extraction',768,'existing','COMPLETE')")
+            execSQL("INSERT INTO assets VALUES('hash','assets/hash',7,'original.txt','text/plain','DOCUMENT',1)")
+            execSQL("INSERT INTO reminders VALUES('rem','item','Reminder',1800000000000,0,1,0,NULL)")
+            execSQL("INSERT INTO analysis_jobs VALUES('item',7,7,'existing','QUEUED',2,NULL,NULL,123)")
+        }
+        helper.close()
+        val migrated = Room.databaseBuilder(context, LibraryRoomDatabase::class.java, name)
+            .addMigrations(MIGRATION_4_5).addCallback(DATABASE_CALLBACK).build()
+        try {
+            val dao = migrated.libraryDao()
+            assertEquals("RANDOM_LINKS", dao.getAllCollections().single { it.id == "legacy" }.appRole)
+            assertNull(dao.getAllCollections().single { it.id == "other" }.appRole)
+            assertEquals("MigrationBody", dao.getItemById("item")!!.content)
+            assertEquals(7, dao.getItemById("item")!!.localIndexVersion)
+            assertEquals(listOf("legacy"), dao.getCollectionIdsForItem("item"))
+            assertEquals("Preserved extraction", dao.getSearchDocumentsForItem("item").single().textContent)
+            assertEquals("original.txt", dao.getAssetByHash("hash")!!.originalName)
+            assertEquals(1800000000000L, dao.getReminderByItemId("item")!!.dueMillis)
+            assertEquals(2, dao.getAnalysisJob("item")!!.attempts)
+            assertEquals("item", dao.searchFts("MigrationBody*").single().id)
+        } finally { migrated.close(); context.deleteDatabase(name) }
+    }
 
     @Test
     fun testMigrationFrom2To3PreservesDataAndAddsColumns() = runMigrations(false)

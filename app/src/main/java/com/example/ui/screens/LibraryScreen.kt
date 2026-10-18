@@ -1,6 +1,7 @@
 package com.example.ui.screens
 
 import androidx.compose.foundation.background
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -33,6 +34,7 @@ import com.example.ui.MainViewModel
 import com.example.ui.components.ItemCard
 import com.example.ui.components.ItemGridCard
 import com.example.ui.components.TypeFilterChipStrip
+import com.example.ui.components.SelectionActions
 import com.personallibrary.core.model.DateRange
 import java.time.Instant
 import java.time.ZoneId
@@ -62,6 +64,7 @@ fun LibraryScreen(
     val isBatchMode by viewModel.isBatchMode.collectAsState()
     val selectedItemIds by viewModel.selectedItemIds.collectAsState()
     val snackbarHost = remember { SnackbarHostState() }
+    BackHandler(enabled = isBatchMode) { viewModel.clearSelection() }
     LaunchedEffect(viewModel) {
         viewModel.movedToTrash.collect { ids ->
             val message = if (ids.size == 1) "Moved to Trash" else "${ids.size} items moved to Trash"
@@ -69,6 +72,9 @@ fun LibraryScreen(
                 viewModel.undoTrash(ids)
             }
         }
+    }
+    LaunchedEffect(viewModel, snackbarHost) {
+        viewModel.libraryMessages.collect { snackbarHost.showSnackbar(it, withDismissAction = true) }
     }
 
     var showSortMenu by remember { mutableStateOf(false) }
@@ -109,7 +115,7 @@ fun LibraryScreen(
             TopAppBar(
                 title = {
                     Text(
-                        text = "${items.size} items • ${dateBasis.label}",
+                        text = if (isBatchMode) "${selectedItemIds.size} selected" else "${items.size} items • ${dateBasis.label}",
                         style = MaterialTheme.typography.titleMedium,
                         color = MaterialTheme.colorScheme.onSurface,
                         maxLines = 1,
@@ -118,18 +124,7 @@ fun LibraryScreen(
                 },
                 actions = {
                     if (isBatchMode) {
-                        IconButton(
-                            onClick = { viewModel.batchMoveToTrash() },
-                            modifier = Modifier.testTag("batch_delete_button")
-                        ) {
-                            Icon(Icons.Filled.Delete, contentDescription = "Trash selected", tint = MaterialTheme.colorScheme.error)
-                        }
-                        IconButton(
-                            onClick = { viewModel.clearSelection() },
-                            modifier = Modifier.testTag("batch_cancel_button")
-                        ) {
-                            Icon(Icons.Filled.Close, contentDescription = "Cancel selection")
-                        }
+                        SelectionActions(viewModel, items.size, { items.map { it.item.id } }, selectedItemIds)
                     } else {
                         // Grid/List toggle
                         IconButton(
@@ -403,7 +398,11 @@ fun LibraryScreen(
                                 fileResolver = { hash -> viewModel.repository.assetStore.getBlobFile(hash) },
                                 onClick = { onOpenItemDetail(itemWithCols) },
                                 onFavoriteToggle = { viewModel.toggleFavorite(itemWithCols.item.id) },
-                                onDelete = { viewModel.moveToTrash(itemWithCols.item.id) }
+                                onDelete = { viewModel.moveToTrash(itemWithCols.item.id) },
+                                isSelectMode = isBatchMode,
+                                isSelected = itemWithCols.item.id in selectedItemIds,
+                                onSelectToggle = { viewModel.toggleSelection(itemWithCols.item.id) },
+                                matchingSnippet = viewModel.buildMatchSnippet(itemWithCols.item, searchQuery)
                             )
                         }
                     }

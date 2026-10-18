@@ -13,12 +13,12 @@ Status vocabulary at final audit: COMPLETE / PARTIAL / NOT NEEDED / BLOCKED. Pen
 | 4 | BACKUP EXPORT MODE BUG — P0 | COMPLETE | Explicit BackupMode and engine-minimum/exact-confirmation policy; core tests passed; 6 Compose safety tests compile, runtime deferred to hosted/final verification. |
 | 5 | RESTORE STAGING PRIVACY — P0 | COMPLETE | Owned staging, cancel/dismiss/disposal/exception/finally cleanup, abandoned-stage sweep and active-stage cache protection; 3 core staging tests passed. |
 | 6 | REMINDER + TRASH RESTORE BUG — P0/P1 | COMPLETE | Single/batch/Undo future scheduling, past/done behavior, timezone persistence, boot/stale alarm/collision protections; focused Robolectric suites passed. Restore All UI follows Phase 2. |
-| 7 | TRASH UX AND DESTRUCTIVE SAFETY | PARTIAL | Pending phase verification and final audit. |
-| 8 | COLLECTION MANAGEMENT | PARTIAL | Pending phase verification and final audit. |
-| 9 | RANDOM LINKS MUST HAVE STABLE IDENTITY | PARTIAL | Pending phase verification and final audit. |
-| 10 | REAL MULTI-SELECT | PARTIAL | Pending phase verification and final audit. |
-| 11 | EDIT ITEM — REQUIRED V1 FEATURE | PARTIAL | Pending phase verification and final audit. |
-| 12 | EDITS MUST UPDATE DERIVED DATA CORRECTLY | PARTIAL | Pending phase verification and final audit. |
+| 7 | TRASH UX AND DESTRUCTIVE SAFETY | COMPLETE | Snackbar single/bulk Undo, confirmed Delete Forever/Empty/Restore All, common reminder-aware batch restore. JVM safety tests passed; Compose tests compile, runtime deferred. |
+| 8 | COLLECTION MANAGEMENT | COMPLETE | Visible overflow, computed protections, validated name/icon/color editing, privacy dialog, atomic membership-only deletion; management/integrity tests passed. |
+| 9 | RANDOM LINKS MUST HAVE STABLE IDENTITY | COMPLETE | Schema 4→5 portable optional application role, legacy adoption, renamed routing/export/fresh/merge restore; repeated restore and identity collision regressions passed. |
+| 10 | REAL MULTI-SELECT | COMPLETE | List/grid/search/collection selection, count/close/Back, off-main Select All Visible guarded by results/selection generations, union/subtract and Trash; 7 Compose regressions compile, runtime deferred. |
+| 11 | EDIT ITEM — REQUIRED V1 FEATURE | COMPLETE | Native text/link editing and media title editing, safe URI validation, original bytes/filename/timestamps/import provenance preserved; domain tests passed and editor Compose tests compile. |
+| 12 | EDITS MUST UPDATE DERIVED DATA CORRECTLY | COMPLETE | Content version invalidation/FTS/local extraction plus cached metadata-only text refresh; no cached-media full re-analysis, stale publications rejected, partial coverage preserved. JVM fake-HTTP regressions passed; cross-cutting privacy audit follows Phase 4. |
 | 13 | WHATSAPP-STYLE LIVE SEARCH — CORE V1 | PARTIAL | Pending phase verification and final audit. |
 | 14 | SEARCHABLE CONTENT | PARTIAL | Pending phase verification and final audit. |
 | 15 | PREFIX MATCHING | PARTIAL | Pending phase verification and final audit. |
@@ -54,7 +54,7 @@ Status vocabulary at final audit: COMPLETE / PARTIAL / NOT NEEDED / BLOCKED. Pen
 | 45 | IMPORT STORAGE PREFLIGHT | PARTIAL | Pending phase verification and final audit. |
 | 46 | STORAGE SIZE DISPLAY | PARTIAL | Pending phase verification and final audit. |
 | 47 | FTS DATABASE OPEN BEHAVIOR | PARTIAL | Pending phase verification and final audit. |
-| 48 | ROOM SCHEMA EXPORT | PARTIAL | Pending phase verification and final audit. |
+| 48 | ROOM SCHEMA EXPORT | COMPLETE | Room schema export enabled with KSP location; original schema 4 and resulting schema 5 retained. Actual Room migration-open regression passed, no destructive migration. |
 | 49 | NO CASUAL DELETE-ALL FEATURE | PARTIAL | Pending phase verification and final audit. |
 | 50 | NO "DELETE COLLECTION + CONTENT" MAGIC | PARTIAL | Pending phase verification and final audit. |
 | 51 | SECURITY POSITIONING | PARTIAL | Pending phase verification and final audit. |

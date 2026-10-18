@@ -1,6 +1,9 @@
 package com.example.ui.screens
 
 import androidx.compose.foundation.background
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -23,11 +26,12 @@ import com.example.data.ItemWithCollections
 import com.example.ui.MainViewModel
 import com.example.ui.components.ItemCard
 import com.example.ui.components.TypeFilterChipStrip
+import com.example.ui.components.SelectionActions
 import com.example.ui.components.getKindColor
 import com.example.ui.components.getKindIcon
 import com.personallibrary.core.model.ItemKind
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun SearchScreen(
     viewModel: MainViewModel,
@@ -41,6 +45,10 @@ fun SearchScreen(
     val filteredItems by viewModel.localSearchResults.collectAsState()
     val collections by viewModel.collections.collectAsState()
     val selectedKind by viewModel.selectedKind.collectAsState()
+    val isBatchMode by viewModel.isBatchMode.collectAsState()
+    val selectedItemIds by viewModel.selectedItemIds.collectAsState()
+    val visibleCount = if (aiResults.isNotEmpty()) aiResults.size else if (searchQuery.isNotBlank()) filteredItems.size else 0
+    BackHandler(enabled = isBatchMode) { viewModel.clearSelection() }
     val snackbarHost = remember { SnackbarHostState() }
     LaunchedEffect(viewModel) {
         viewModel.movedToTrash.collect { ids ->
@@ -50,6 +58,9 @@ fun SearchScreen(
             }
         }
     }
+    LaunchedEffect(viewModel, snackbarHost) {
+        viewModel.libraryMessages.collect { snackbarHost.showSnackbar(it, withDismissAction = true) }
+    }
 
     Scaffold(
         modifier = modifier.fillMaxSize(),
@@ -58,10 +69,16 @@ fun SearchScreen(
             TopAppBar(
                 title = {
                     Text(
-                        text = "Search Library",
+                        text = if (isBatchMode) "${selectedItemIds.size} selected" else "Search Library",
                         style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.Bold
                     )
+                },
+                actions = {
+                    if (isBatchMode) SelectionActions(viewModel, visibleCount, {
+                        if (aiResults.isNotEmpty()) aiResults.map { it.item.item.id }
+                        else if (searchQuery.isNotBlank()) filteredItems.map { it.item.id } else emptyList()
+                    }, selectedItemIds)
                 }
             )
         }
@@ -180,10 +197,21 @@ fun SearchScreen(
                         Card(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clickable { onOpenItemDetail(res.item) },
-                            shape = RoundedCornerShape(12.dp)
+                                .combinedClickable(
+                                    onClick = {
+                                        if (isBatchMode) viewModel.toggleSelection(item.id) else onOpenItemDetail(res.item)
+                                    },
+                                    onLongClick = { viewModel.toggleSelection(item.id) }
+                                ),
+                            shape = RoundedCornerShape(12.dp),
+                            colors = CardDefaults.cardColors(containerColor = if (item.id in selectedItemIds)
+                                MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceVariant)
                         ) {
                             Column(modifier = Modifier.padding(14.dp)) {
+                                if (isBatchMode) Checkbox(
+                                    checked = item.id in selectedItemIds,
+                                    onCheckedChange = { viewModel.toggleSelection(item.id) }
+                                )
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     verticalAlignment = Alignment.CenterVertically,
@@ -258,6 +286,9 @@ fun SearchScreen(
                             onClick = { onOpenItemDetail(itemWithCols) },
                             onFavoriteToggle = { viewModel.toggleFavorite(itemWithCols.item.id) },
                               onDelete = { viewModel.moveToTrash(itemWithCols.item.id) },
+                              isSelectMode = isBatchMode,
+                              isSelected = itemWithCols.item.id in selectedItemIds,
+                              onSelectToggle = { viewModel.toggleSelection(itemWithCols.item.id) },
                               matchingSnippet = viewModel.buildMatchSnippet(itemWithCols.item, searchQuery)
                         )
                     }

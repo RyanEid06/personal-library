@@ -8,6 +8,7 @@ import androidx.work.testing.TestListenableWorkerBuilder
 import com.example.data.AnalysisJobEntity
 import com.example.data.LibraryRepository
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.json.*
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.Before
@@ -23,6 +24,75 @@ class AiQueuePrivacyTest {
         context.getSharedPreferences("personal_library_settings", 0).edit().clear().commit()
         androidx.work.testing.WorkManagerTestInitHelper.initializeTestWorkManager(context,
             androidx.work.Configuration.Builder().setExecutor(androidx.work.testing.SynchronousExecutor()).build())
+    }
+
+    @Test fun metadataOnlyTitleEditEmbedsCachedTextWithoutAnalyzingOrReadingPdfAgain() = metadataOnlyRoundTrip(false)
+    @Test fun metadataOnlyRetryAndRepeatedRenamePreserveCachedPartialCoverage() = metadataOnlyRoundTrip(true)
+
+    private fun metadataOnlyRoundTrip(partial: Boolean) = runBlocking {
+        val repository = LibraryRepository(context)
+        val item = repository.captureStream("unreadable synthetic pdf bytes".byteInputStream(), "cached.pdf", "application/pdf")
+        repository.dao.updateItem(item.copy(title = "oldtitleword", extractedText = "cached OCR text", localIndexCoverage = "COMPLETE", aiDescription = "cached description", aiConcepts = "cached concept", aiStatus = if (partial) "PARTIAL" else "READY"))
+        context.getSharedPreferences("personal_library_settings", 0).edit().putBoolean("ai_paused", true).commit()
+        repository.editItem(item.id, "newtitleword", item.content)
+        if (partial) {
+            assertTrue(repository.dao.getSearchDocumentsForItem(item.id).all { it.coverage == "PARTIAL" })
+            // A failed embedding attempt replaces aiStatus, but must not erase cached analysis coverage.
+            repository.dao.updateAiStatus(item.id, "QUEUED")
+            repository.editItem(item.id, "newtitleword2", item.content)
+            assertTrue(repository.dao.getSearchDocumentsForItem(item.id).all { it.coverage == "PARTIAL" })
+        }
+        val edited = repository.dao.getItemById(item.id)!!
+        assertEquals(item.localIndexVersion + if (partial) 2 else 1, edited.localIndexVersion)
+        assertTrue(repository.dao.getAnalysisJob(item.id)!!.metadataOnly)
+        val worker = TestListenableWorkerBuilder<DurableAiWorker>(context,
+            inputData = workDataOf("item_id" to item.id, "content_version" to edited.localIndexVersion)).build()
+        assertEquals(ListenableWorker.Result.success(), worker.doWork())
+        assertTrue(repository.dao.getAnalysisJob(item.id)!!.metadataOnly)
+        com.example.ai.AiGateway(context).identityManager.clearPairing()
+        context.getSharedPreferences("personal_library_settings", 0).edit().putBoolean("ai_paused", false).commit()
+        assertEquals(ListenableWorker.Result.failure(), worker.doWork())
+        assertTrue(repository.dao.getAnalysisJob(item.id)!!.metadataOnly)
+        val requests = java.util.Collections.synchronizedList(mutableListOf<String>())
+        val server = com.sun.net.httpserver.HttpServer.create(java.net.InetSocketAddress("127.0.0.1", 0), 0)
+        server.createContext("/") { exchange ->
+            val payload = exchange.requestBody.bufferedReader().readText()
+            requests.add(exchange.requestURI.path)
+            if (!exchange.requestURI.path.endsWith("/embed")) {
+                exchange.sendResponseHeaders(400, 0)
+                exchange.responseBody.close()
+                return@createContext
+            }
+            val count = kotlinx.serialization.json.Json.parseToJsonElement(payload).jsonObject.getValue("texts").jsonArray.size
+            val vector = List(768) { "0.1" }.joinToString(",", "[", "]")
+            val response = "{\"dimension\":768,\"embeddings\":[" + List(count) { vector }.joinToString(",") + "]}"
+            exchange.responseHeaders.add("Content-Type", "application/json")
+            val bytes = response.toByteArray()
+            exchange.sendResponseHeaders(200, bytes.size.toLong())
+            exchange.responseBody.use { it.write(bytes) }
+        }
+        server.start()
+        try {
+            com.example.ai.AiGateway(context).apply {
+                backendBaseUrl = "http://127.0.0.1:${server.address.port}"
+                identityManager.savePairing("synthetic-credential", "synthetic-token", 3600)
+            }
+            context.getSharedPreferences("personal_library_settings", 0).edit().putBoolean("ai_paused", false).commit()
+            assertEquals(ListenableWorker.Result.success(), worker.doWork())
+            assertTrue(requests.isNotEmpty())
+            assertTrue(requests.all { it.endsWith("/embed") })
+            assertEquals("cached OCR text", repository.dao.getItemById(item.id)!!.extractedText)
+            val docs = repository.dao.getSearchDocumentsForItem(item.id)
+            assertTrue(docs.any { it.textContent.startsWith("newtitleword") && it.embedding != null })
+            assertTrue(docs.none { "oldtitleword" in it.textContent })
+            assertTrue(repository.dao.getAnalysisJob(item.id)!!.metadataOnly)
+            if (partial) assertEquals("PARTIAL", repository.dao.getItemById(item.id)!!.aiStatus)
+            assertFalse(repository.publishAiResult(item.id, item.localIndexVersion, "stale", "stale", "READY", emptyList(), 1))
+        } finally {
+            server.stop(0)
+            context.getSharedPreferences("ai_gateway_prefs", 0).edit().clear().commit()
+            context.getSharedPreferences("device_identity_prefs", 0).edit().clear().commit()
+        }
     }
 
     @Test fun automaticRecoveryPreservesExistingWorkAndItsRetryBudget() = runBlocking {

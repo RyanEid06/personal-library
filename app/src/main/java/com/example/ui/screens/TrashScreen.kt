@@ -30,9 +30,27 @@ fun TrashScreen(
     modifier: Modifier = Modifier
 ) {
     val trashItems by viewModel.trashItems.collectAsState()
+    val snackbarHost = remember { SnackbarHostState() }
+    LaunchedEffect(viewModel) {
+        viewModel.libraryMessages.collect { snackbarHost.showSnackbar(it, withDismissAction = true) }
+    }
     var showEmptyTrashConfirm by remember { mutableStateOf(false) }
+    var showRestoreAllConfirm by remember { mutableStateOf(false) }
     var pendingPermanentDeleteId by remember { mutableStateOf<String?>(null) }
     val dateFormatter = remember { SimpleDateFormat("MMM d, yyyy", Locale.getDefault()) }
+
+    if (showRestoreAllConfirm) {
+        AlertDialog(
+            onDismissRequest = { showRestoreAllConfirm = false },
+            title = { Text("Restore All?") },
+            text = { Text("Restore all ${trashItems.size} items to your active library with their collection memberships and eligible reminders?") },
+            confirmButton = {
+                TextButton(onClick = { viewModel.restoreAllTrash(); showRestoreAllConfirm = false },
+                    modifier = Modifier.testTag("confirm_restore_all_button")) { Text("Restore All") }
+            },
+            dismissButton = { TextButton(onClick = { showRestoreAllConfirm = false }) { Text("Cancel") } }
+        )
+    }
 
     pendingPermanentDeleteId?.let { itemId ->
         AlertDialog(
@@ -80,6 +98,7 @@ fun TrashScreen(
 
     Scaffold(
         modifier = modifier.fillMaxSize(),
+        snackbarHost = { SnackbarHost(snackbarHost) },
         topBar = {
             TopAppBar(
                 title = {
@@ -91,6 +110,9 @@ fun TrashScreen(
                 },
                 actions = {
                     if (trashItems.isNotEmpty()) {
+                        TextButton(onClick = { showRestoreAllConfirm = true }, modifier = Modifier.testTag("restore_all_button")) {
+                            Text("Restore All")
+                        }
                         TextButton(
                             onClick = { showEmptyTrashConfirm = true },
                             modifier = Modifier.testTag("empty_trash_button")

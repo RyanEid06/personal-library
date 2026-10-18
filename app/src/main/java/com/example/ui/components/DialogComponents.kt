@@ -61,7 +61,8 @@ fun ItemDetailsDialog(
     onSetReminder: (Long?, Boolean, Boolean, String?) -> Unit,
     aiExcluded: Boolean = false,
     onAiExcludedChange: (Boolean) -> Unit = {},
-    onRetryAi: () -> Unit = {}
+    onRetryAi: () -> Unit = {},
+    onEdit: (() -> Unit)? = null
 ) {
     val context = LocalContext.current
     val item = itemWithCols.item
@@ -160,6 +161,11 @@ fun ItemDetailsDialog(
                 }
 
                 Row {
+                    onEdit?.let { edit ->
+                        IconButton(onClick = edit, modifier = Modifier.testTag("edit_item_button")) {
+                            Icon(Icons.Filled.Edit, contentDescription = "Edit Item")
+                        }
+                    }
                     IconButton(onClick = onFavoriteToggle) {
                         Icon(
                             if (item.isFavorite) Icons.Filled.Star else Icons.Outlined.Star,
@@ -656,11 +662,24 @@ fun SharePreviewDialog(
     payload: SharePayload,
     collections: List<CollectionEntity>,
     onDismiss: () -> Unit,
-    onConfirmSave: (List<String>) -> Unit
+    onConfirmSave: (List<String>) -> Unit,
+    resolveDefaultCollectionId: (suspend () -> String)? = null
 ) {
-    val selectedCollectionIds = remember {
-        val randomLinks = collections.find { it.name.equals("Random Links", true) }
-        if (randomLinks != null) mutableStateListOf(randomLinks.id) else mutableStateListOf()
+    val selectedCollectionIds = remember(payload) { mutableStateListOf<String>() }
+    var resolvingDefault by remember(payload) { mutableStateOf(resolveDefaultCollectionId != null) }
+    var defaultError by remember(payload) { mutableStateOf<String?>(null) }
+    LaunchedEffect(payload) {
+        if (resolveDefaultCollectionId != null) {
+            try {
+                selectedCollectionIds.add(resolveDefaultCollectionId())
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                defaultError = "Could not prepare the default collection. Choose a collection or save as Unfiled."
+            } finally {
+                resolvingDefault = false
+            }
+        }
     }
 
     Dialog(onDismissRequest = onDismiss) {
@@ -722,18 +741,22 @@ fun SharePreviewDialog(
                 Spacer(modifier = Modifier.height(14.dp))
 
                 Text("Target Collections:", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
+                defaultError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                 Spacer(modifier = Modifier.height(4.dp))
 
                 for (col in collections) {
                     Row(
                         modifier = Modifier.fillMaxWidth().clickable {
-                            if (selectedCollectionIds.contains(col.id)) selectedCollectionIds.remove(col.id)
-                            else selectedCollectionIds.add(col.id)
+                            if (!resolvingDefault) {
+                                if (selectedCollectionIds.contains(col.id)) selectedCollectionIds.remove(col.id)
+                                else selectedCollectionIds.add(col.id)
+                            }
                         },
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Checkbox(
                             checked = selectedCollectionIds.contains(col.id),
+                            enabled = !resolvingDefault,
                             onCheckedChange = { checked ->
                                 if (checked) selectedCollectionIds.add(col.id) else selectedCollectionIds.remove(col.id)
                             }
@@ -753,6 +776,7 @@ fun SharePreviewDialog(
                     Spacer(modifier = Modifier.width(8.dp))
                     Button(
                         onClick = { onConfirmSave(selectedCollectionIds.toList()) },
+                        enabled = !resolvingDefault,
                         modifier = Modifier.testTag("save_share_button")
                     ) {
                         Text("Save to Library")

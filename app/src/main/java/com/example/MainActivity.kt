@@ -29,6 +29,7 @@ import com.example.reminder.ReminderReceiver
 import com.example.ui.MainViewModel
 import com.example.ui.components.AddContentDialog
 import com.example.ui.components.ItemDetailsDialog
+import com.example.ui.components.EditItemDialog
 import com.example.ui.components.SharePreviewDialog
 import com.example.ui.components.VoiceSearchDialog
 import com.example.ui.screens.CollectionsScreen
@@ -159,6 +160,7 @@ fun MainAppScaffold(
 ) {
     var currentDestination by remember { mutableStateOf(AppDestination.LIBRARY) }
     var activeDetailItem by remember { mutableStateOf<ItemWithCollections?>(null) }
+    var editingItem by remember { mutableStateOf<ItemWithCollections?>(null) }
     var showAddDialog by remember { mutableStateOf(false) }
     var showVoiceSearchDialog by remember { mutableStateOf(false) }
     val destinationStates = rememberSaveableStateHolder()
@@ -204,7 +206,7 @@ fun MainAppScaffold(
                 NavigationBar(modifier = Modifier.testTag("bottom_nav_bar")) {
                     NavigationBarItem(
                         selected = currentDestination == AppDestination.LIBRARY,
-                        onClick = { currentDestination = AppDestination.LIBRARY },
+                        onClick = { viewModel.clearSelection(); currentDestination = AppDestination.LIBRARY },
                         icon = {
                             Icon(
                                 if (currentDestination == AppDestination.LIBRARY) Icons.Filled.LocalLibrary else Icons.Outlined.LocalLibrary,
@@ -217,7 +219,7 @@ fun MainAppScaffold(
 
                     NavigationBarItem(
                         selected = currentDestination == AppDestination.COLLECTIONS,
-                        onClick = { currentDestination = AppDestination.COLLECTIONS },
+                        onClick = { viewModel.clearSelection(); currentDestination = AppDestination.COLLECTIONS },
                         icon = {
                             Icon(
                                 if (currentDestination == AppDestination.COLLECTIONS) Icons.Filled.Folder else Icons.Outlined.Folder,
@@ -230,7 +232,7 @@ fun MainAppScaffold(
 
                     NavigationBarItem(
                         selected = currentDestination == AppDestination.SEARCH,
-                        onClick = { currentDestination = AppDestination.SEARCH },
+                        onClick = { viewModel.clearSelection(); currentDestination = AppDestination.SEARCH },
                         icon = {
                             Icon(
                                 if (currentDestination == AppDestination.SEARCH) Icons.Filled.Search else Icons.Outlined.Search,
@@ -265,6 +267,10 @@ fun MainAppScaffold(
                         viewModel = viewModel,
                         onCollectionSelected = { colId ->
                             viewModel.selectCollection(colId)
+                            currentDestination = AppDestination.LIBRARY
+                        },
+                        onSelectCollectionItems = { colId ->
+                            viewModel.selectCollectionItems(colId)
                             currentDestination = AppDestination.LIBRARY
                         }
                     )
@@ -315,7 +321,16 @@ fun MainAppScaffold(
             },
             aiExcluded = viewModel.isItemExcludedFromAi(currentItem.item.id),
             onAiExcludedChange = { viewModel.setItemAiExcluded(currentItem.item.id, it) },
-            onRetryAi = { viewModel.retryAiAnalysis(currentItem.item.id) }
+            onRetryAi = { viewModel.retryAiAnalysis(currentItem.item.id) },
+            onEdit = { editingItem = currentItem; activeDetailItem = null }
+        )
+    }
+
+    editingItem?.let { selected ->
+        EditItemDialog(
+            item = selected.item,
+            onDismiss = { editingItem = null },
+            onSave = { title, content -> viewModel.editItem(selected.item.id, title, content) }
         )
     }
 
@@ -345,7 +360,8 @@ fun MainAppScaffold(
             onDismiss = { viewModel.setIncomingShare(null) },
             onConfirmSave = { targetCollectionId ->
                 viewModel.confirmShare(targetCollectionId)
-            }
+            },
+            resolveDefaultCollectionId = { viewModel.getOrCreateRandomLinksCollection().id }
         )
     }
 

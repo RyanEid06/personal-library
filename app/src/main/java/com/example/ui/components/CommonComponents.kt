@@ -6,6 +6,8 @@ import android.net.Uri
 import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -24,6 +26,8 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -102,6 +106,7 @@ fun getKindColor(kindStr: String): Color {
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun ItemCard(
     itemWithCols: ItemWithCollections,
@@ -128,9 +133,12 @@ fun ItemCard(
         modifier = modifier
             .fillMaxWidth()
             .testTag("item_card_${item.id}")
-            .clickable {
-                if (isSelectMode) onSelectToggle() else onClick()
-            },
+            .semantics { selected = isSelected }
+            .combinedClickable(
+                onClick = { if (isSelectMode) onSelectToggle() else onClick() },
+                onLongClickLabel = "Select item",
+                onLongClick = onSelectToggle
+            ),
         colors = CardDefaults.cardColors(
             containerColor = if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface
         ),
@@ -152,7 +160,7 @@ fun ItemCard(
                         Checkbox(
                             checked = isSelected,
                             onCheckedChange = { onSelectToggle() },
-                            modifier = Modifier.size(24.dp).padding(end = 8.dp)
+                            modifier = Modifier.size(48.dp)
                         )
                     }
 
@@ -211,7 +219,8 @@ fun ItemCard(
                     }
                     IconButton(
                         onClick = onFavoriteToggle,
-                        modifier = Modifier.size(32.dp).testTag("fav_button_${item.id}")
+                        enabled = !isSelectMode,
+                        modifier = Modifier.size(48.dp).testTag("fav_button_${item.id}")
                     ) {
                         Icon(
                             imageVector = if (item.isFavorite) Icons.Filled.Star else Icons.Outlined.Star,
@@ -328,7 +337,8 @@ fun ItemCard(
                 Row {
                     IconButton(
                         onClick = { shareItemEntity(context, item, blobFile) },
-                        modifier = Modifier.size(28.dp).testTag("share_btn_${item.id}")
+                        enabled = !isSelectMode,
+                        modifier = Modifier.size(48.dp).testTag("share_btn_${item.id}")
                     ) {
                         Icon(
                             Icons.Outlined.Share,
@@ -339,7 +349,8 @@ fun ItemCard(
                     }
                     IconButton(
                         onClick = onDelete,
-                        modifier = Modifier.size(28.dp).testTag("trash_btn_${item.id}")
+                        enabled = !isSelectMode,
+                        modifier = Modifier.size(48.dp).testTag("trash_btn_${item.id}")
                     ) {
                         Icon(
                             Icons.Outlined.Delete,
@@ -354,6 +365,7 @@ fun ItemCard(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun ItemGridCard(
     itemWithCols: ItemWithCollections,
@@ -361,7 +373,11 @@ fun ItemGridCard(
     onClick: () -> Unit,
     onFavoriteToggle: () -> Unit,
     onDelete: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    isSelectMode: Boolean = false,
+    isSelected: Boolean = false,
+    onSelectToggle: () -> Unit = {},
+    matchingSnippet: String? = null
 ) {
     val item = itemWithCols.item
     val kindColor = getKindColor(item.kind)
@@ -372,13 +388,21 @@ fun ItemGridCard(
     Card(
         modifier = modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
+            .semantics { selected = isSelected }
+            .combinedClickable(
+                onClick = { if (isSelectMode) onSelectToggle() else onClick() },
+                onLongClickLabel = "Select item",
+                onLongClick = onSelectToggle
+            )
             .testTag("item_grid_card_${item.id}"),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        colors = CardDefaults.cardColors(containerColor = if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface),
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
         shape = RoundedCornerShape(12.dp)
     ) {
         Column(modifier = Modifier.padding(10.dp)) {
+            if (isSelectMode) {
+                Checkbox(checked = isSelected, onCheckedChange = { onSelectToggle() }, modifier = Modifier.size(48.dp))
+            }
             // Visual header or icon
             if (blobFile != null && (item.kind == "PHOTO" || item.kind == "STICKER")) {
                 AsyncImage(
@@ -412,7 +436,10 @@ fun ItemGridCard(
                 overflow = TextOverflow.Ellipsis
             )
 
-            if (item.content.isNotBlank() && item.kind != "PHOTO" && item.kind != "STICKER") {
+            if (!matchingSnippet.isNullOrBlank()) {
+                Text(matchingSnippet, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.testTag("grid_snippet_${item.id}"))
+            } else if (item.content.isNotBlank() && item.kind != "PHOTO" && item.kind != "STICKER") {
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
                     text = item.content,
@@ -437,16 +464,25 @@ fun ItemGridCard(
                     fontWeight = FontWeight.Bold
                 )
 
+                if (item.reminderTime != null) {
+                    Icon(Icons.Filled.Notifications, contentDescription = "Reminder set", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+                }
                 IconButton(
                     onClick = onFavoriteToggle,
-                    modifier = Modifier.size(24.dp)
+                    enabled = !isSelectMode,
+                    modifier = Modifier.size(48.dp).testTag("fav_button_${item.id}")
                 ) {
                     Icon(
                         imageVector = if (item.isFavorite) Icons.Filled.Star else Icons.Outlined.Star,
-                        contentDescription = "Favorite",
+                        contentDescription = if (item.isFavorite) "Favorited" else "Favorite",
                         tint = if (item.isFavorite) Color(0xFFF59E0B) else MaterialTheme.colorScheme.outline,
                         modifier = Modifier.size(16.dp)
                     )
+                }
+            }
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                IconButton(onClick = onDelete, enabled = !isSelectMode, modifier = Modifier.size(48.dp).testTag("trash_btn_${item.id}")) {
+                    Icon(Icons.Outlined.Delete, contentDescription = "Move to Trash", tint = MaterialTheme.colorScheme.outline)
                 }
             }
         }
@@ -489,8 +525,18 @@ fun shareItemEntity(context: Context, item: ItemEntity, file: File?) {
 fun openItemEntityExternally(context: Context, item: ItemEntity, file: File?) {
     try {
         if (item.kind == "LINK") {
-            val url = if (item.content.startsWith("http")) item.content.lines().first() else "https://${item.content.lines().first()}"
-            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
+            val url = item.content.lineSequence().first().trim()
+            val parsed = Uri.parse(url)
+            val scheme = parsed.scheme?.lowercase(Locale.ROOT)
+            val uri = when {
+                scheme == null -> Uri.parse("https://$url") // Preserve opening of older schemeless saved links.
+                scheme in setOf("http", "https", "mailto", "tel", "sms", "geo", "ftp") -> parsed
+                else -> {
+                    Toast.makeText(context, "This link scheme cannot be opened", Toast.LENGTH_SHORT).show()
+                    return
+                }
+            }
+            val intent = Intent(Intent.ACTION_VIEW, uri)
             context.startActivity(intent)
             return
         }

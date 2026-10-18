@@ -35,6 +35,7 @@ import java.time.Instant
 import java.util.Calendar
 import java.util.Date
 import java.util.Locale
+import java.util.concurrent.atomic.AtomicLong
 
 data class SemanticSearchResult(
     val item: ItemWithCollections,
@@ -55,6 +56,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val trashEvents = Channel<List<String>>(Channel.UNLIMITED)
     val movedToTrash = trashEvents.receiveAsFlow()
+    private val libraryMessageEvents = Channel<String>(Channel.BUFFERED)
+    val libraryMessages = libraryMessageEvents.receiveAsFlow()
 
     val repository = LibraryRepository(application)
     val appLockManager = AppLockManager(application)
@@ -115,6 +118,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // Filtered search results
     private val _localSearchResults = MutableStateFlow<List<ItemWithCollections>>(emptyList())
     val localSearchResults: StateFlow<List<ItemWithCollections>> = _localSearchResults.asStateFlow()
+    private val resultGeneration = AtomicLong()
+    private var filteredResultsJob: Job? = null
+    private val _resultsReady = MutableStateFlow(false)
+    val resultsReady = _resultsReady.asStateFlow()
+    private val _selectingVisible = MutableStateFlow(false)
+    val selectingVisible = _selectingVisible.asStateFlow()
 
     // Grouped library sections
     private val _groupedSections = MutableStateFlow<List<GroupedLibrarySection>>(emptyList())
@@ -135,6 +144,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _isBatchMode = MutableStateFlow(false)
     val isBatchMode: StateFlow<Boolean> = _isBatchMode.asStateFlow()
+    private val selectionGeneration = AtomicLong()
 
     private val _isBackendPaired = MutableStateFlow(aiGateway.identityManager.isPaired)
     val isBackendPaired: StateFlow<Boolean> = _isBackendPaired.asStateFlow()
@@ -201,22 +211,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun refreshFilteredResults() {
-        viewModelScope.launch(Dispatchers.IO) {
-            val query = _searchQuery.value.trim()
+        val generation = resultGeneration.incrementAndGet()
+        _resultsReady.value = false
+        filteredResultsJob?.cancel()
+        // Capture the entire filter context before the first suspension.
+        val query = _searchQuery.value.trim()
+        val sourceItems = _items.value
+        val kind = _selectedKind.value
+        val colId = _selectedCollectionId.value
+        val dateF = _dateFilter.value
+        val basis = _dateBasis.value
+        val sort = _sortOrder.value
+        val customStart = _customDateStart.value
+        val customEnd = _customDateEnd.value
+        val grouping = _dateGrouping.value
+        filteredResultsJob = viewModelScope.launch(Dispatchers.IO) {
             val rawList = if (query.isBlank()) {
-                _items.value
+                sourceItems
             } else {
                 repository.searchWithCollections(query)
             }
-
-            val kind = _selectedKind.value
-            val colId = _selectedCollectionId.value
-            val dateF = _dateFilter.value
-            val basis = _dateBasis.value
-            val sort = _sortOrder.value
-            val customStart = _customDateStart.value
-            val customEnd = _customDateEnd.value
-            val grouping = _dateGrouping.value
 
             val calendar = Calendar.getInstance()
             val currentYear = calendar.get(Calendar.YEAR)
@@ -281,11 +295,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 .toList()
 
-            _localSearchResults.value = filtered
-
             // Build grouped sections
-            if (grouping == DateGrouping.NONE) {
-                _groupedSections.value = listOf(GroupedLibrarySection("", filtered))
+            val sections = if (grouping == DateGrouping.NONE) {
+                listOf(GroupedLibrarySection("", filtered))
             } else {
                 val dayFormat = SimpleDateFormat("EEEE, MMMM d, yyyy", Locale.getDefault())
                 val monthFormat = SimpleDateFormat("MMMM yyyy", Locale.getDefault())
@@ -307,7 +319,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     }
                     groups.getOrOrPut(key) { mutableListOf() }.add(itemWithCols)
                 }
-                _groupedSections.value = groups.map { GroupedLibrarySection(it.key, it.value) }
+                groups.map { GroupedLibrarySection(it.key, it.value) }
+            }
+            withContext(Dispatchers.Main.immediate) {
+                if (generation == resultGeneration.get()) {
+                    _localSearchResults.value = filtered
+                    _groupedSections.value = sections
+                    _resultsReady.value = true
+                }
             }
         }
     }
@@ -610,18 +629,74 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun createCollection(name: String, icon: String, color: String) {
-        viewModelScope.launch(Dispatchers.IO) {
-            repository.createCollection(name, icon, color)
+    /** Return a safe validation message while leaving the editor open on failure. */
+    suspend fun saveCollection(collectionId: String?, name: String, icon: String, color: String): String? =
+        withContext(Dispatchers.IO) {
+            try {
+                if (collectionId == null) repository.createCollection(name, icon, color)
+                else repository.editCollection(collectionId, name, icon, color)
+                null
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (invalid: IllegalArgumentException) {
+                invalid.message ?: "Check the collection name."
+            } catch (_: Exception) {
+                "Could not save the collection. Try again."
+            }
+        }
+
+    suspend fun editItem(itemId: String, title: String, content: String): String? = withContext(Dispatchers.IO) {
+        try {
+            repository.editItem(itemId, title, content)
+            null
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (invalid: IllegalArgumentException) {
+            invalid.message ?: "Check the edited fields."
+        } catch (_: Exception) {
+            "Could not save the item. Try again."
         }
     }
 
+    suspend fun getOrCreateRandomLinksCollection(): CollectionEntity = repository.getOrCreateRandomLinksCollection()
+
+    fun restoreAllTrash() {
+        val ids = _trashItems.value.map { it.id }
+        viewModelScope.launch(Dispatchers.IO) {
+            try { repository.restoreFromTrash(ids) }
+            catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { libraryMessageEvents.send("Could not restore all items. Try again.") }
+        }
+    }
+
+    suspend fun changeSelectedCollections(itemIds: Set<String>, collectionIds: Set<String>, add: Boolean): String? =
+        withContext(Dispatchers.IO) {
+            try {
+                repository.changeItemCollections(itemIds, collectionIds, add)
+                null
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (invalid: IllegalArgumentException) {
+                invalid.message ?: "Check the selected collections."
+            } catch (_: Exception) {
+                "Could not update collections. Try again."
+            }
+        }
+
     fun deleteCollection(collectionId: String) {
         viewModelScope.launch(Dispatchers.IO) {
-            repository.deleteCollection(collectionId)
-            if (_selectedCollectionId.value == collectionId) {
-                _selectedCollectionId.value = null
-                refreshFilteredResults()
+            try {
+                repository.deleteCollection(collectionId)
+                withContext(Dispatchers.Main.immediate) {
+                    if (_selectedCollectionId.value == collectionId) {
+                        _selectedCollectionId.value = null
+                        refreshFilteredResults()
+                    }
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                libraryMessageEvents.send("Could not delete the collection. Saved items remain in Memora.")
             }
         }
     }
@@ -701,13 +776,45 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun toggleSelection(itemId: String) {
+        if (!_resultsReady.value || _selectingVisible.value) return
+        selectionGeneration.incrementAndGet()
         val current = _selectedItemIds.value.toMutableSet()
         if (current.contains(itemId)) current.remove(itemId) else current.add(itemId)
         _selectedItemIds.value = current
-        _isBatchMode.value = current.isNotEmpty()
+        _isBatchMode.value = true
+    }
+
+    fun beginSelection() {
+        selectionGeneration.incrementAndGet()
+        _isBatchMode.value = true
+    }
+
+    fun selectCollectionItems(collectionId: String?) {
+        clearSelection()
+        _localSearchResults.value = emptyList()
+        _groupedSections.value = emptyList()
+        selectCollection(collectionId)
+        beginSelection()
+    }
+
+    /** The caller supplies exactly the rows currently rendered by this screen. */
+    fun selectAllVisible(visibleItemIds: () -> Collection<String>) {
+        if (!_resultsReady.value || _selectingVisible.value) return
+        val generation = resultGeneration.get()
+        val selection = selectionGeneration.get()
+        _selectingVisible.value = true
+        viewModelScope.launch {
+            try {
+                val ids = withContext(Dispatchers.Default) { visibleItemIds().toSet() }
+                if (generation == resultGeneration.get() && selection == selectionGeneration.get() && _resultsReady.value && _isBatchMode.value) {
+                    _selectedItemIds.value = ids
+                }
+            } finally { _selectingVisible.value = false }
+        }
     }
 
     fun clearSelection() {
+        selectionGeneration.incrementAndGet()
         _selectedItemIds.value = emptySet()
         _isBatchMode.value = false
     }
@@ -715,9 +822,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun batchMoveToTrash() {
         val ids = _selectedItemIds.value
         viewModelScope.launch(Dispatchers.IO) {
-            val affected = repository.moveToTrash(ids)
-            clearSelection()
-            if (affected.isNotEmpty()) trashEvents.send(affected)
+            try {
+                val affected = repository.moveToTrash(ids)
+                clearSelection()
+                if (affected.isNotEmpty()) trashEvents.send(affected)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                libraryMessageEvents.send("Could not move the selected items to Trash. Try again.")
+            }
         }
     }
 

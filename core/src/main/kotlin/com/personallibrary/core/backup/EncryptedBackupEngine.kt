@@ -67,7 +67,8 @@ data class BackupCollectionRecord(
     val name: String,
     val iconName: String,
     val colorHex: String,
-    val createdAt: Long
+    val createdAt: Long,
+    val appRole: String? = null
 )
 
 @Serializable

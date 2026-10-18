@@ -5,6 +5,7 @@ import android.net.Uri
 import androidx.room.Room
 import androidx.room.withTransaction
 import com.example.indexing.LocalIndexer
+import com.example.indexing.DurableAiWorker
 import com.example.reminder.ReminderScheduler
 import com.personallibrary.core.backup.BackupAssetRecord
 import com.personallibrary.core.backup.BackupCollectionRecord
@@ -32,10 +33,12 @@ import java.io.IOException
 import java.io.File
 import java.io.InputStream
 import java.util.UUID
+import java.net.URI
 
 class LibraryRepository(private val context: Context, database: LibraryRoomDatabase? = null) {
     companion object {
         private val assetMutations = Mutex()
+        private val reservedCollectionNames = listOf("Favorites", "Unfiled", "Reminders", "Due Reminders", "Trash", "All Items")
     }
 
     private suspend fun removeUnreferencedBlobs(hashes: Collection<String>) = withContext(NonCancellable + Dispatchers.IO) {
@@ -51,7 +54,7 @@ class LibraryRepository(private val context: Context, database: LibraryRoomDatab
         LibraryRoomDatabase::class.java,
         "personal_library_room.db"
     )
-        .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+        .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
         .addCallback(DATABASE_CALLBACK)
         .build()
 
@@ -94,7 +97,7 @@ class LibraryRepository(private val context: Context, database: LibraryRoomDatab
         dao.deleteSearchDocumentsForItem(itemId)
         if (documents.isNotEmpty()) dao.insertSearchDocuments(documents)
         dao.insertOrUpdateAnalysisJob(AnalysisJobEntity(itemId, expectedVersion, expectedVersion,
-            status = "COMPLETED", attempts = attempts))
+            status = "COMPLETED", attempts = attempts, metadataOnly = dao.getAnalysisJob(itemId)?.metadataOnly == true))
         true
     }
 
@@ -255,6 +258,68 @@ class LibraryRepository(private val context: Context, database: LibraryRoomDatab
         dao.updateItem(item)
     }
 
+    /** Edits owner fields only; original bytes and source metadata remain authoritative. */
+    suspend fun editItem(id: String, title: String, content: String): ItemEntity = withContext(Dispatchers.IO) {
+        val cleanTitle = title.trim()
+        require(cleanTitle.isNotBlank()) { "Enter a title" }
+        var bodyChanged = false
+        var metadataChanged = false
+        val updated = db.withTransaction {
+            val original = requireNotNull(dao.getItemById(id)) { "Item no longer exists" }
+            require(!original.isTrash) { "Restore the item before editing it" }
+            val editableBody = original.contentHash == null && original.kind in setOf(ItemKind.TEXT.name, ItemKind.LINK.name)
+            require(editableBody || content == original.content) { "Only the display title can be edited for this file" }
+            val provenanceMarker = "\n\nWhatsApp provenance\n"
+            if (original.id.startsWith("wa_") || original.content.contains(provenanceMarker)) {
+                val marker = original.content.lastIndexOf(provenanceMarker)
+                if (marker >= 0) require(content.endsWith(original.content.substring(marker))) { "Original WhatsApp provenance must be preserved" }
+            }
+            if (original.kind == ItemKind.LINK.name && content != original.content) {
+                // Imported messages may contain the link within their text, unlike native link records.
+                val ownerBody = content.substringBefore(provenanceMarker)
+                val candidate = if (original.content.contains(provenanceMarker)) {
+                    Regex("[A-Za-z][A-Za-z0-9+.-]*:[^\\s]+").find(ownerBody)?.value
+                } else ownerBody.lineSequence().firstOrNull()?.trim()
+                require(!candidate.isNullOrBlank()) { "Enter a valid URL" }
+                val uri = try { URI(candidate) } catch (_: Exception) { null }
+                require(uri != null && uri.isAbsolute && uri.scheme.lowercase() in setOf("http", "https", "ftp", "mailto", "tel", "sms", "geo") && !uri.rawSchemeSpecificPart.isNullOrBlank() &&
+                    (uri.scheme.lowercase() !in setOf("http", "https", "ftp") || !uri.host.isNullOrBlank())) { "Enter a valid URL" }
+            }
+            bodyChanged = content != original.content
+            metadataChanged = !bodyChanged && cleanTitle != original.title
+            val edited = if (bodyChanged) original.copy(title = cleanTitle, content = content,
+                extractedText = null, localIndexCoverage = "PENDING", localIndexVersion = original.localIndexVersion + 1,
+                aiDescription = null, aiConcepts = null, aiStatus = "PENDING")
+            else original.copy(title = cleanTitle, localIndexVersion = original.localIndexVersion + if (metadataChanged) 1 else 0)
+            dao.updateItem(edited)
+            if (bodyChanged) {
+                dao.deleteSearchDocumentsForItem(id)
+                dao.deleteAnalysisJob(id)
+            } else if (metadataChanged) {
+                val localDocs = dao.getSearchDocumentsForItem(id)
+                val chunks = DurableAiWorker.createChunksForItem(edited, edited.aiDescription, edited.aiConcepts, localDocs)
+                val cachedCoverage = if (original.aiStatus == "PARTIAL" || original.localIndexCoverage.equals("PARTIAL", true) ||
+                    localDocs.any { it.coverage.equals("PARTIAL", true) }) "PARTIAL" else edited.localIndexCoverage
+                dao.deleteSearchDocumentsForItem(id)
+                val rebuilt = chunks.map { chunk ->
+                    SearchDocumentEntity("local_${id}_${edited.localIndexVersion}_${chunk.index}", id, chunk.index,
+                        chunk.pageNumber, chunk.text, coverage = cachedCoverage)
+                }
+                val remainingPages = localDocs.filter { local -> local.pageNumber != null &&
+                    chunks.none { it.pageNumber == local.pageNumber && it.text == local.textContent } }.map { it.copy(embedding = null) }
+                dao.insertSearchDocuments(rebuilt + remainingPages)
+                dao.deleteAnalysisJob(id)
+                val hasCachedAi = original.aiDescription != null || original.aiConcepts != null
+                dao.insertOrUpdateAnalysisJob(AnalysisJobEntity(id, edited.localIndexVersion, edited.localIndexVersion, metadataOnly = hasCachedAi))
+            }
+            dao.getReminderByItemId(id)?.let { dao.insertReminder(it.copy(title = cleanTitle)) }
+            edited
+        }
+        if (bodyChanged || metadataChanged && updated.localIndexCoverage == "PENDING") LocalIndexer(context, this@LibraryRepository).indexItem(updated)
+        else if (metadataChanged) LocalIndexer(context, this@LibraryRepository).enqueueDurableAiJob(id)
+        dao.getItemById(id) ?: updated
+    }
+
     suspend fun setFavorite(id: String, isFavorite: Boolean) = withContext(Dispatchers.IO) {
         dao.setFavorite(id, isFavorite)
     }
@@ -405,15 +470,73 @@ class LibraryRepository(private val context: Context, database: LibraryRoomDatab
     }
 
     suspend fun createCollection(name: String, iconName: String, colorHex: String): CollectionEntity = withContext(Dispatchers.IO) {
-        val id = UUID.randomUUID().toString()
-        val col = CollectionEntity(id, name, iconName, colorHex)
-        dao.insertCollection(col)
-        col
+        db.withTransaction {
+            val col = CollectionEntity(UUID.randomUUID().toString(), validatedCollectionName(name), iconName, colorHex)
+            dao.insertCollection(col)
+            col
+        }
+    }
+
+    private suspend fun validatedCollectionName(name: String, editingId: String? = null): String {
+        val trimmed = name.trim()
+        require(trimmed.isNotBlank()) { "Enter a collection name" }
+        require(reservedCollectionNames.none { it.equals(trimmed, true) }) { "This name is reserved" }
+        require(dao.getAllCollections().none { it.id != editingId && it.name.trim().equals(trimmed, true) }) { "A collection with this name already exists" }
+        return trimmed
+    }
+
+    private fun restoredCollectionName(name: String, existing: List<CollectionEntity>): String {
+        val base = name.trim().ifBlank { "Restored collection" }
+        var candidate = base
+        var suffix = 2
+        while (reservedCollectionNames.any { it.equals(candidate, true) } ||
+            existing.any { it.name.trim().equals(candidate, true) }) {
+            candidate = "$base (restored ${suffix++})"
+        }
+        return candidate
+    }
+
+    suspend fun editCollection(id: String, name: String, iconName: String, colorHex: String) = withContext(Dispatchers.IO) {
+        db.withTransaction {
+            val original = requireNotNull(dao.getAllCollections().find { it.id == id }) { "Collection no longer exists" }
+            dao.insertCollection(original.copy(name = validatedCollectionName(name, id), iconName = iconName, colorHex = colorHex))
+        }
+    }
+
+    private suspend fun randomLinksInTransaction(): CollectionEntity {
+        val all = dao.getAllCollections()
+        all.firstOrNull { it.appRole == CollectionEntity.ROLE_RANDOM_LINKS }?.let { return it }
+        // One-time compatibility adoption for installations/backups predating portable roles.
+        val legacy = all.firstOrNull { it.appRole == null && it.name.trim().equals("Random Links", true) }
+        val collection = legacy?.copy(appRole = CollectionEntity.ROLE_RANDOM_LINKS)
+            ?: CollectionEntity(UUID.randomUUID().toString(), "Random Links", "chat", "#10B981", appRole = CollectionEntity.ROLE_RANDOM_LINKS)
+        dao.insertCollection(collection)
+        return collection
+    }
+
+    suspend fun getOrCreateRandomLinksCollection(): CollectionEntity = withContext(Dispatchers.IO) {
+        db.withTransaction { randomLinksInTransaction() }
     }
 
     suspend fun deleteCollection(collectionId: String) = withContext(Dispatchers.IO) {
-        dao.removeAllItemsForCollection(collectionId)
-        dao.deleteCollection(collectionId)
+        db.withTransaction {
+            dao.removeAllItemsForCollection(collectionId)
+            dao.deleteCollection(collectionId)
+        }
+    }
+
+    suspend fun changeItemCollections(itemIds: Collection<String>, collectionIds: Collection<String>, add: Boolean) = withContext(Dispatchers.IO) {
+        db.withTransaction {
+            val ids = itemIds.distinct()
+            val collections = collectionIds.distinct()
+            require(ids.all { dao.getItemById(it)?.isTrash == false }) { "Some selected items are no longer available" }
+            val knownCollections = dao.getAllCollections().map { it.id }.toSet()
+            require(collections.all { it in knownCollections }) { "Collection no longer exists" }
+            for (id in ids) for (collection in collections) {
+                if (add) dao.insertItemCollectionCrossRef(ItemCollectionCrossRef(id, collection))
+                else dao.removeItemFromCollection(id, collection)
+            }
+        }
     }
 
     suspend fun setItemCollections(itemId: String, collectionIds: List<String>) = withContext(Dispatchers.IO) {
@@ -512,7 +635,7 @@ class LibraryRepository(private val context: Context, database: LibraryRoomDatab
                 )
             },
             collections = allCols.map {
-                BackupCollectionRecord(it.id, it.name, it.iconName, it.colorHex, it.createdAt)
+                BackupCollectionRecord(it.id, it.name, it.iconName, it.colorHex, it.createdAt, it.appRole)
             },
             memberships = memberships,
             reminders = allReminders.map {
@@ -626,11 +749,38 @@ class LibraryRepository(private val context: Context, database: LibraryRoomDatab
             db.withTransaction {
                 // Collections: insert or reuse
                 for (col in preview.manifest.collections) {
-                    val existing = dao.getAllCollections().find { it.id == col.id }
-                    val compatible = existing != null && existing.name == col.name && existing.iconName == col.iconName && existing.colorHex == col.colorHex
-                    val finalId = if (existing != null && !compatible) UUID.randomUUID().toString() else col.id
+                    val all = dao.getAllCollections()
+                    val role = col.appRole ?: if (preview.manifest.collections.none { it.appRole == CollectionEntity.ROLE_RANDOM_LINKS } &&
+                        col.name.trim().equals("Random Links", true)) CollectionEntity.ROLE_RANDOM_LINKS else null
+                    val roleOwner = role?.let { wanted -> all.firstOrNull { it.appRole == wanted } }
+                        ?: if (role == CollectionEntity.ROLE_RANDOM_LINKS) all.firstOrNull { it.appRole == null && it.name.trim().equals("Random Links", true) } else null
+                    if (roleOwner != null) {
+                        if (roleOwner.appRole == null) dao.insertCollection(roleOwner.copy(appRole = role))
+                        collectionRemap[col.id] = roleOwner.id
+                        continue
+                    }
+                    var existing = all.find { it.id == col.id }
+                    // Portable identity survives collision-safe restore names and later owner edits.
+                    // A different immutable creation timestamp or role means the ID collides with another collection.
+                    fun samePortableIdentity(candidate: CollectionEntity) = candidate.appRole == role && candidate.createdAt == col.createdAt
+                    var finalId = col.id
+                    if (existing == null || !samePortableIdentity(existing)) {
+                        val sourceIdAvailable = existing == null
+                        // Stable remapping makes a true portable-ID collision idempotent across repeated restores.
+                        // Length prefixes keep arbitrary imported identifiers and roles unambiguous.
+                        val portableRole = role?.let { "${it.length}:$it" } ?: "-1:"
+                        var salt = 0
+                        do {
+                            val identity = "memora.restore.collection.v1|${col.id.length}:${col.id}|${col.createdAt}|$portableRole|${salt++}"
+                            finalId = UUID.nameUUIDFromBytes(identity.toByteArray(Charsets.UTF_8)).toString()
+                            existing = all.find { it.id == finalId }
+                        } while (existing != null && !samePortableIdentity(existing))
+                        // A previous collision may already have been remapped even after its owner was deleted.
+                        // Use the free original ID only when no matching remapped identity was found.
+                        if (existing == null && sourceIdAvailable) finalId = col.id
+                    }
                     collectionRemap[col.id] = finalId
-                    if (!compatible) dao.insertCollection(CollectionEntity(finalId, col.name, col.iconName, col.colorHex, col.createdAt))
+                    if (existing == null) dao.insertCollection(CollectionEntity(finalId, restoredCollectionName(col.name, all), col.iconName, col.colorHex, col.createdAt, role))
                 }
 
                 for (item in preview.manifest.items) {
@@ -815,8 +965,7 @@ class LibraryRepository(private val context: Context, database: LibraryRoomDatab
                 }
                 var imported = 0
                 db.withTransaction {
-                    val randomLinks = dao.getAllCollections().find { it.name.equals("Random Links", true) }
-                        ?: CollectionEntity(UUID.randomUUID().toString(), "Random Links", "chat", "#10B981").also { dao.insertCollection(it) }
+                    val randomLinks = randomLinksInTransaction()
                     val exportId = "whatsapp_export_${export.hash}"
                     if (dao.getItemById(exportId) == null) {
                         dao.insertItem(ItemEntity(id = exportId, title = "WhatsApp export", content = "Original WhatsApp export; imported in timezone ${java.util.TimeZone.getDefault().id}",

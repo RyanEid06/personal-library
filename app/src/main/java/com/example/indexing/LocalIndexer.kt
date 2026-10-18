@@ -160,7 +160,11 @@ class LocalIndexer(
         val item = repository.dao.getItemById(itemId) ?: return@withContext
         if (item.isTrash) return@withContext
         WorkManager.getInstance(context).cancelUniqueWork("ai_job_$itemId").result.get()
-        if (item.localIndexCoverage in setOf("PENDING", "FAILED") || item.aiStatus == "PENDING") indexItem(item)
+        val job = repository.dao.getAnalysisJob(itemId)
+        if (job?.metadataOnly == true && job.expectedContentVersion == item.localIndexVersion) {
+            repository.updateAnalysisJobIfCurrent(job.copy(status = "QUEUED", attempts = 0, lastErrorClass = null, lastErrorTime = null))
+            enqueueDurableAiJob(itemId)
+        } else if (item.localIndexCoverage in setOf("PENDING", "FAILED") || item.aiStatus == "PENDING") indexItem(item)
         else queueAnalysis(item, item.localIndexVersion)
     }
 }

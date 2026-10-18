@@ -42,14 +42,17 @@ data class AssetEntity(
     val refCount: Int = 1
 )
 
-@Entity(tableName = "collections")
+@Entity(tableName = "collections", indices = [Index(value = ["appRole"], unique = true)])
 data class CollectionEntity(
     @PrimaryKey val id: String,
     val name: String,
     val iconName: String = "folder",
     val colorHex: String = "#3B82F6",
-    val createdAt: Long = System.currentTimeMillis()
-)
+    val createdAt: Long = System.currentTimeMillis(),
+    val appRole: String? = null
+) {
+    companion object { const val ROLE_RANDOM_LINKS = "RANDOM_LINKS" }
+}
 
 @Entity(
     tableName = "item_collection_cross_ref",
@@ -99,7 +102,8 @@ data class AnalysisJobEntity(
     val attempts: Int = 0,
     val lastErrorClass: String? = null,
     val lastErrorTime: Long? = null,
-    val updatedAt: Long = System.currentTimeMillis()
+    val updatedAt: Long = System.currentTimeMillis(),
+    @ColumnInfo(defaultValue = "0") val metadataOnly: Boolean = false
 )
 
 @Fts4(contentEntity = ItemEntity::class)
@@ -447,6 +451,16 @@ val MIGRATION_3_4 = object : androidx.room.migration.Migration(3, 4) {
     }
 }
 
+val MIGRATION_4_5 = object : androidx.room.migration.Migration(4, 5) {
+    override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE collections ADD COLUMN appRole TEXT")
+        // Adopt exactly one legacy default, leaving every original row and membership intact.
+        db.execSQL("UPDATE collections SET appRole = 'RANDOM_LINKS' WHERE id = (SELECT id FROM collections WHERE lower(trim(name)) = 'random links' ORDER BY createdAt, id LIMIT 1)")
+        db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_collections_appRole ON collections (appRole)")
+        db.execSQL("ALTER TABLE analysis_jobs ADD COLUMN metadataOnly INTEGER NOT NULL DEFAULT 0")
+    }
+}
+
 @Database(
     entities = [
         ItemEntity::class,
@@ -458,8 +472,8 @@ val MIGRATION_3_4 = object : androidx.room.migration.Migration(3, 4) {
         SearchDocumentEntity::class,
         AnalysisJobEntity::class
     ],
-    version = 4,
-    exportSchema = false
+    version = 5,
+    exportSchema = true
 )
 abstract class LibraryRoomDatabase : RoomDatabase() {
     abstract fun libraryDao(): LibraryDao
