@@ -1,13 +1,7 @@
 package com.example.ui.screens
 
-import androidx.compose.foundation.background
 import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -16,22 +10,18 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.example.data.ItemWithCollections
 import com.example.ui.MainViewModel
-import com.example.ui.components.ItemCard
 import com.example.ui.components.TypeFilterChipStrip
-import com.example.ui.components.SelectionActions
-import com.example.ui.components.getKindColor
-import com.example.ui.components.getKindIcon
-import com.personallibrary.core.model.ItemKind
+import com.example.ui.components.SearchSelectionActions
+import com.example.ui.components.ActiveSearchFilters
+import com.example.ui.components.SearchResultsContent
+import com.example.ui.components.hasSearchFilters
 
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SearchScreen(
     viewModel: MainViewModel,
@@ -45,9 +35,18 @@ fun SearchScreen(
     val filteredItems by viewModel.localSearchResults.collectAsState()
     val collections by viewModel.collections.collectAsState()
     val selectedKind by viewModel.selectedKind.collectAsState()
+    val allItems by viewModel.items.collectAsState()
+    val resultsReady by viewModel.resultsReady.collectAsState()
+    val localSearchError by viewModel.localSearchError.collectAsState()
+    val aiSearchError by viewModel.aiSearchError.collectAsState()
+    val selectedColId by viewModel.selectedCollectionId.collectAsState()
+    val dateFilter by viewModel.dateFilter.collectAsState()
+    val dateBasis by viewModel.dateBasis.collectAsState()
+    val customStart by viewModel.customDateStart.collectAsState()
+    val customEnd by viewModel.customDateEnd.collectAsState()
+    val filtersActive = hasSearchFilters(selectedColId, selectedKind, dateFilter)
     val isBatchMode by viewModel.isBatchMode.collectAsState()
     val selectedItemIds by viewModel.selectedItemIds.collectAsState()
-    val visibleCount = if (aiResults.isNotEmpty()) aiResults.size else if (searchQuery.isNotBlank()) filteredItems.size else 0
     BackHandler(enabled = isBatchMode) { viewModel.clearSelection() }
     val snackbarHost = remember { SnackbarHostState() }
     LaunchedEffect(viewModel) {
@@ -75,10 +74,9 @@ fun SearchScreen(
                     )
                 },
                 actions = {
-                    if (isBatchMode) SelectionActions(viewModel, visibleCount, {
-                        if (aiResults.isNotEmpty()) aiResults.map { it.item.item.id }
-                        else if (searchQuery.isNotBlank()) filteredItems.map { it.item.id } else emptyList()
-                    }, selectedItemIds)
+                    if (isBatchMode) SearchSelectionActions(
+                        viewModel, searchQuery, filteredItems, aiResults, resultsReady, localSearchError, filtersActive, selectedItemIds
+                    )
                 }
             )
         }
@@ -121,18 +119,17 @@ fun SearchScreen(
 
                 Spacer(modifier = Modifier.height(10.dp))
 
-                // Action buttons: "Ask AI"
+                TypeFilterChipStrip(
+                    selectedKind = selectedKind,
+                    onKindSelected = { viewModel.selectKind(it) }
+                )
+
+                // AI is an optional addition to offline local results.
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
+                    horizontalArrangement = Arrangement.End,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    TypeFilterChipStrip(
-                        selectedKind = selectedKind,
-                        onKindSelected = { viewModel.selectKind(it) },
-                        modifier = Modifier.weight(1f)
-                    )
-
                     Button(
                         onClick = { viewModel.triggerAiSearch(searchQuery) },
                         enabled = searchQuery.isNotBlank() && !isAiSearching,
@@ -153,177 +150,35 @@ fun SearchScreen(
                 }
             }
 
+            ActiveSearchFilters(
+                selectedColId, collections, selectedKind, dateFilter, dateBasis, customStart, customEnd,
+                onClearCollection = { viewModel.selectCollection(null) },
+                onClearKind = { viewModel.selectKind(null) },
+                onClearDate = { viewModel.setDateFilter(com.example.model.DateFilter.ALL_TIME) },
+                onClearFilters = viewModel::clearFilters
+            )
             HorizontalDivider()
 
-            // Search Results
-            LazyColumn(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .testTag("search_results_list"),
-                contentPadding = PaddingValues(16.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                // If AI Results are active
-                if (aiResults.isNotEmpty()) {
-                    item {
-                        Surface(
-                            color = MaterialTheme.colorScheme.primaryContainer,
-                            shape = RoundedCornerShape(10.dp),
-                            modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp)
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(12.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(
-                                    Icons.Filled.AutoAwesome,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text(
-                                    text = "Search matches (${aiResults.size})",
-                                    style = MaterialTheme.typography.titleSmall,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.onPrimaryContainer
-                                )
-                            }
-                        }
-                    }
-
-                    items(aiResults, key = { "ai_${it.item.item.id}" }) { res ->
-                        val item = res.item.item
-                        Card(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .combinedClickable(
-                                    onClick = {
-                                        if (isBatchMode) viewModel.toggleSelection(item.id) else onOpenItemDetail(res.item)
-                                    },
-                                    onLongClick = { viewModel.toggleSelection(item.id) }
-                                ),
-                            shape = RoundedCornerShape(12.dp),
-                            colors = CardDefaults.cardColors(containerColor = if (item.id in selectedItemIds)
-                                MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceVariant)
-                        ) {
-                            Column(modifier = Modifier.padding(14.dp)) {
-                                if (isBatchMode) Checkbox(
-                                    checked = item.id in selectedItemIds,
-                                    onCheckedChange = { viewModel.toggleSelection(item.id) }
-                                )
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.SpaceBetween
-                                ) {
-                                    Surface(
-                                        color = getKindColor(item.kind).copy(alpha = 0.15f),
-                                        shape = RoundedCornerShape(6.dp)
-                                    ) {
-                                        Text(
-                                            text = item.kind,
-                                            color = getKindColor(item.kind),
-                                            fontSize = 11.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                                        )
-                                    }
-
-                                    Surface(
-                                        color = MaterialTheme.colorScheme.tertiaryContainer,
-                                        shape = RoundedCornerShape(6.dp)
-                                    ) {
-                                        Text(
-                                            text = "${res.source}${res.pageNumber?.let { " • Page $it" } ?: ""}\n${res.explanation}",
-                                            fontSize = 11.sp,
-                                            color = MaterialTheme.colorScheme.onTertiaryContainer,
-                                            fontWeight = FontWeight.Medium,
-                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                                        )
-                                    }
-                                }
-
-                                Spacer(modifier = Modifier.height(8.dp))
-
-                                Text(
-                                    text = item.title,
-                                    style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = FontWeight.Bold
-                                )
-
-                                res.matchingSnippet?.let {
-                                    Text(it, style = MaterialTheme.typography.bodySmall, maxLines = 3)
-                                }
-
-                                if (item.content.isNotBlank()) {
-                                    Spacer(modifier = Modifier.height(4.dp))
-                                    Text(
-                                        text = item.content,
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        maxLines = 2
-                                    )
-                                }
-                            }
-                        }
-                    }
-                } else if (searchQuery.isNotBlank()) {
-                    // Local instant search results
-                    item {
-                        Text(
-                            text = "Instant Keyword Matches (${filteredItems.size})",
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.outline
-                        )
-                    }
-
-                    items(filteredItems, key = { it.item.id }) { itemWithCols ->
-                        ItemCard(
-                            itemWithCols = itemWithCols,
-                            fileResolver = { hash -> viewModel.repository.assetStore.getBlobFile(hash) },
-                            onClick = { onOpenItemDetail(itemWithCols) },
-                            onFavoriteToggle = { viewModel.toggleFavorite(itemWithCols.item.id) },
-                              onDelete = { viewModel.moveToTrash(itemWithCols.item.id) },
-                              isSelectMode = isBatchMode,
-                              isSelected = itemWithCols.item.id in selectedItemIds,
-                              onSelectToggle = { viewModel.toggleSelection(itemWithCols.item.id) },
-                              matchingSnippet = viewModel.buildMatchSnippet(itemWithCols.item, searchQuery)
-                        )
-                    }
-                } else {
-                    item {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 64.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                Icon(
-                                    Icons.Outlined.Search,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(56.dp),
-                                    tint = MaterialTheme.colorScheme.outline
-                                )
-                                Spacer(modifier = Modifier.height(12.dp))
-                                Text(
-                                    text = "Find anything in your personal archive",
-                                    style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                                Spacer(modifier = Modifier.height(6.dp))
-                                Text(
-                                    text = "Search by exact keywords, dates, OCR text, or tap 'Ask AI' for natural language retrieval.",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.outline
-                                )
-                            }
-                        }
-                    }
-                }
-            }
+            SearchResultsContent(
+                query = searchQuery,
+                localResults = filteredItems,
+                aiResults = aiResults,
+                resultsReady = resultsReady,
+                localError = localSearchError,
+                aiError = aiSearchError,
+                isAiSearching = isAiSearching,
+                libraryEmpty = allItems.isEmpty(),
+                filtersActive = filtersActive,
+                isSelectMode = isBatchMode,
+                selectedIds = selectedItemIds,
+                fileResolver = { viewModel.repository.assetStore.getBlobFile(it) },
+                snippet = viewModel::buildMatchSnippet,
+                onOpen = onOpenItemDetail,
+                onFavorite = viewModel::toggleFavorite,
+                onTrash = viewModel::moveToTrash,
+                onSelect = viewModel::toggleSelection,
+                onClearFilters = viewModel::clearFilters
+            )
         }
     }
 }

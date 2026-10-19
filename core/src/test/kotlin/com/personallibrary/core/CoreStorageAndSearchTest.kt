@@ -121,7 +121,7 @@ class ManagedAssetStoreTest {
 class SearchQueryTest {
 
     @Test fun operatorSubstringsDoNotDestroyWordsOrUnicode() {
-        assertEquals("\"CANDOR\"* \"ORGANIC\"* \"café\"* \"كيمياء\"*", SearchQuery.fts("CANDOR ORGANIC café كيمياء"))
+        assertEquals("\"CANDOR*\" \"ORGANIC*\" \"café*\" \"كيمياء*\"", SearchQuery.fts("CANDOR ORGANIC café كيمياء"))
     }
 
     @Test
@@ -129,9 +129,9 @@ class SearchQueryTest {
         val query = "chemistry: \"grades\" -midterm OR 94/100"
         val fts = SearchQuery.fts(query)
         assertNotNull(fts)
-        assertTrue(fts!!.contains("\"chemistry\"*"))
-        assertTrue(fts.contains("\"grades\"*"))
-        assertTrue(fts.contains("\"94/100\"*"))
+        assertTrue(fts!!.contains("\"chemistry*\""))
+        assertTrue(fts.contains("\"grades*\""))
+        assertTrue(fts.contains("\"94/100*\""))
         assertFalse(fts.contains("OR"))
     }
 
@@ -139,8 +139,8 @@ class SearchQueryTest {
     fun testEmojiAndNonLatinSearch() {
         val fts = SearchQuery.fts("📚 university notes")
         assertNotNull(fts)
-        assertTrue(fts!!.contains("\"📚\"*"))
-        assertTrue(fts.contains("\"university\"*"))
+        assertTrue(fts!!.contains("\"📚*\""))
+        assertTrue(fts.contains("\"university*\""))
     }
 
     @Test

@@ -72,8 +72,18 @@ object SearchQuery {
      * Returns null if no searchable tokens remain.
      */
     fun fts(raw: String): String? {
+        val tokens = tokens(raw)
+        if (tokens.isEmpty()) return null
+
+        // FTS4 recognizes a prefix inside a quoted phrase. A star outside the
+        // quotes ("bi"*) is ignored and silently becomes an exact-word query.
+        return tokens.joinToString(" ") { token -> "\"$token*\"" }
+    }
+
+    /** Search and match evidence must agree on which terms the owner entered. */
+    fun tokens(raw: String): List<String> {
         val trimmed = raw.trim()
-        if (trimmed.isBlank()) return null
+        if (trimmed.isBlank()) return emptyList()
 
         // Remove dangerous characters
         val sanitized = trimmed
@@ -88,11 +98,7 @@ object SearchQuery {
             .replace("+", " ")
             .replace(Regex("\\b(OR|AND|NOT)\\b", RegexOption.IGNORE_CASE), " ")
 
-        val tokens = sanitized.split("\\s+".toRegex()).filter { it.isNotBlank() }
-        if (tokens.isEmpty()) return null
-
-        // Format each token with prefix matching
-        return tokens.joinToString(" ") { token -> "\"$token\"*" }
+        return sanitized.split("\\s+".toRegex()).filter { it.isNotBlank() }
     }
 }
 

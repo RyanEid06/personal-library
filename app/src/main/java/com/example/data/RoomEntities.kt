@@ -341,7 +341,19 @@ interface LibraryDao {
     suspend fun rebuildFts()
 }
 
+private val LEGACY_FTS_TRIGGERS = setOf("items_fts_insert", "items_fts_bu", "items_fts_au", "items_fts_delete", "items_fts_update")
+
 val DATABASE_CALLBACK = object : androidx.room.RoomDatabase.Callback() {
+    // Match Room's contentEntity synchronization (also exported in schema 5).
+    // Older versions installed a duplicate custom set beside these triggers.
+    private val ftsTriggers = mapOf(
+        "BEFORE_UPDATE" to "BEFORE UPDATE ON `items` BEGIN DELETE FROM `items_fts` WHERE `docid`=OLD.`rowid`; END",
+        "BEFORE_DELETE" to "BEFORE DELETE ON `items` BEGIN DELETE FROM `items_fts` WHERE `docid`=OLD.`rowid`; END",
+        "AFTER_UPDATE" to "AFTER UPDATE ON `items` BEGIN INSERT INTO `items_fts`(`docid`, `title`, `content`, `originalFileName`, `extractedText`, `aiDescription`, `aiConcepts`) VALUES (NEW.`rowid`, NEW.`title`, NEW.`content`, NEW.`originalFileName`, NEW.`extractedText`, NEW.`aiDescription`, NEW.`aiConcepts`); END",
+        "AFTER_INSERT" to "AFTER INSERT ON `items` BEGIN INSERT INTO `items_fts`(`docid`, `title`, `content`, `originalFileName`, `extractedText`, `aiDescription`, `aiConcepts`) VALUES (NEW.`rowid`, NEW.`title`, NEW.`content`, NEW.`originalFileName`, NEW.`extractedText`, NEW.`aiDescription`, NEW.`aiConcepts`); END"
+    ).mapKeys { (suffix, _) -> "room_fts_content_sync_items_fts_$suffix" }
+        .mapValues { (name, body) -> "CREATE TRIGGER IF NOT EXISTS `$name` $body" }
+
     override fun onCreate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
         super.onCreate(db)
         setupFts(db)
@@ -353,38 +365,33 @@ val DATABASE_CALLBACK = object : androidx.room.RoomDatabase.Callback() {
     }
 
     private fun setupFts(db: androidx.sqlite.db.SupportSQLiteDatabase) {
-        try {
-            db.execSQL("DROP TRIGGER IF EXISTS items_fts_insert")
-            db.execSQL("DROP TRIGGER IF EXISTS items_fts_bu")
-            db.execSQL("DROP TRIGGER IF EXISTS items_fts_au")
-            db.execSQL("DROP TRIGGER IF EXISTS items_fts_delete")
-            db.execSQL("DROP TRIGGER IF EXISTS items_fts_update")
+        val installed = db.query("SELECT name, sql FROM sqlite_master WHERE type='trigger' AND tbl_name='items'").use { cursor ->
+            buildMap { while (cursor.moveToNext()) put(cursor.getString(0), cursor.getString(1)) }
+        }
+        val obsolete = LEGACY_FTS_TRIGGERS.filter { it in installed }
+        val repairs = ftsTriggers.filter { (name, sql) -> installed[name]?.let(::normalizeTriggerSql) != normalizeTriggerSql(sql) }
+        if (obsolete.isEmpty() && repairs.isEmpty()) return
 
-            db.execSQL("""
-                CREATE TRIGGER IF NOT EXISTS items_fts_insert AFTER INSERT ON items BEGIN
-                    INSERT INTO items_fts(docid, title, content, originalFileName, extractedText, aiDescription, aiConcepts)
-                    VALUES (new.rowid, new.title, new.content, new.originalFileName, new.extractedText, new.aiDescription, new.aiConcepts);
-                END;
-            """.trimIndent())
-            db.execSQL("""
-                CREATE TRIGGER IF NOT EXISTS items_fts_bu BEFORE UPDATE ON items BEGIN
-                    DELETE FROM items_fts WHERE docid = old.rowid;
-                END;
-            """.trimIndent())
-            db.execSQL("""
-                CREATE TRIGGER IF NOT EXISTS items_fts_au AFTER UPDATE ON items BEGIN
-                    INSERT INTO items_fts(docid, title, content, originalFileName, extractedText, aiDescription, aiConcepts)
-                    VALUES (new.rowid, new.title, new.content, new.originalFileName, new.extractedText, new.aiDescription, new.aiConcepts);
-                END;
-            """.trimIndent())
-            db.execSQL("""
-                CREATE TRIGGER IF NOT EXISTS items_fts_delete BEFORE DELETE ON items BEGIN
-                    DELETE FROM items_fts WHERE docid = old.rowid;
-                END;
-            """.trimIndent())
+        // Repair and rebuild atomically. If maintenance fails, propagate the
+        // error instead of silently opening with partially repaired search.
+        val ownsTransaction = !db.inTransaction()
+        if (ownsTransaction) db.beginTransaction()
+        try {
+            obsolete.forEach { db.execSQL("DROP TRIGGER IF EXISTS `$it`") }
+            repairs.forEach { (name, sql) ->
+                db.execSQL("DROP TRIGGER IF EXISTS `$name`")
+                db.execSQL(sql)
+            }
             db.execSQL("INSERT INTO items_fts(items_fts) VALUES('rebuild')")
-        } catch (_: Exception) {}
+            if (ownsTransaction) db.setTransactionSuccessful()
+        } finally {
+            if (ownsTransaction) db.endTransaction()
+        }
     }
+
+    // sqlite_master omits IF NOT EXISTS and may normalize SQL formatting.
+    private fun normalizeTriggerSql(sql: String): String = sql.lowercase(java.util.Locale.ROOT)
+        .replace(Regex("[`\\s;]"), "").replace("ifnotexists", "")
 }
 
 val MIGRATION_1_2 = object : androidx.room.migration.Migration(1, 2) {
@@ -458,6 +465,13 @@ val MIGRATION_4_5 = object : androidx.room.migration.Migration(4, 5) {
         db.execSQL("UPDATE collections SET appRole = 'RANDOM_LINKS' WHERE id = (SELECT id FROM collections WHERE lower(trim(name)) = 'random links' ORDER BY createdAt, id LIMIT 1)")
         db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_collections_appRole ON collections (appRole)")
         db.execSQL("ALTER TABLE analysis_jobs ADD COLUMN metadataOnly INTEGER NOT NULL DEFAULT 0")
+        // Remove duplicate legacy synchronization before rebuilding, so onOpen
+        // does not repeat the full-library work for an upgraded installation.
+        LEGACY_FTS_TRIGGERS.forEach { db.execSQL("DROP TRIGGER IF EXISTS `$it`") }
+        // Room recreates synchronization triggers after migration, but does not
+        // populate an empty/stale legacy FTS index. Every upgrade path to v5
+        // converges here; rebuild once before ordinary opens use the fast path.
+        db.execSQL("INSERT INTO items_fts(items_fts) VALUES('rebuild')")
     }
 }
 

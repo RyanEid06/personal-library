@@ -5,6 +5,7 @@ import androidx.room.Room
 import androidx.sqlite.db.SupportSQLiteDatabase
 import androidx.sqlite.db.framework.FrameworkSQLiteOpenHelperFactory
 import androidx.test.core.app.ApplicationProvider
+import com.personallibrary.core.model.SearchQuery
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -47,6 +48,8 @@ class LibraryMigrationTest {
             execSQL("INSERT INTO assets VALUES('hash','assets/hash',7,'original.txt','text/plain','DOCUMENT',1)")
             execSQL("INSERT INTO reminders VALUES('rem','item','Reminder',1800000000000,0,1,0,NULL)")
             execSQL("INSERT INTO analysis_jobs VALUES('item',7,7,'existing','QUEUED',2,NULL,NULL,123)")
+            // Prior releases added these custom triggers alongside Room's set.
+            execSQL("CREATE TRIGGER items_fts_update AFTER UPDATE ON items BEGIN SELECT 1; END")
         }
         helper.close()
         val migrated = Room.databaseBuilder(context, LibraryRoomDatabase::class.java, name)
@@ -62,7 +65,18 @@ class LibraryMigrationTest {
             assertEquals("original.txt", dao.getAssetByHash("hash")!!.originalName)
             assertEquals(1800000000000L, dao.getReminderByItemId("item")!!.dueMillis)
             assertEquals(2, dao.getAnalysisJob("item")!!.attempts)
+            migrated.openHelper.writableDatabase.query("SELECT count(*) FROM sqlite_master WHERE type='trigger' AND name='items_fts_update'").use {
+                assertTrue(it.moveToFirst())
+                assertEquals(0, it.getInt(0))
+            }
             assertEquals("item", dao.searchFts("MigrationBody*").single().id)
+            assertEquals("item", dao.searchFts(SearchQuery.fts("MigrationBo")!!).single().id)
+            dao.updateItem(dao.getItemById("item")!!.copy(title = "UpdatedMigrationTitle", content = "ReplacementBody"))
+            assertTrue(dao.searchFts("MigrationBody*").isEmpty())
+            assertEquals("item", dao.searchFts(SearchQuery.fts("ReplacementB")!!).single().id)
+            dao.deleteItemPermanently("item")
+            assertTrue(dao.searchFts("ReplacementBody*").isEmpty())
+            migrated.openHelper.writableDatabase.execSQL("INSERT INTO items_fts(items_fts) VALUES('integrity-check')")
         } finally { migrated.close(); context.deleteDatabase(name) }
     }
 

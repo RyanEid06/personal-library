@@ -3,9 +3,11 @@ package com.example.ui
 import android.app.Application
 import android.content.Context
 import android.net.Uri
+import androidx.annotation.MainThread
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.ai.AiGateway
+import com.example.ai.AiGatewayException
 import com.example.data.CollectionEntity
 import com.example.data.ItemEntity
 import com.example.data.ItemWithCollections
@@ -23,18 +25,13 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ensureActive
-import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.InputStream
-import java.text.SimpleDateFormat
 import java.time.Instant
-import java.util.Calendar
-import java.util.Date
-import java.util.Locale
 import java.util.concurrent.atomic.AtomicLong
 
 data class SemanticSearchResult(
@@ -51,7 +48,6 @@ data class GroupedLibrarySection(
     val items: List<ItemWithCollections>
 )
 
-@OptIn(FlowPreview::class)
 class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val trashEvents = Channel<List<String>>(Channel.UNLIMITED)
@@ -118,8 +114,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // Filtered search results
     private val _localSearchResults = MutableStateFlow<List<ItemWithCollections>>(emptyList())
     val localSearchResults: StateFlow<List<ItemWithCollections>> = _localSearchResults.asStateFlow()
-    private val resultGeneration = AtomicLong()
-    private var filteredResultsJob: Job? = null
+    private val _localSearchError = MutableStateFlow<String?>(null)
+    val localSearchError: StateFlow<String?> = _localSearchError.asStateFlow()
     private val _resultsReady = MutableStateFlow(false)
     val resultsReady = _resultsReady.asStateFlow()
     private val _selectingVisible = MutableStateFlow(false)
@@ -132,8 +128,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _aiSearchResults = MutableStateFlow<List<SemanticSearchResult>>(emptyList())
     val aiSearchResults: StateFlow<List<SemanticSearchResult>> = _aiSearchResults.asStateFlow()
 
+    private val _aiSearchError = MutableStateFlow<String?>(null)
+    val aiSearchError: StateFlow<String?> = _aiSearchError.asStateFlow()
+
     private val _isAiSearching = MutableStateFlow(false)
     private var aiSearchJob: Job? = null
+    private val aiSearchGeneration = AtomicLong()
     val isAiSearching: StateFlow<Boolean> = _isAiSearching.asStateFlow()
 
     private val _incomingShare = MutableStateFlow<SharePayload?>(null)
@@ -152,6 +152,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _lastSuccessfulBackup = MutableStateFlow<Long?>(repository.getLastSuccessfulBackupTime())
     val lastSuccessfulBackup: StateFlow<Long?> = _lastSuccessfulBackup.asStateFlow()
 
+    private val localSearch = LatestLocalSearch(
+        scope = viewModelScope,
+        search = repository::searchWithCollections,
+        onInvalidated = {
+            _resultsReady.value = false
+            _localSearchError.value = null
+            invalidateAiSearch()
+        },
+        onResult = { result ->
+            _localSearchResults.value = result.items
+            _groupedSections.value = result.sections
+            _resultsReady.value = true
+        },
+        onError = { _localSearchError.value = "Could not search your library. Try again." }
+    )
+
     init {
         // Enforce 30-day automatic Trash expiry on startup
         viewModelScope.launch(Dispatchers.IO) {
@@ -165,8 +181,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             repository.observeActiveItemsWithCollections().collect {
                 _items.value = it
-                updateStorageStats()
                 refreshFilteredResults()
+                viewModelScope.launch { updateStorageStats() }
             }
         }
 
@@ -184,15 +200,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 updateStorageStats()
             }
         }
-
-        // Debounced FTS local search flow
-        viewModelScope.launch {
-            _searchQuery
-                .debounce(150)
-                .collect {
-                    refreshFilteredResults()
-                }
-        }
     }
 
     fun setLibraryLayout(layout: LibraryLayout) {
@@ -201,173 +208,39 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun setDateBasis(basis: DateBasis) {
+        if (_dateBasis.value == basis) return
         _dateBasis.value = basis
         refreshFilteredResults()
     }
 
     fun setDateGrouping(grouping: DateGrouping) {
+        if (_dateGrouping.value == grouping) return
         _dateGrouping.value = grouping
         refreshFilteredResults()
     }
 
-    private fun refreshFilteredResults() {
-        val generation = resultGeneration.incrementAndGet()
-        _resultsReady.value = false
-        filteredResultsJob?.cancel()
-        // Capture the entire filter context before the first suspension.
-        val query = _searchQuery.value.trim()
-        val sourceItems = _items.value
-        val kind = _selectedKind.value
-        val colId = _selectedCollectionId.value
-        val dateF = _dateFilter.value
-        val basis = _dateBasis.value
-        val sort = _sortOrder.value
-        val customStart = _customDateStart.value
-        val customEnd = _customDateEnd.value
-        val grouping = _dateGrouping.value
-        filteredResultsJob = viewModelScope.launch(Dispatchers.IO) {
-            val rawList = if (query.isBlank()) {
-                sourceItems
-            } else {
-                repository.searchWithCollections(query)
-            }
+    private fun captureLocalSearchContext() = LocalSearchContext(
+        query = _searchQuery.value.trim(), sourceItems = _items.value,
+        kind = _selectedKind.value, collectionId = _selectedCollectionId.value,
+        dateFilter = _dateFilter.value, basis = _dateBasis.value, sort = _sortOrder.value,
+        customStart = _customDateStart.value, customEnd = _customDateEnd.value,
+        grouping = _dateGrouping.value
+    )
 
-            val calendar = Calendar.getInstance()
-            val currentYear = calendar.get(Calendar.YEAR)
-            val currentMonth = calendar.get(Calendar.MONTH)
-
-            val filtered = rawList.asSequence()
-                .filter { itemWithCols ->
-                    val item = itemWithCols.item
-                    kind == null || item.kind == kind.name
-                }
-                .filter { itemWithCols ->
-                    val item = itemWithCols.item
-                    val colIds = itemWithCols.collections.map { it.id }
-                    when (colId) {
-                        null -> true
-                        "computed_favorites" -> item.isFavorite
-                        "computed_unfiled" -> colIds.isEmpty()
-                        "computed_due" -> item.reminderTime != null && !item.isReminderDone
-                        else -> colIds.contains(colId)
-                    }
-                }
-                .filter { itemWithCols ->
-                    val item = itemWithCols.item
-                    val timestamp = if (basis == DateBasis.SOURCE_DATE) item.sourceDate else item.createdAt
-
-                    when (dateF) {
-                        DateFilter.ALL_TIME -> true
-                        DateFilter.THIS_MONTH -> {
-                            if (timestamp == null) false
-                            else {
-                                calendar.timeInMillis = timestamp
-                                calendar.get(Calendar.YEAR) == currentYear && calendar.get(Calendar.MONTH) == currentMonth
-                            }
-                        }
-                        DateFilter.THIS_YEAR -> {
-                            if (timestamp == null) false
-                            else {
-                                calendar.timeInMillis = timestamp
-                                calendar.get(Calendar.YEAR) == currentYear
-                            }
-                        }
-                        DateFilter.CUSTOM -> {
-                            if (timestamp == null) false
-                            else {
-                                customStart != null && customEnd != null && timestamp >= customStart && timestamp <= customEnd
-                            }
-                        }
-                    }
-                }
-                .sortedWith { a, b ->
-                    val itemA = a.item
-                    val itemB = b.item
-                    val timeA = if (basis == DateBasis.SOURCE_DATE) (itemA.sourceDate ?: itemA.createdAt) else itemA.createdAt
-                    val timeB = if (basis == DateBasis.SOURCE_DATE) (itemB.sourceDate ?: itemB.createdAt) else itemB.createdAt
-                    when (sort) {
-                        SortOrder.SAVED_NEWEST -> itemB.createdAt.compareTo(itemA.createdAt)
-                        SortOrder.SAVED_OLDEST -> itemA.createdAt.compareTo(itemB.createdAt)
-                        SortOrder.SOURCE_NEWEST -> (itemB.sourceDate ?: Long.MIN_VALUE).compareTo(itemA.sourceDate ?: Long.MIN_VALUE)
-                        SortOrder.SOURCE_OLDEST -> (itemA.sourceDate ?: Long.MAX_VALUE).compareTo(itemB.sourceDate ?: Long.MAX_VALUE)
-                        SortOrder.TITLE_AZ -> itemA.title.compareTo(itemB.title, true)
-                    }
-                }
-                .toList()
-
-            // Build grouped sections
-            val sections = if (grouping == DateGrouping.NONE) {
-                listOf(GroupedLibrarySection("", filtered))
-            } else {
-                val dayFormat = SimpleDateFormat("EEEE, MMMM d, yyyy", Locale.getDefault())
-                val monthFormat = SimpleDateFormat("MMMM yyyy", Locale.getDefault())
-                val yearFormat = SimpleDateFormat("yyyy", Locale.getDefault())
-
-                val groups = mutableMapOf<String, MutableList<ItemWithCollections>>()
-                for (itemWithCols in filtered) {
-                    val ts = if (basis == DateBasis.SOURCE_DATE) itemWithCols.item.sourceDate else itemWithCols.item.createdAt
-                    val key = if (ts == null) {
-                        "No ${basis.label}"
-                    } else {
-                        val d = Date(ts)
-                        when (grouping) {
-                            DateGrouping.DAY -> dayFormat.format(d)
-                            DateGrouping.MONTH -> monthFormat.format(d)
-                            DateGrouping.YEAR -> yearFormat.format(d)
-                            DateGrouping.NONE -> ""
-                        }
-                    }
-                    groups.getOrOrPut(key) { mutableListOf() }.add(itemWithCols)
-                }
-                groups.map { GroupedLibrarySection(it.key, it.value) }
-            }
-            withContext(Dispatchers.Main.immediate) {
-                if (generation == resultGeneration.get()) {
-                    _localSearchResults.value = filtered
-                    _groupedSections.value = sections
-                    _resultsReady.value = true
-                }
-            }
-        }
+    private fun invalidateAiSearch() {
+        aiSearchGeneration.incrementAndGet()
+        aiSearchJob?.cancel()
+        _isAiSearching.value = false
+        _aiSearchResults.value = emptyList()
+        _aiSearchError.value = null
     }
 
-    private fun <K, V> MutableMap<K, V>.getOrOrPut(key: K, defaultValue: () -> V): V {
-        return this[key] ?: run {
-            val value = defaultValue()
-            this[key] = value
-            value
-        }
+    @MainThread
+    private fun refreshFilteredResults(debounceQuery: Boolean = false) {
+        localSearch.refresh(captureLocalSearchContext(), debounceQuery)
     }
 
-    fun buildMatchSnippet(item: ItemEntity, query: String): String? {
-        if (query.isBlank()) return null
-        val tokens = query.lowercase().split("\\s+".toRegex()).filter { it.length > 1 }
-        if (tokens.isEmpty()) return null
-
-        val candidates = listOfNotNull(
-            item.title,
-            item.content.takeIf { it.isNotBlank() },
-            item.originalFileName,
-            item.extractedText?.takeIf { it.isNotBlank() },
-            item.aiDescription?.takeIf { it.isNotBlank() },
-            item.aiConcepts?.takeIf { it.isNotBlank() }
-        )
-
-        for (text in candidates) {
-            val lower = text.lowercase()
-            for (token in tokens) {
-                val idx = lower.indexOf(token)
-                if (idx != -1) {
-                    val start = maxOf(0, idx - 40)
-                    val end = minOf(text.length, idx + token.length + 60)
-                    val prefix = if (start > 0) "…" else ""
-                    val suffix = if (end < text.length) "…" else ""
-                    return prefix + text.substring(start, end).replace("\n", " ").trim() + suffix
-                }
-            }
-        }
-        return null
-    }
+    fun buildMatchSnippet(item: ItemEntity, query: String): String? = buildLocalMatchSnippet(item, query)
 
     private suspend fun updateStorageStats() = withContext(Dispatchers.IO) {
         val rootDir = File(getApplication<Application>().filesDir, "storage_root")
@@ -389,21 +262,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun selectKind(kind: ItemKind?) {
+        if (_selectedKind.value == kind) return
         _selectedKind.value = kind
         refreshFilteredResults()
     }
 
     fun selectCollection(colId: String?) {
+        if (_selectedCollectionId.value == colId) return
         _selectedCollectionId.value = colId
         refreshFilteredResults()
     }
 
     fun setSortOrder(order: SortOrder) {
+        if (_sortOrder.value == order) return
         _sortOrder.value = order
         refreshFilteredResults()
     }
 
     fun setDateFilter(filter: DateFilter) {
+        if (_dateFilter.value == filter) return
         _dateFilter.value = filter
         refreshFilteredResults()
     }
@@ -416,10 +293,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun setSearchQuery(query: String) {
-        aiSearchJob?.cancel()
-        _isAiSearching.value = false
+        val previous = _searchQuery.value
         _searchQuery.value = query
-        _aiSearchResults.value = emptyList()
+        if (previous.trim() == query.trim()) return
+        refreshFilteredResults(debounceQuery = true)
+    }
+
+    /** Query and display preferences remain intact; every restrictive filter is reset together. */
+    fun clearFilters() {
+        _selectedCollectionId.value = null
+        _selectedKind.value = null
+        _dateFilter.value = DateFilter.ALL_TIME
+        _customDateStart.value = null
+        _customDateEnd.value = null
         refreshFilteredResults()
     }
 
@@ -456,105 +342,138 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun dismissCaptureMessage() = (getApplication<Application>() as com.example.PersonalLibraryApp).captureState.dismiss()
 
     fun triggerAiSearch(query: String) {
-        if (query.isBlank()) return
+        if (query.isBlank() || query.trim() != _searchQuery.value.trim()) return
         aiSearchJob?.cancel()
+        val requestGeneration = aiSearchGeneration.incrementAndGet()
+        val contextGeneration = localSearch.currentGeneration
+        val context = captureLocalSearchContext()
+        val knownCollectionNames = _collections.value.map { it.name }
+        _aiSearchResults.value = emptyList()
+        _aiSearchError.value = null
+        if (!aiGateway.identityManager.isPaired) {
+            _isAiSearching.value = false
+            _aiSearchError.value = "AI search is unavailable. Pair this device in Settings to use AI."
+            return
+        }
+        _isAiSearching.value = true
+        fun isCurrentRequest() = requestGeneration == aiSearchGeneration.get() &&
+            contextGeneration == localSearch.currentGeneration
         aiSearchJob = viewModelScope.launch(Dispatchers.IO) {
-            _isAiSearching.value = true
-            _aiSearchResults.value = emptyList()
             try {
-            val active = _items.value
-            val cols = _collections.value.map { it.name }
-            val plan = aiGateway.getSearchPlan(query, cols)
+                val active = projectLocalSearch(context.sourceItems, context).items
+                val plan = aiGateway.getSearchPlan(query, knownCollectionNames)
 
-            // Generate query embedding once online with gemini-embedding-2
-            val queryVectors = try {
-                aiGateway.embed(listOf(query))
-            } catch (cancelled: CancellationException) { throw cancelled }
-            catch (_: Exception) {
-                emptyList()
-            }
-            val queryVec = queryVectors.firstOrNull()?.takeIf { it.size == 768 && it.all(Float::isFinite) }
-            // With neither a Gemini plan nor an embedding, keep ordinary local FTS visible.
-            if (queryVec == null && plan.provenance != "GEMINI") return@launch
-
-            // Group all stored search documents by item to support multi-chunk indexing
-            val allDocs = repository.dao.getAllSearchDocuments()
-            val docsByItem = allDocs.groupBy { it.itemId }
-
-            val results = mutableListOf<SemanticSearchResult>()
-
-            val startMillis = plan.dateRange.startIso?.let {
-                try { Instant.parse(it).toEpochMilli() } catch (_: Exception) { null }
-            }
-            val endMillis = plan.dateRange.endIso?.let {
-                try { Instant.parse(it).toEpochMilli() } catch (_: Exception) { null }
-            }
-
-            for (itemWithCols in active) {
-                val item = itemWithCols.item
-
-                if (plan.targetKinds.isNotEmpty() && !plan.targetKinds.contains(item.kind)) {
-                    continue
+                // Generate query embedding once online with gemini-embedding-2
+                val queryVectors = try {
+                    aiGateway.embed(listOf(query))
+                } catch (cancelled: CancellationException) { throw cancelled }
+                catch (_: Exception) {
+                    emptyList()
                 }
-
-                if (startMillis != null && item.createdAt < startMillis) continue
-                if (endMillis != null && item.createdAt > endMillis) continue
-
-                var bestSim = 0f
-                var bestChunkText = ""
-                var bestPage: Int? = null
-                val explanations = mutableListOf<String>()
-
-                val itemDocs = docsByItem[item.id] ?: emptyList()
-                for (doc in itemDocs) {
-                    if (queryVec != null && doc.embedding != null && doc.embeddingDimension == 768 && doc.modelVersion == "gemini-embedding-2") {
-                        try {
-                            val chunkVec = doc.embedding.split(",").map { it.toFloat() }.toFloatArray()
-                            val sim = SemanticVectorMath.compatibleSimilarity(queryVec, chunkVec, doc.embeddingDimension, doc.modelVersion)
-                            if (sim > bestSim) {
-                                bestSim = sim
-                                bestChunkText = doc.textContent
-                                bestPage = doc.pageNumber
-                            }
-                        } catch (_: Exception) {}
+                val queryVec = queryVectors.firstOrNull()?.takeIf { it.size == 768 && it.all(Float::isFinite) }
+                // With neither a Gemini plan nor an embedding, keep ordinary local FTS visible.
+                if (queryVec == null && plan.provenance != "GEMINI") {
+                    withContext(Dispatchers.Main.immediate) {
+                        if (isCurrentRequest()) _aiSearchError.value = "AI search is unavailable right now. Your local results are still available. Try again later."
                     }
+                    return@launch
                 }
 
-                var score = 0f
-                if (bestSim > 0.30f) {
-                    score += bestSim * 10f
-                    explanations.add("Semantic similarity %.2f".format(bestSim))
+                // Group all stored search documents by item to support multi-chunk indexing
+                val allDocs = repository.dao.getAllSearchDocuments()
+                val docsByItem = allDocs.groupBy { it.itemId }
+
+                val results = mutableListOf<SemanticSearchResult>()
+
+                val startMillis = plan.dateRange.startIso?.let {
+                    try { Instant.parse(it).toEpochMilli() } catch (_: Exception) { null }
+                }
+                val endMillis = plan.dateRange.endIso?.let {
+                    try { Instant.parse(it).toEpochMilli() } catch (_: Exception) { null }
                 }
 
-                val itemTextLower = "${item.title} ${item.content} ${item.extractedText ?: ""} ${item.aiDescription ?: ""} ${item.aiConcepts ?: ""}".lowercase()
-                for (c in if (plan.provenance == "GEMINI") plan.concepts else emptyList()) {
-                    if (itemTextLower.contains(c.lowercase())) {
-                        score += 3f
-                        explanations.add("Concept '$c'")
+                for (itemWithCols in active) {
+                    val item = itemWithCols.item
+
+                    if (plan.targetKinds.isNotEmpty() && !plan.targetKinds.contains(item.kind)) {
+                        continue
                     }
-                }
 
-                if (score > 0f) {
-                    val semantic = bestSim > 0.30f
-                    val snippet = if (semantic) bestChunkText.take(180) else buildMatchSnippet(item, query)
-                    results.add(
-                        SemanticSearchResult(
-                            item = itemWithCols,
-                            explanation = explanations.distinct().take(3).joinToString(" • "),
-                            score = score,
-                            matchingSnippet = snippet?.ifBlank { null },
-                            source = if (semantic) "Gemini semantic match" else "AI plan + keyword match",
-                            pageNumber = if (semantic) bestPage else null
+                    if (startMillis != null && item.createdAt < startMillis) continue
+                    if (endMillis != null && item.createdAt > endMillis) continue
+
+                    var bestSim = 0f
+                    var bestChunkText = ""
+                    var bestPage: Int? = null
+                    val explanations = mutableListOf<String>()
+
+                    val itemDocs = docsByItem[item.id] ?: emptyList()
+                    for (doc in itemDocs) {
+                        if (queryVec != null && doc.embedding != null && doc.embeddingDimension == 768 && doc.modelVersion == "gemini-embedding-2") {
+                            try {
+                                val chunkVec = doc.embedding.split(",").map { it.toFloat() }.toFloatArray()
+                                val sim = SemanticVectorMath.compatibleSimilarity(queryVec, chunkVec, doc.embeddingDimension, doc.modelVersion)
+                                if (sim > bestSim) {
+                                    bestSim = sim
+                                    bestChunkText = doc.textContent
+                                    bestPage = doc.pageNumber
+                                }
+                            } catch (_: Exception) {}
+                        }
+                    }
+
+                    var score = 0f
+                    if (bestSim > 0.30f) {
+                        score += bestSim * 10f
+                        explanations.add("Semantic similarity %.2f".format(bestSim))
+                    }
+
+                    val itemTextLower = "${item.title} ${item.content} ${item.extractedText ?: ""} ${item.aiDescription ?: ""} ${item.aiConcepts ?: ""}".lowercase()
+                    for (c in if (plan.provenance == "GEMINI") plan.concepts else emptyList()) {
+                        if (itemTextLower.contains(c.lowercase())) {
+                            score += 3f
+                            explanations.add("Concept '$c'")
+                        }
+                    }
+
+                    if (score > 0f) {
+                        val semantic = bestSim > 0.30f
+                        val snippet = if (semantic) bestChunkText.take(180) else buildMatchSnippet(item, query)
+                        results.add(
+                            SemanticSearchResult(
+                                item = itemWithCols,
+                                explanation = explanations.distinct().take(3).joinToString(" • "),
+                                score = score,
+                                matchingSnippet = snippet?.ifBlank { null },
+                                source = if (semantic) "Gemini semantic match" else "AI plan + keyword match",
+                                pageNumber = if (semantic) bestPage else null
+                            )
                         )
-                    )
+                    }
+                }
+
+                ensureActive()
+                withContext(Dispatchers.Main.immediate) {
+                    if (isCurrentRequest()) _aiSearchResults.value = results.sortedByDescending { it.score }
+                }
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (failure: Exception) {
+                withContext(Dispatchers.Main.immediate) {
+                    if (isCurrentRequest()) {
+                        _aiSearchResults.value = emptyList()
+                        _aiSearchError.value = if (failure is AiGatewayException.UnpairedException || failure is AiGatewayException.AuthenticationException) {
+                            "AI search is unavailable. Pair this device again in Settings."
+                        } else {
+                            "AI search is unavailable right now. Your local results are still available. Try again later."
+                        }
+                    }
                 }
             }
-
-            ensureActive()
-            if (_searchQuery.value == query) _aiSearchResults.value = results.sortedByDescending { it.score }
-            } catch (cancelled: CancellationException) { throw cancelled }
-            catch (_: Exception) { _aiSearchResults.value = emptyList() }
-            finally { if (coroutineContext[Job]?.isActive == true) _isAiSearching.value = false }
+            finally {
+                if (coroutineContext[Job]?.isActive == true) withContext(Dispatchers.Main.immediate) {
+                    if (isCurrentRequest()) _isAiSearching.value = false
+                }
+            }
         }
     }
 
@@ -791,8 +710,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun selectCollectionItems(collectionId: String?) {
         clearSelection()
-        _localSearchResults.value = emptyList()
-        _groupedSections.value = emptyList()
         selectCollection(collectionId)
         beginSelection()
     }
@@ -800,13 +717,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     /** The caller supplies exactly the rows currently rendered by this screen. */
     fun selectAllVisible(visibleItemIds: () -> Collection<String>) {
         if (!_resultsReady.value || _selectingVisible.value) return
-        val generation = resultGeneration.get()
+        val generation = localSearch.currentGeneration
         val selection = selectionGeneration.get()
         _selectingVisible.value = true
         viewModelScope.launch {
             try {
                 val ids = withContext(Dispatchers.Default) { visibleItemIds().toSet() }
-                if (generation == resultGeneration.get() && selection == selectionGeneration.get() && _resultsReady.value && _isBatchMode.value) {
+                if (generation == localSearch.currentGeneration && selection == selectionGeneration.get() && _resultsReady.value && _isBatchMode.value) {
                     _selectedItemIds.value = ids
                 }
             } finally { _selectingVisible.value = false }

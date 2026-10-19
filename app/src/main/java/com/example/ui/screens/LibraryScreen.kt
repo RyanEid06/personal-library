@@ -1,11 +1,10 @@
 package com.example.ui.screens
 
-import androidx.compose.foundation.background
 import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -22,7 +21,6 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -35,6 +33,9 @@ import com.example.ui.components.ItemCard
 import com.example.ui.components.ItemGridCard
 import com.example.ui.components.TypeFilterChipStrip
 import com.example.ui.components.SelectionActions
+import com.example.ui.components.ActiveSearchFilters
+import com.example.ui.components.LibraryResultState
+import com.example.ui.components.hasSearchFilters
 import com.personallibrary.core.model.DateRange
 import java.time.Instant
 import java.time.ZoneId
@@ -51,6 +52,11 @@ fun LibraryScreen(
     modifier: Modifier = Modifier
 ) {
     val items by viewModel.localSearchResults.collectAsState()
+    val allItems by viewModel.items.collectAsState()
+    val resultsReady by viewModel.resultsReady.collectAsState()
+    val localSearchError by viewModel.localSearchError.collectAsState()
+    val customStart by viewModel.customDateStart.collectAsState()
+    val customEnd by viewModel.customDateEnd.collectAsState()
     val groupedSections by viewModel.groupedSections.collectAsState()
     val collections by viewModel.collections.collectAsState()
     val selectedKind by viewModel.selectedKind.collectAsState()
@@ -124,7 +130,7 @@ fun LibraryScreen(
                 },
                 actions = {
                     if (isBatchMode) {
-                        SelectionActions(viewModel, items.size, { items.map { it.item.id } }, selectedItemIds)
+                        SelectionActions(viewModel, if (resultsReady) items.size else 0, { if (viewModel.resultsReady.value) viewModel.localSearchResults.value.map { it.item.id } else emptyList() }, selectedItemIds)
                     } else {
                         // Grid/List toggle
                         IconButton(
@@ -209,45 +215,31 @@ fun LibraryScreen(
                 onKindSelected = { viewModel.selectKind(it) }
             )
 
-            // Controls row: Active Collection chip, Grouping, Date Basis / Filter, Sort
+            ActiveSearchFilters(
+                selectedColId, collections, selectedKind, dateFilter, dateBasis, customStart, customEnd,
+                onClearCollection = { viewModel.selectCollection(null) },
+                onClearKind = { viewModel.selectKind(null) },
+                onClearDate = { viewModel.setDateFilter(DateFilter.ALL_TIME) },
+                onClearFilters = viewModel::clearFilters
+            )
+
+            // Scroll controls as a unit so long labels and large text do not clip.
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
+                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())
                     .padding(horizontal = 16.dp, vertical = 2.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Active collection chip
-                if (selectedColId != null) {
-                    val colName = when (selectedColId) {
-                        "computed_favorites" -> "★ Favorites"
-                        "computed_unfiled" -> "Unfiled"
-                        "computed_due" -> "⏰ Due Reminders"
-                        else -> collections.find { it.id == selectedColId }?.name ?: "Collection"
-                    }
-                    AssistChip(
-                        onClick = { viewModel.selectCollection(null) },
-                        label = { Text(colName, fontSize = 11.sp) },
-                        trailingIcon = {
-                            Icon(Icons.Filled.Close, contentDescription = "Clear collection", modifier = Modifier.size(13.dp))
-                        },
-                        modifier = Modifier.testTag("active_collection_chip")
-                    )
-                } else {
-                    Spacer(modifier = Modifier.width(4.dp))
-                }
-
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     // Grouping dropdown
                     Box {
                         TextButton(
                             onClick = { showGroupingMenu = true },
-                            contentPadding = PaddingValues(horizontal = 6.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp),
                             modifier = Modifier.testTag("grouping_button")
                         ) {
                             Icon(Icons.Filled.Layers, contentDescription = null, modifier = Modifier.size(14.dp))
                             Spacer(modifier = Modifier.width(3.dp))
-                            Text(if (dateGrouping == DateGrouping.NONE) "Group" else dateGrouping.label, fontSize = 11.sp)
+                            Text(if (dateGrouping == DateGrouping.NONE) "Group" else dateGrouping.label)
                         }
                         DropdownMenu(
                             expanded = showGroupingMenu,
@@ -270,12 +262,12 @@ fun LibraryScreen(
                     Box {
                         TextButton(
                             onClick = { showDateFilterMenu = true },
-                            contentPadding = PaddingValues(horizontal = 6.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp),
                             modifier = Modifier.testTag("date_filter_button")
                         ) {
                             Icon(Icons.Outlined.CalendarToday, contentDescription = null, modifier = Modifier.size(14.dp))
                             Spacer(modifier = Modifier.width(3.dp))
-                            Text(dateFilter.label, fontSize = 11.sp)
+                            Text(dateFilter.label)
                         }
                         DropdownMenu(
                             expanded = showDateFilterMenu,
@@ -314,12 +306,12 @@ fun LibraryScreen(
                     Box {
                         TextButton(
                             onClick = { showSortMenu = true },
-                            contentPadding = PaddingValues(horizontal = 6.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp),
                             modifier = Modifier.testTag("sort_order_button")
                         ) {
                             Icon(Icons.AutoMirrored.Outlined.Sort, contentDescription = null, modifier = Modifier.size(14.dp))
                             Spacer(modifier = Modifier.width(3.dp))
-                            Text(sortOrder.label, fontSize = 11.sp)
+                            Text(sortOrder.label)
                         }
                         DropdownMenu(
                             expanded = showSortMenu,
@@ -340,33 +332,12 @@ fun LibraryScreen(
             }
 
             // Items Content (List or Grid)
-            if (items.isEmpty()) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(horizontal = 24.dp, vertical = 64.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Icon(
-                            Icons.Outlined.FolderOpen,
-                            contentDescription = null,
-                            modifier = Modifier.size(56.dp),
-                            tint = MaterialTheme.colorScheme.outline
-                        )
-                        Spacer(modifier = Modifier.height(12.dp))
-                        Text(
-                            text = if (searchQuery.isNotBlank()) "No matching items found" else "Your library is empty",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = if (searchQuery.isNotBlank()) "Try different keywords or filters" else "Tap '+' to add a note, save a link, or import files from WhatsApp",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.outline
-                        )
-                    }
+            if (!resultsReady || localSearchError != null || items.isEmpty()) {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    LibraryResultState(
+                        resultsReady, localSearchError, allItems.isEmpty(), searchQuery,
+                        hasSearchFilters(selectedColId, selectedKind, dateFilter), viewModel::clearFilters
+                    )
                 }
             } else if (libraryLayout == LibraryLayout.GRID) {
                 LazyVerticalGrid(
