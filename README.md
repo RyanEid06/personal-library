@@ -4,7 +4,7 @@ A native Android library for saving WhatsApp shares, notes, links, media, docume
 
 Memora is the owner's chosen product name. Settings -> Appearance offers saved **Light / Dark / System** choices (System by default). The same launcher icon serves both modes. The Library header shows the current item count and date basis directly alongside its controls. The existing fixed palette is independent of wallpaper colors. [Artwork originals, preparation and exact RGB colors](docs/branding/memora/README.md) are preserved in the repository. Stable application/database/preference identifiers and encrypted backup format remain unchanged.
 
-V1 implementation is complete. The owner has supplied the permanent signing identity and authorized the final official V1 pass. Exact-source automated verification and the owner-local signed build must finish before an official APK is delivered; physical-phone acceptance remains separate. See [verification status](docs/STATUS.md), [permanent release procedure](docs/branding/memora/RELEASE.md), and [phone handoff](docs/HANDOFF.md).
+V1.0.0 is published. The separate `codex/v1.0.1-hardening` branch prepares version 1.0.1/code 3 for physical QA, preserving the permanent signing identity and ARM64/universal packaging. Its [immutable specification](docs/CODEX_V1_0_1_MASTER_PROMPT.md), [current evidence and limitations](docs/CODEX_V1_0_1_WORKLOG.md), [requirement audit](docs/CODEX_V1_0_1_AUDIT.md), and [physical QA checklist](docs/CODEX_V1_0_1_PHYSICAL_QA.md) track the candidate. See [verification status](docs/STATUS.md), [permanent release procedure](docs/branding/memora/RELEASE.md), and [phone handoff](docs/HANDOFF.md).
 
 ## V1 capabilities
 
@@ -12,10 +12,12 @@ Final release packaging enables R8 and resource shrinking. One source/version pr
 
 - Share Preview and foreground single/multiple-file capture, explicit cancellation/partial failures, durable originals, SHA-256 deduplication, and transactional reference accounting.
 - Library list/grid, collections, favorites, Trash, Saved/Source dates, custom ranges, grouping, and retained browse position.
-- Room schema 4 with explicit migrations, FTS4, bundled Latin OCR, bounded text/PDF extraction, page references, local snippets, and media previews with external Open/Share.
+- Room schema 5 with non-destructive migrations from existing installations, FTS4 live prefix search, bundled Latin OCR, bounded text/PDF extraction, page references, local snippets, and media previews with external Open/Share.
+- Collection editing, portable Random Links identity, filtered multi-select/bulk collection management, item editing, and confirmed Restore All; Trash actions provide Undo and permanent-deletion confirmation.
 - WhatsApp exported `.txt` file selection, optional separately selected attachments, preview before confirmation, conservative dates, provenance, and idempotent Random Links import. Extract ZIP packages before selecting files.
 - Versioned durable AI jobs, pause/resume, item/collection exclusions, Wi-Fi constraints, bounded retries and explicit Retry analysis. Exclusions preserve local extraction.
 - Bounded image/video/audio/PDF analysis, local 768-dimensional vectors, and distinct labels for Gemini semantic results, AI-plan lexical results, and local keyword search.
+- Bounded direct AI answers reuse locally indexed evidence and retain tappable item/page sources. The new answer endpoint must be deployed separately before live Q&A acceptance; local and related results remain available when it is unavailable.
 - English voice input preferring available on-device recognition, identified default-service fallback, and editable transcripts using the typed-search pipeline.
 - Date-only reminders at 09:00 local, timed reminders, contextual notification permission, honest exact/inexact behavior, Snooze/Complete, and biometric/device-credential app lock.
 - Passphrase-protected Tink streaming encrypted backup with staged validation and transactional restore. See [backup format](docs/BACKUP_FORMAT.md).

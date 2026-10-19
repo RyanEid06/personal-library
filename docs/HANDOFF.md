@@ -1,5 +1,12 @@
 # Memora V1 owner handoff
 
+## V1.0.1 candidate handoff
+
+Candidate progress, exact verification and outstanding limits live in [the V1.0.1 worklog](CODEX_V1_0_1_WORKLOG.md). Use [the physical QA checklist](CODEX_V1_0_1_PHYSICAL_QA.md) for device acceptance. The hardening branch targets 1.0.1/code 3 with the existing package/certificate; it does not replace the published V1.0.0 download until a separately authorized release. Historical V1 instructions follow.
+
+## Published V1.0.0 handoff
+
+
 Memora V1.0.0 (versionCode 2, application ID `com.personallibrary.app`) is the first official release. The ARM64 and universal APKs were built and signed from `1c42f958f3e663d2e547a266670bae4fb54e5214`, certified by [run 38959696966](https://github.com/RyanEid06/personal-library/actions/runs/38959696966). The release-record documentation commits changed no Android, build, or signing inputs; their exact tagged source also passed all five jobs in [run 38965995019](https://github.com/RyanEid06/personal-library/actions/runs/38965995019). The APK hashes and permanent certificate were independently verified before publication. See the [official GitHub release](https://github.com/RyanEid06/personal-library/releases/tag/v1.0.0), [release procedure and audit](branding/memora/RELEASE.md), and [current status](STATUS.md). Physical-phone acceptance remains with the owner.
 
 ## Installation

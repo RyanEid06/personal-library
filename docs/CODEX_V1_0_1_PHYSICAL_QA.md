@@ -30,9 +30,8 @@ Known bounded-retrieval limitation: a fact on a later PDF page can be missed whe
 
 
 
-Produce a final real-device checklist even if automated tests are green.
+Use synthetic notes, links, exports, attachments and media for these checks. Record the tested device, Android version, candidate SHA and each actual result.
 
-Include:
 
 ## Library
 
@@ -50,17 +49,7 @@ Include:
 
 ## Search
 
-Type sequentially:
-
-`b`
-
-`bi`
-
-`bir`
-
-`birth`
-
-`birthday`
+- [ ] Type `b` → `bi` → `bir` → `birth` → `birthday`; verify results update and narrow without pressing Search.
 
 Also test:
 

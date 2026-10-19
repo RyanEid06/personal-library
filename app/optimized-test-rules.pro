@@ -5,11 +5,60 @@
 # Applied only to optimizedCheck with memoraOptimizedTests=true. Ordinary release
 # and the untouched optimized launch candidate retain their normal R8 rules.
 # Regenerate when instrumentation or its pinned dependencies change.
+# The optimized test APK retains these finally-marker calls in Compose's
+# FrameDeferringContinuationInterceptor. Keep only its two actual DEX entry points.
+-keep class kotlin.jvm.internal.InlineMarker {
+  public static void finallyStart(int);
+  public static void finallyEnd(int);
+}
 -keep class androidx.activity.ComponentActivity {
   public void setContentView(android.view.View);
 }
 -keep class androidx.activity.compose.ComponentActivityKt {
+  public static void setContent$default(androidx.activity.ComponentActivity, androidx.compose.runtime.CompositionContext, kotlin.jvm.functions.Function2, int, java.lang.Object);
   public static void setContent(androidx.activity.ComponentActivity, androidx.compose.runtime.CompositionContext, kotlin.jvm.functions.Function2);
+}
+-keep interface androidx.compose.foundation.layout.Arrangement$Horizontal {
+}
+-keep interface androidx.compose.foundation.layout.Arrangement$Vertical {
+}
+-keep class androidx.compose.foundation.layout.Arrangement {
+  public androidx.compose.foundation.layout.Arrangement$Horizontal getStart();
+  public androidx.compose.foundation.layout.Arrangement$Vertical getTop();
+  androidx.compose.foundation.layout.Arrangement INSTANCE;
+}
+-keep class androidx.compose.foundation.layout.BoxKt {
+  public static androidx.compose.ui.layout.MeasurePolicy maybeCachedBoxMeasurePolicy(androidx.compose.ui.Alignment, boolean);
+}
+-keep interface androidx.compose.foundation.layout.BoxScope {
+}
+-keep class androidx.compose.foundation.layout.BoxScopeInstance {
+  androidx.compose.foundation.layout.BoxScopeInstance INSTANCE;
+}
+-keep class androidx.compose.foundation.layout.ColumnKt {
+  public static androidx.compose.ui.layout.MeasurePolicy columnMeasurePolicy(androidx.compose.foundation.layout.Arrangement$Vertical, androidx.compose.ui.Alignment$Horizontal, androidx.compose.runtime.Composer, int);
+}
+-keep interface androidx.compose.foundation.layout.ColumnScope {
+}
+-keep class androidx.compose.foundation.layout.ColumnScopeInstance {
+  androidx.compose.foundation.layout.ColumnScopeInstance INSTANCE;
+}
+-keep class androidx.compose.foundation.layout.RowKt {
+  public static androidx.compose.ui.layout.MeasurePolicy rowMeasurePolicy(androidx.compose.foundation.layout.Arrangement$Horizontal, androidx.compose.ui.Alignment$Vertical, androidx.compose.runtime.Composer, int);
+}
+-keep interface androidx.compose.foundation.layout.RowScope {
+}
+-keep class androidx.compose.foundation.layout.RowScopeInstance {
+  androidx.compose.foundation.layout.RowScopeInstance INSTANCE;
+}
+-keep class androidx.compose.foundation.layout.SizeKt {
+  public static androidx.compose.ui.Modifier width-3ABfNKs(androidx.compose.ui.Modifier, float);
+}
+-keep class androidx.compose.material.icons.Icons$Filled {
+  androidx.compose.material.icons.Icons$Filled INSTANCE;
+}
+-keep class androidx.compose.material.icons.filled.FolderKt {
+  public static androidx.compose.ui.graphics.vector.ImageVector getFolder(androidx.compose.material.icons.Icons$Filled);
 }
 -keep interface androidx.compose.runtime.Applier {
 }
@@ -77,6 +126,7 @@
   public java.lang.Object withFrameNanos(kotlin.jvm.functions.Function1, kotlin.coroutines.Continuation);
 }
 -keep interface androidx.compose.runtime.MutableState {
+  public java.lang.Object getValue();
   public void setValue(java.lang.Object);
 }
 -keep class androidx.compose.runtime.ProvidableCompositionLocal {
@@ -100,6 +150,7 @@
 -keep interface androidx.compose.runtime.SnapshotMutationPolicy {
 }
 -keep class androidx.compose.runtime.SnapshotStateKt {
+  public static androidx.compose.runtime.State collectAsState(kotlinx.coroutines.flow.StateFlow, kotlin.coroutines.CoroutineContext, androidx.compose.runtime.Composer, int, int);
   public static androidx.compose.runtime.MutableState mutableStateOf$default(java.lang.Object, androidx.compose.runtime.SnapshotMutationPolicy, int, java.lang.Object);
 }
 -keep interface androidx.compose.runtime.State {
@@ -134,6 +185,18 @@
 -keep class androidx.compose.runtime.snapshots.Snapshot {
   public boolean hasPendingChanges();
   androidx.compose.runtime.snapshots.Snapshot$Companion Companion;
+}
+-keep class androidx.compose.ui.Alignment$Companion {
+  public androidx.compose.ui.Alignment$Horizontal getStart();
+  public androidx.compose.ui.Alignment$Vertical getTop();
+  public androidx.compose.ui.Alignment getTopStart();
+}
+-keep interface androidx.compose.ui.Alignment$Horizontal {
+}
+-keep interface androidx.compose.ui.Alignment$Vertical {
+}
+-keep interface androidx.compose.ui.Alignment {
+  androidx.compose.ui.Alignment$Companion Companion;
 }
 -keep class androidx.compose.ui.ComposedModifierKt {
   public static androidx.compose.ui.Modifier materializeModifier(androidx.compose.runtime.Composer, androidx.compose.ui.Modifier);
@@ -192,6 +255,12 @@
 -keep class androidx.compose.ui.graphics.AndroidImageBitmap_androidKt {
   public static androidx.compose.ui.graphics.ImageBitmap asImageBitmap(android.graphics.Bitmap);
 }
+-keep class androidx.compose.ui.graphics.Color$Companion {
+  public long getBlue-0d7_KjU();
+}
+-keep class androidx.compose.ui.graphics.Color {
+  androidx.compose.ui.graphics.Color$Companion Companion;
+}
 -keep class androidx.compose.ui.graphics.ColorKt {
   public static int toArgb-8_81llA(long);
 }
@@ -202,6 +271,8 @@
 }
 -keep class androidx.compose.ui.graphics.PixelMap {
   public long get-WaAFU9c(int, int);
+}
+-keep class androidx.compose.ui.graphics.vector.ImageVector {
 }
 -keep class androidx.compose.ui.input.key.Key$Companion {
   public long getAltLeft-EK5gGoQ();
@@ -587,6 +658,9 @@
   public boolean set(java.lang.Object);
   public boolean setException(java.lang.Throwable);
 }
+-keep class androidx.core.content.FileProvider {
+  public static android.net.Uri getUriForFile(android.content.Context, java.lang.String, java.io.File);
+}
 -keep class androidx.core.os.ConfigurationCompat {
   public static void setLocales(android.content.res.Configuration, androidx.core.os.LocaleListCompat);
 }
@@ -618,6 +692,14 @@
 }
 -keep interface androidx.lifecycle.LifecycleOwner {
   public androidx.lifecycle.Lifecycle getLifecycle();
+}
+-keep class androidx.lifecycle.ViewModel {
+}
+-keep class androidx.lifecycle.ViewModelProvider {
+  public <init>(androidx.lifecycle.ViewModelStoreOwner);
+  public androidx.lifecycle.ViewModel get(java.lang.Class);
+}
+-keep interface androidx.lifecycle.ViewModelStoreOwner {
 }
 -keep class androidx.lifecycle.ViewTreeLifecycleOwner {
   public static androidx.lifecycle.LifecycleOwner get(android.view.View);
@@ -798,9 +880,18 @@
 }
 -keep class com.example.MainActivity {
 }
+-keep class com.example.MainActivityKt {
+  public static void MainAppScaffold(com.example.ui.MainViewModel, java.lang.String, kotlin.jvm.functions.Function1, androidx.compose.runtime.Composer, int, int);
+}
 -keep class com.example.ai.AiGateway {
-  public <init>(android.content.Context);
+  public <init>(android.content.Context, com.example.ai.DeviceIdentityManager, int, kotlin.jvm.internal.DefaultConstructorMarker);
   public java.lang.String getBackendBaseUrl();
+}
+-keep class com.example.ai.AnswerResponse {
+  public <init>(java.lang.String, java.lang.String, java.util.List);
+  public java.lang.String getAnswer();
+}
+-keep class com.example.ai.DeviceIdentityManager {
 }
 -keep class com.example.ai.SearchPlanRequest$Companion {
   public kotlinx.serialization.KSerializer serializer();
@@ -809,25 +900,50 @@
   public <init>(java.lang.String, java.util.List, java.lang.String);
   com.example.ai.SearchPlanRequest$Companion Companion;
 }
+-keep class com.example.data.CollectionEntity {
+  public <init>(java.lang.String, java.lang.String, java.lang.String, java.lang.String, long, java.lang.String, int, kotlin.jvm.internal.DefaultConstructorMarker);
+  public java.lang.String getId();
+  public java.lang.String getName();
+  int $stable;
+}
+-keep class com.example.data.ItemCollectionCrossRef {
+  public <init>(java.lang.String, java.lang.String);
+}
 -keep class com.example.data.ItemEntity {
+  public <init>(java.lang.String, java.lang.String, java.lang.String, java.lang.String, boolean, boolean, java.lang.Long, long, java.lang.Long, java.lang.Long, boolean, boolean, boolean, java.lang.String, java.lang.String, java.lang.String, java.lang.String, long, java.lang.String, java.lang.String, int, java.lang.String, java.lang.String, java.lang.String, int, kotlin.jvm.internal.DefaultConstructorMarker);
   public java.lang.String getAiStatus();
+  public java.lang.String getContent();
   public java.lang.String getContentHash();
   public java.lang.String getId();
   public int getLocalIndexVersion();
+  public java.lang.String getTitle();
+  public boolean isTrash();
+  int $stable;
+}
+-keep class com.example.data.ItemWithCollections {
+  public <init>(com.example.data.ItemEntity, java.util.List);
+  public com.example.data.ItemEntity getItem();
+  int $stable;
 }
 -keep interface com.example.data.LibraryDao {
   public java.lang.Object deleteSearchDocumentsForItem(java.lang.String, kotlin.coroutines.Continuation);
+  public java.lang.Object getAllItemsIncludingTrash(kotlin.coroutines.Continuation);
+  public java.lang.Object getCollectionIdsForItem(java.lang.String, kotlin.coroutines.Continuation);
   public java.lang.Object getItemById(java.lang.String, kotlin.coroutines.Continuation);
   public java.lang.Object getSearchDocumentsForItem(java.lang.String, kotlin.coroutines.Continuation);
+  public java.lang.Object insertCollection(com.example.data.CollectionEntity, kotlin.coroutines.Continuation);
+  public java.lang.Object insertItem(com.example.data.ItemEntity, kotlin.coroutines.Continuation);
+  public java.lang.Object insertItemCollectionCrossRef(com.example.data.ItemCollectionCrossRef, kotlin.coroutines.Continuation);
   public java.lang.Object searchFts(java.lang.String, kotlin.coroutines.Continuation);
   public java.lang.Object updateExtractedText(java.lang.String, java.lang.String, java.lang.String, int, kotlin.coroutines.Continuation);
 }
 -keep class com.example.data.LibraryRepository {
   public <init>(android.content.Context, com.example.data.LibraryRoomDatabase);
   public <init>(android.content.Context, com.example.data.LibraryRoomDatabase, int, kotlin.jvm.internal.DefaultConstructorMarker);
-  public static java.lang.Object captureStream$default(com.example.data.LibraryRepository, java.io.InputStream, java.lang.String, java.lang.String, boolean, java.util.List, java.lang.Long, kotlin.coroutines.Continuation, int, java.lang.Object);
+  public static java.lang.Object captureStream$default(com.example.data.LibraryRepository, java.io.InputStream, java.lang.String, java.lang.String, boolean, java.util.List, java.lang.Long, java.lang.Long, kotlin.coroutines.Continuation, int, java.lang.Object);
   public static java.lang.Object commitRestore$default(com.example.data.LibraryRepository, com.personallibrary.core.backup.RestorePreview, boolean, kotlin.coroutines.Continuation, int, java.lang.Object);
-  public java.lang.Object deletePermanently(java.lang.String, kotlin.coroutines.Continuation);
+  public java.lang.Object deleteCollection(java.lang.String, kotlin.coroutines.Continuation);
+  public static java.lang.Object deletePermanently$default(com.example.data.LibraryRepository, java.lang.String, boolean, kotlin.coroutines.Continuation, int, java.lang.Object);
   public java.lang.Object exportEncryptedBackup(android.net.Uri, char[], kotlin.coroutines.Continuation);
   public java.lang.Object getBlobFile(java.lang.String, kotlin.coroutines.Continuation);
   public com.example.data.LibraryDao getDao();
@@ -861,6 +977,24 @@
   public <init>(android.content.Context, com.example.data.LibraryRepository);
   public java.lang.Object indexItem(com.example.data.ItemEntity, kotlin.coroutines.Continuation);
 }
+-keep enum com.example.model.DateBasis {
+  com.example.model.DateBasis SAVED_DATE;
+}
+-keep enum com.example.model.DateFilter {
+  com.example.model.DateFilter ALL_TIME;
+  com.example.model.DateFilter THIS_MONTH;
+}
+-keep enum com.example.model.DateGrouping {
+  com.example.model.DateGrouping NONE;
+}
+-keep enum com.example.model.LibraryLayout {
+  com.example.model.LibraryLayout GRID;
+  com.example.model.LibraryLayout LIST;
+}
+-keep class com.example.model.SharePayload {
+  public <init>(java.lang.String, java.util.List, java.lang.String, int, int, kotlin.jvm.internal.DefaultConstructorMarker);
+  int $stable;
+}
 -keep class com.example.reminder.ReminderScheduler {
   public <init>(android.content.Context);
   public void cancel(java.lang.String);
@@ -870,6 +1004,91 @@
   public <init>(android.content.Context);
   public boolean canAuthenticate();
   public boolean isLockEnabled();
+}
+-keep class com.example.ui.AiAnswerSource {
+  public <init>(java.lang.String, com.example.data.ItemWithCollections, java.lang.Integer);
+}
+-keep class com.example.ui.AiAnswerState {
+  public <init>(com.example.ai.AnswerResponse, java.util.List);
+  public com.example.ai.AnswerResponse getResponse();
+  int $stable;
+}
+-keep class com.example.ui.MainViewModel {
+  public void beginSelection();
+  public java.lang.String buildMatchSnippet(com.example.data.ItemEntity, java.lang.String);
+  public void clearFilters();
+  public void clearSelection();
+  public kotlinx.coroutines.flow.StateFlow getCustomDateEnd();
+  public kotlinx.coroutines.flow.StateFlow getCustomDateStart();
+  public kotlinx.coroutines.flow.StateFlow getDateFilter();
+  public kotlinx.coroutines.flow.StateFlow getItems();
+  public kotlinx.coroutines.flow.StateFlow getLocalSearchResults();
+  public com.example.data.LibraryRepository getRepository();
+  public kotlinx.coroutines.flow.StateFlow getResultsReady();
+  public kotlinx.coroutines.flow.StateFlow getSearchQuery();
+  public kotlinx.coroutines.flow.StateFlow getSelectedCollectionId();
+  public kotlinx.coroutines.flow.StateFlow getSelectedItemIds();
+  public kotlinx.coroutines.flow.StateFlow getSelectedKind();
+  public kotlinx.coroutines.flow.StateFlow getSelectingVisible();
+  public kotlinx.coroutines.flow.StateFlow getTrashItems();
+  public kotlinx.coroutines.flow.StateFlow isBatchMode();
+  public void selectAllVisible(kotlin.jvm.functions.Function0);
+  public void selectCollection(java.lang.String);
+  public void selectCollectionItems(java.lang.String);
+  public void selectKind(com.personallibrary.core.model.ItemKind);
+  public void setCustomDateRange(java.lang.Long, java.lang.Long);
+  public void setDateBasis(com.example.model.DateBasis);
+  public void setDateFilter(com.example.model.DateFilter);
+  public void setDateGrouping(com.example.model.DateGrouping);
+  public void setLibraryLayout(com.example.model.LibraryLayout);
+  public void setSearchQuery(java.lang.String);
+  public void toggleSelection(java.lang.String);
+  int $stable;
+}
+-keep class com.example.ui.SemanticSearchResult {
+  public <init>(com.example.data.ItemWithCollections, java.lang.String, float, java.lang.String, java.lang.String, java.lang.Integer, int, kotlin.jvm.internal.DefaultConstructorMarker);
+  public com.example.data.ItemWithCollections getItem();
+  int $stable;
+}
+-keep class com.example.ui.components.AiAnswerCardKt {
+  public static void AiAnswerCard(com.example.ui.AiAnswerState, kotlin.jvm.functions.Function1, androidx.compose.ui.Modifier, androidx.compose.runtime.Composer, int, int);
+}
+-keep class com.example.ui.components.CommonComponentsKt {
+  public static void ItemCard(com.example.data.ItemWithCollections, kotlin.jvm.functions.Function1, kotlin.jvm.functions.Function0, kotlin.jvm.functions.Function0, kotlin.jvm.functions.Function0, boolean, boolean, kotlin.jvm.functions.Function0, java.lang.String, androidx.compose.ui.Modifier, androidx.compose.runtime.Composer, int, int);
+  public static void ItemGridCard(com.example.data.ItemWithCollections, kotlin.jvm.functions.Function1, kotlin.jvm.functions.Function0, kotlin.jvm.functions.Function0, kotlin.jvm.functions.Function0, androidx.compose.ui.Modifier, boolean, boolean, kotlin.jvm.functions.Function0, java.lang.String, androidx.compose.runtime.Composer, int, int);
+}
+-keep class com.example.ui.components.DialogComponentsKt {
+  public static void EncryptedBackupPassphraseDialog(java.lang.String, java.lang.String, com.personallibrary.core.backup.BackupMode, kotlin.jvm.functions.Function0, kotlin.jvm.functions.Function1, androidx.compose.runtime.Composer, int);
+  public static void SharePreviewDialog(com.example.model.SharePayload, java.util.List, kotlin.jvm.functions.Function0, kotlin.jvm.functions.Function1, kotlin.jvm.functions.Function1, androidx.compose.runtime.Composer, int, int);
+}
+-keep class com.example.ui.components.EditItemDialogKt {
+  public static void EditItemDialog(com.example.data.ItemEntity, kotlin.jvm.functions.Function0, kotlin.jvm.functions.Function3, androidx.compose.runtime.Composer, int);
+}
+-keep class com.example.ui.components.SearchResultsContentKt {
+  public static void SearchResultsContent(java.lang.String, java.util.List, java.util.List, boolean, java.lang.String, java.lang.String, boolean, boolean, boolean, boolean, java.util.Set, kotlin.jvm.functions.Function1, kotlin.jvm.functions.Function2, kotlin.jvm.functions.Function1, kotlin.jvm.functions.Function1, kotlin.jvm.functions.Function1, kotlin.jvm.functions.Function1, kotlin.jvm.functions.Function0, androidx.compose.ui.Modifier, com.example.ui.AiAnswerState, androidx.compose.runtime.Composer, int, int, int);
+  public static void SearchSelectionActions(com.example.ui.MainViewModel, java.lang.String, java.util.List, java.util.List, boolean, java.lang.String, boolean, java.util.Set, androidx.compose.runtime.Composer, int);
+  public static java.util.List additionalAiMatches(java.util.List, java.util.List);
+}
+-keep class com.example.ui.components.SearchStateComponentsKt {
+  public static void ActiveSearchFilters(java.lang.String, java.util.List, com.personallibrary.core.model.ItemKind, com.example.model.DateFilter, com.example.model.DateBasis, java.lang.Long, java.lang.Long, kotlin.jvm.functions.Function0, kotlin.jvm.functions.Function0, kotlin.jvm.functions.Function0, kotlin.jvm.functions.Function0, androidx.compose.ui.Modifier, androidx.compose.runtime.Composer, int, int, int);
+  public static void LibraryResultState(boolean, java.lang.String, boolean, java.lang.String, boolean, kotlin.jvm.functions.Function0, androidx.compose.ui.Modifier, androidx.compose.runtime.Composer, int, int);
+}
+-keep class com.example.ui.screens.CollectionsScreenKt {
+  public static void CollectionCard-lUalfw8(java.lang.String, int, androidx.compose.ui.graphics.vector.ImageVector, long, kotlin.jvm.functions.Function0, kotlin.jvm.functions.Function0, androidx.compose.ui.Modifier, kotlin.jvm.functions.Function0, kotlin.jvm.functions.Function0, kotlin.jvm.functions.Function0, kotlin.jvm.functions.Function0, androidx.compose.runtime.Composer, int, int, int);
+  public static void CollectionsScreen(com.example.ui.MainViewModel, kotlin.jvm.functions.Function1, androidx.compose.ui.Modifier, kotlin.jvm.functions.Function1, androidx.compose.runtime.Composer, int, int);
+  public static void CreateCollectionDialog(kotlin.jvm.functions.Function0, kotlin.jvm.functions.Function3, com.example.data.CollectionEntity, java.util.List, java.lang.String, boolean, androidx.compose.runtime.Composer, int, int);
+}
+-keep class com.example.ui.screens.LibraryScreenKt {
+  public static void LibraryScreen(com.example.ui.MainViewModel, kotlin.jvm.functions.Function1, kotlin.jvm.functions.Function0, kotlin.jvm.functions.Function0, kotlin.jvm.functions.Function0, androidx.compose.ui.Modifier, androidx.compose.runtime.Composer, int, int);
+}
+-keep class com.example.ui.screens.SearchScreenKt {
+  public static void SearchScreen(com.example.ui.MainViewModel, kotlin.jvm.functions.Function1, kotlin.jvm.functions.Function0, androidx.compose.ui.Modifier, androidx.compose.runtime.Composer, int, int);
+}
+-keep class com.example.ui.screens.TrashScreenKt {
+  public static void TrashScreen(com.example.ui.MainViewModel, androidx.compose.ui.Modifier, kotlin.jvm.functions.Function0, androidx.compose.runtime.Composer, int, int);
+}
+-keep class com.example.ui.theme.ThemeKt {
+  public static void PersonalLibraryTheme(boolean, boolean, kotlin.jvm.functions.Function2, androidx.compose.runtime.Composer, int, int);
 }
 -keep interface com.google.common.util.concurrent.ListenableFuture {
   public void addListener(java.lang.Runnable, java.util.concurrent.Executor);
@@ -889,8 +1108,16 @@
 -keep class com.personallibrary.core.backup.BackupManifest {
   public java.util.List getItems();
 }
+-keep enum com.personallibrary.core.backup.BackupMode {
+  com.personallibrary.core.backup.BackupMode EXPORT;
+  com.personallibrary.core.backup.BackupMode RESTORE;
+}
 -keep class com.personallibrary.core.backup.RestorePreview {
   public com.personallibrary.core.backup.BackupManifest getManifest();
+}
+-keep enum com.personallibrary.core.model.ItemKind {
+  public java.lang.String getDisplayName();
+  com.personallibrary.core.model.ItemKind TEXT;
 }
 -keep @interface javax.annotation.CheckReturnValue {
 }
@@ -966,6 +1193,9 @@
   public static java.lang.Object createFailure(java.lang.Throwable);
   public static void throwOnFailure(java.lang.Object);
 }
+-keep class kotlin.Triple {
+  public <init>(java.lang.Object, java.lang.Object, java.lang.Object);
+}
 -keep class kotlin.TuplesKt {
   public static kotlin.Pair to(java.lang.Object, java.lang.Object);
 }
@@ -1011,8 +1241,6 @@
   public static java.util.List listOfNotNull(java.lang.Object);
   public static void throwIndexOverflow();
 }
-# Its unkept subclass can be repackaged by R8. Permit widening this package-private
-# base so the instrumented target retains a legal inheritance boundary.
 -keep,allowaccessmodification class kotlin.collections.CollectionsKt__IterablesKt {
   public static int collectionSizeOrDefault(java.lang.Iterable, int);
 }
@@ -1035,6 +1263,9 @@
   public static java.util.List toList(java.lang.Iterable);
   public static java.util.Set toSet(java.lang.Iterable);
 }
+-keep class kotlin.collections.IntIterator {
+  public int nextInt();
+}
 -keep class kotlin.collections.MapsKt {
 }
 -keep class kotlin.collections.MapsKt__MapsKt {
@@ -1047,6 +1278,7 @@
   public static java.util.Set setOf(java.lang.Object);
 }
 -keep class kotlin.collections.SetsKt__SetsKt {
+  public static java.util.Set emptySet();
   public static java.util.Set setOf(java.lang.Object[]);
 }
 -keep class kotlin.collections.SetsKt___SetsKt {
@@ -1123,7 +1355,9 @@
   public static java.lang.Object getCOROUTINE_SUSPENDED();
 }
 -keep class kotlin.coroutines.jvm.internal.Boxing {
+  public static java.lang.Boolean boxBoolean(boolean);
   public static java.lang.Integer boxInt(int);
+  public static java.lang.Long boxLong(long);
 }
 -keep class kotlin.coroutines.jvm.internal.ContinuationImpl {
   public <init>(kotlin.coroutines.Continuation);
@@ -1161,6 +1395,9 @@
   public static byte[] readBytes(java.io.File);
   public static void writeBytes(java.io.File, byte[]);
   public static void writeText$default(java.io.File, java.lang.String, java.nio.charset.Charset, int, java.lang.Object);
+}
+-keep class kotlin.io.TextStreamsKt {
+  public static java.lang.String readText(java.io.Reader);
 }
 -keep class kotlin.jdk7.AutoCloseableKt {
   public static void closeFinally(java.lang.AutoCloseable, java.lang.Throwable);
@@ -1243,6 +1480,9 @@
   public static int roundToInt(float);
   public static long roundToLong(float);
 }
+-keep class kotlin.ranges.IntRange {
+  public <init>(int, int);
+}
 -keep class kotlin.ranges.LongProgression {
   public long getFirst();
   public long getLast();
@@ -1252,6 +1492,8 @@
 }
 -keep interface kotlin.reflect.KClass {
   public java.lang.String getSimpleName();
+}
+-keep interface kotlin.reflect.KFunction {
 }
 -keep interface kotlin.sequences.Sequence {
   public java.util.Iterator iterator();
@@ -1274,11 +1516,18 @@
 -keep class kotlin.text.StringsKt {
 }
 -keep class kotlin.text.StringsKt__StringsJVMKt {
+  public static java.lang.String concatToString(char[]);
   public static boolean equals(java.lang.String, java.lang.String, boolean);
+  public static java.lang.String replace$default(java.lang.String, java.lang.String, java.lang.String, boolean, int, java.lang.Object);
   public static boolean startsWith$default(java.lang.String, java.lang.String, boolean, int, java.lang.Object);
 }
 -keep class kotlin.text.StringsKt__StringsKt {
+  public static boolean contains$default(java.lang.CharSequence, java.lang.CharSequence, boolean, int, java.lang.Object);
   public static boolean contains(java.lang.CharSequence, java.lang.CharSequence, boolean);
+  public static java.lang.CharSequence trim(java.lang.CharSequence);
+}
+-keep class kotlin.text.StringsKt___StringsKt {
+  public static java.lang.String takeLast(java.lang.String, int);
 }
 -keep class kotlin.time.AbstractLongTimeSource {
   public <init>(kotlin.time.DurationUnit);
@@ -1496,6 +1745,9 @@
   public boolean isInstalled$kotlinx_coroutines_debug();
   public void uninstall$kotlinx_coroutines_core();
   kotlinx.coroutines.debug.internal.DebugProbesImpl INSTANCE;
+}
+-keep interface kotlinx.coroutines.flow.StateFlow {
+  public java.lang.Object getValue();
 }
 -keep class kotlinx.coroutines.internal.CoroutineExceptionHandlerImplKt {
   public static void ensurePlatformExceptionHandlerLoaded(kotlinx.coroutines.CoroutineExceptionHandler);

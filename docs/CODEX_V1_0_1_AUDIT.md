@@ -6,10 +6,10 @@ Status vocabulary at final audit: COMPLETE / PARTIAL / NOT NEEDED / BLOCKED. Pen
 
 | Section | Requirement | Status | Evidence / remaining work |
 | --- | --- | --- | --- |
-| 0 | NON-NEGOTIABLE RULES | PARTIAL | Pending phase verification and final audit. |
+| 0 | NON-NEGOTIABLE RULES | COMPLETE | Existing architecture audited; scoped phase commits, synthetic fixtures, permanent identity and non-destructive migration preserved. Final runtime/signing gates remain Phase 7. |
 | 1 | DEFINITION OF GREEN | PARTIAL | Pending phase verification and final audit. |
-| 2 | CRITICAL AI ARCHITECTURE RULE | PARTIAL | Pending phase verification and final audit. |
-| 3 | IMPLEMENTATION ORDER IS MANDATORY | PARTIAL | Pending phase verification and final audit. |
+| 2 | CRITICAL AI ARCHITECTURE RULE | COMPLETE | Existing items, FTS, search_documents, embeddings and durable analysis jobs reused; no parallel catalog or global memory file. |
+| 3 | IMPLEMENTATION ORDER IS MANDATORY | COMPLETE | Phases 1-6 verified and committed in mandatory order; Phase 7 active. |
 | 4 | BACKUP EXPORT MODE BUG — P0 | COMPLETE | Explicit BackupMode and engine-minimum/exact-confirmation policy; core tests passed; 6 Compose safety tests compile, runtime deferred to hosted/final verification. |
 | 5 | RESTORE STAGING PRIVACY — P0 | COMPLETE | Owned staging, cancel/dismiss/disposal/exception/finally cleanup, abandoned-stage sweep and active-stage cache protection; 3 core staging tests passed. |
 | 6 | REMINDER + TRASH RESTORE BUG — P0/P1 | COMPLETE | Single/batch/Undo future scheduling, past/done behavior, timezone persistence, boot/stale alarm/collision protections; focused Robolectric suites passed. Restore All UI follows Phase 2. |
@@ -39,35 +39,35 @@ Status vocabulary at final audit: COMPLETE / PARTIAL / NOT NEEDED / BLOCKED. Pen
 | 30 | AI ANSWERS REQUIRE PROVENANCE | COMPLETE | Request-local source refs map to local items/pages; server remaps again before provider and validates citations before mapping back. Executed VM/source tests pass; four source/answer Compose tests compile, runtime deferred. |
 | 31 | AI ANSWER GROUNDING | COMPLETE | Higher-priority evidence-only/untrusted-content prompt; strict ANSWERED/CONFLICTING/INSUFFICIENT shape and allowlisted citations; fixed local insufficiency wording. Structural validation cannot prove model factual accuracy; real provider/manual QA remains pending. |
 | 32 | DO NOT BUILD V2 KNOWLEDGE GRAPH | COMPLETE | No people/fact/relationship/knowledge graph, global memory file or duplicate AI catalog added. Existing schema5/index pipeline retained. |
-| 33 | VOICE SEARCH RECOVERY | PARTIAL | Pending phase verification and final audit. |
-| 34 | REMINDERS COLLECTION NAME | PARTIAL | Pending phase verification and final audit. |
-| 35 | DARK MODE / LIGHT MODE | PARTIAL | Pending phase verification and final audit. |
-| 36 | NAVIGATION | PARTIAL | Pending phase verification and final audit. |
-| 37 | LIBRARY FILTER / CONTROL LAYOUT | PARTIAL | Pending phase verification and final audit. |
-| 38 | LIST / GRID FUNCTIONAL PARITY | PARTIAL | Pending phase verification and final audit. |
-| 39 | ACCESSIBILITY | PARTIAL | Pending phase verification and final audit. |
-| 40 | ICON SEMANTICS | PARTIAL | Pending phase verification and final audit. |
+| 33 | VOICE SEARCH RECOVERY | COMPLETE | Voice errors name available typed input; executable VoiceSearchTest passed. |
+| 34 | REMINDERS COLLECTION NAME | COMPLETE | Computed collection and active-filter chip say Reminders; stable computed_due query retained. |
+| 35 | DARK MODE / LIGHT MODE | PARTIAL | Fixed day/night/manual launch resources, API31 app splash preference and paired/type contrast; 7 SDK-expanded launch regressions passed. API29-30 OS starting window may precede saved manual override; physical cold-launch acceptance pending. |
+| 36 | NAVIGATION | COMPLETE | Hierarchical Back/visible Up, modal/selection priority, one-time notification consumption and saveable detail ID; navigation instrumentation compiles, hosted runtime pending. |
+| 37 | LIBRARY FILTER / CONTROL LAYOUT | COMPLETE | Existing horizontally scrolling filters/sort and visible active filters retained; Clear Filters remains available. Large-font tests compile; device acceptance pending. |
+| 38 | LIST / GRID FUNCTIONAL PARITY | COMPLETE | Grid Share reuses common handler; list/grid favorite/reminder/selection actions retained. Presentation tests passed; parity instrumentation compiles. |
+| 39 | ACCESSIBILITY | COMPLETE | 48dp controls, meaningful picker/favorite semantics, constrained card action layout and >=4.5 type-label contrast verified locally; large-font/TalkBack device acceptance pending. |
+| 40 | ICON SEMANTICS | COMPLETE | Headphones/Link/Description type icons; executable icon regressions passed. |
 | 41 | FILTERED EMPTY STATE | COMPLETE | Phase 3 shared filtered-empty wording and Clear Filters; Compose coverage compiled, runtime deferred. |
-| 42 | COLLECTION AI PRIVACY UI | PARTIAL | Pending phase verification and final audit. |
-| 43 | SHARE PREVIEW — OPTIONAL | PARTIAL | Pending phase verification and final audit. |
-| 44 | FILEPROVIDER — AUDIT, DON'T BREAK | PARTIAL | Pending phase verification and final audit. |
-| 45 | IMPORT STORAGE PREFLIGHT | PARTIAL | Pending phase verification and final audit. |
-| 46 | STORAGE SIZE DISPLAY | PARTIAL | Pending phase verification and final audit. |
+| 42 | COLLECTION AI PRIVACY UI | COMPLETE | Collection-specific AI Privacy remains in visible overflow dialog; no permanent card toggle. |
+| 43 | SHARE PREVIEW — OPTIONAL | NOT NEEDED | Optional filename-list preview deferred; existing confirmed share preview preserved. |
+| 44 | FILEPROVIDER — AUDIT, DON'T BREAK | COMPLETE | Only files/storage_root/blobs is exposed; real manifest/resource test passed, all three consumers audited. Real provider URI open/read/private-cache-prefix boundary instrumentation compiles; Windows AndroidX separator mismatch prevents local URI runtime claims. |
+| 45 | IMPORT STORAGE PREFLIGHT | COMPLETE | Optional provider size, 16MiB disk headroom and streamed budget reuse atomic storage/Room publication; core and real fake-provider capture regressions passed, including missing/negative/oversize metadata. |
+| 46 | STORAGE SIZE DISPLAY | COMPLETE | Settings explicitly labels logical content size; no exact reclaimable-storage claim. |
 | 47 | FTS DATABASE OPEN BEHAVIOR | COMPLETE | Diagnostic reproduced eight unnecessary DDL changes; conditional repair preserves unchanged opens, rebuilds missing/stale indexes, and reconciles legacy triggers during 4→5 migration. Actual Room tests passed. |
 | 48 | ROOM SCHEMA EXPORT | COMPLETE | Room schema export enabled with KSP location; original schema 4 and resulting schema 5 retained. Actual Room migration-open regression passed, no destructive migration. |
-| 49 | NO CASUAL DELETE-ALL FEATURE | PARTIAL | Pending phase verification and final audit. |
-| 50 | NO "DELETE COLLECTION + CONTENT" MAGIC | PARTIAL | Pending phase verification and final audit. |
-| 51 | SECURITY POSITIONING | PARTIAL | Pending phase verification and final audit. |
-| 52 | PRIVATE DATA LOGGING | PARTIAL | Pending phase verification and final audit. |
-| 53 | PERFORMANCE | PARTIAL | Pending phase verification and final audit. |
-| 54 | VERSION / BRANCH | PARTIAL | Pending phase verification and final audit. |
-| 55 | RELEASE SIGNING | PARTIAL | Pending phase verification and final audit. |
-| 56 | APK PACKAGING | PARTIAL | Pending phase verification and final audit. |
+| 49 | NO CASUAL DELETE-ALL FEATURE | COMPLETE | No casual Delete All Library command added; filtered Select All Visible -> Trash -> confirmed Empty Trash retained. |
+| 50 | NO "DELETE COLLECTION + CONTENT" MAGIC | COMPLETE | Collection deletion removes membership only; saved items and other memberships preserved by executed regressions. |
+| 51 | SECURITY POSITIONING | COMPLETE | Keystore/auth/HTTPS/encrypted backups/platform-backup exclusions/non-exported components retained; app lock is not represented as an encrypted vault. |
+| 52 | PRIVATE DATA LOGGING | COMPLETE | No private-content/passphrase/provider-secret logs added; backend logs request metadata and returns sanitized provider errors. Signing diagnostics remain transient. |
+| 53 | PERFORMANCE | PARTIAL | Bounded AI candidates/evidence, latest-query cancellation and off-main Select All tested; real large-library latency, scrolling and memory measurements remain device QA. |
+| 54 | VERSION / BRANCH | PARTIAL | Separate codex/v1.0.1-hardening branch; version1.0.1/code3 prepared. Final source commit/push and exact-source hosted verification pending. |
+| 55 | RELEASE SIGNING | PARTIAL | Same permanent key and isolated QA-candidate mode preserved; 51 synthetic safety checks per PowerShell runtime passed. Actual signing awaits exact-source five-job CI. |
+| 56 | APK PACKAGING | PARTIAL | ARM64/universal release strategy and R8/shrinking preserved; exact instrumentation-only keep rules regenerated. Final optimized/release artifact checks in progress. |
 | 57 | TESTING — REQUIRED | PARTIAL | Pending phase verification and final audit. |
 | 58 | REQUIRED REGRESSION COVERAGE | PARTIAL | Pending phase verification and final audit. |
-| 59 | MANUAL PHYSICAL QA CHECKLIST | PARTIAL | Pending phase verification and final audit. |
-| 60 | DEFINITION OF DONE FOR AI | PARTIAL | Pending phase verification and final audit. |
-| 61 | DO NOT OVERBUILD | PARTIAL | Pending phase verification and final audit. |
+| 59 | MANUAL PHYSICAL QA CHECKLIST | COMPLETE | Same physical QA checklist finalized with synthetic navigation/provider/large-font/network/backup/reminder/theme checks; all physical checks explicitly unexecuted. |
+| 60 | DEFINITION OF DONE FOR AI | COMPLETE | All 12 AI architecture statements supported by existing pipeline, bounded local-first protocol, per-dispatch privacy/network guards, cached-only evidence, server bounds and local source mapping. Live endpoint/provider acceptance remains separate. |
+| 61 | DO NOT OVERBUILD | COMPLETE | No knowledge graph, people/fact database, global memory, cloud sync, telemetry, full wipe or major redesign added. |
 | 62 | FINAL REPORT FORMAT | PARTIAL | Pending phase verification and final audit. |
 | 63 | FINAL PRODUCT TARGET | PARTIAL | Pending phase verification and final audit. |
 | 64 | START | PARTIAL | Pending phase verification and final audit. |

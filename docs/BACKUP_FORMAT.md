@@ -31,6 +31,8 @@ Minimum passphrase: 12 characters. PBKDF2-HMAC-SHA256, 600,000 iterations and th
 
 The manifest includes items, collections, memberships, reminders and assets: owner content, favorites, saved/source dates, Trash and original metadata. Compatible date-only fields default to false/null in older manifests: item `isReminderDateOnly`/`reminderLocalDate`, reminder `isDateOnly`/`localDate`.
 
+V1.0.1 keeps envelope/archive version 1 and adds optional collection `applicationRole` (default null when reading older V1 backups). `RANDOM_LINKS` preserves routing through display-name changes and fresh/merged restores. Non-destructive Room migration 4→5 adds the corresponding unique optional role and default-false analysis-job `metadataOnly` flag; derived jobs remain local rather than portable backup state. Restore preserves compatible live collection display metadata, deterministically remaps genuine identity collisions, and retains memberships when repeated.
+
 Bounds: manifest 10 MiB, each original 500 MiB, aggregate original bytes 2 GiB, 50,000 assets. Inspection rejects unsupported versions, invalid lengths/metadata, duplicate/undeclared/missing frames, size/hash mismatches (including empty assets), truncation, wrong passphrase, tampering and trailing data. Framed assets must equal declared assets exactly. Export fails on a missing or mismatched original.
 
 ## Snapshot and restore
@@ -38,6 +40,8 @@ Bounds: manifest 10 MiB, each original 500 MiB, aggregate original bytes 2 GiB, 
 Export obtains one Room transaction snapshot of all metadata and protects originals through streaming; the Room transaction ends before encryption/file I/O. Cancellation propagates.
 
 Inspection validates into private staging before live mutation. Restore previews duplicates, safely remaps unrelated collection-ID collisions, verifies/publishes real blobs, and commits metadata/refcounts transactionally. Failed commits reconcile new orphan publications. Shared originals are counted from committed references. Schedule reminders only after successful commit.
+
+Owned staging is removed on cancellation, dismissal, failure and completion; initialization cleans abandoned stages while preserving active previews. This removes private staged files and references, without claiming physical flash-block secure erasure.
 
 Derived text/AI fields are not trusted as a ready index: restore rebuilds indexes and eligible analysis work. Keystore identity, pairing/session credentials and device preferences are outside the portable archive; pair a restored device separately. Platform backup/transfer exclusions are deliberate.
 

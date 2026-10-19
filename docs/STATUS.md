@@ -1,5 +1,11 @@
 # V1 verification status
 
+## V1.0.1 hardening candidate — 19 October 2026
+
+The separate `codex/v1.0.1-hardening` branch contains six verified local checkpoints; Phase 7 final verification is active. Phase 6 passed core 57/57, Android JVM 195/195, lint with zero errors/81 existing warnings, debug assembly and instrumentation assembly. Final backend verification passed 104/104, typecheck and build. These results do not establish hosted emulator, signed candidate or physical-device acceptance. Exact current results, phase hashes and remaining checks are maintained in [the worklog](CODEX_V1_0_1_WORKLOG.md), with [the requirement audit](CODEX_V1_0_1_AUDIT.md) and [physical QA checklist](CODEX_V1_0_1_PHYSICAL_QA.md).
+
+Version 1.0.1/code 3 preserves package and permanent certificate. The candidate is separate from the published V1.0.0 release below; no production merge, public release or backend deployment is performed by the hardening work.
+
 ## First official release — 16 October 2026
 
 Memora V1.0.0 / versionCode 2 is published as the first official GitHub release: [v1.0.0](https://github.com/RyanEid06/personal-library/releases/tag/v1.0.0). The signed APKs were built from `1c42f958f3e663d2e547a266670bae4fb54e5214` after all five jobs passed in [run 38959696966](https://github.com/RyanEid06/personal-library/actions/runs/38959696966). Subsequent release-record commits changed documentation only; no Android, build, or signing inputs changed. The final release-tag source also passed all five jobs, including debug and optimized API 35 instrumentation (8/8 each, no failures/errors/skips), backend tests, Android/core checks, lint, and Windows signing regressions. Both APKs use the established permanent certificate and passed package/version, ABI/OCR, signature, zipalign and ARM64 16 KB ELF checks. Their exact SHA-256 values and sizes are listed with the release assets and in the ignored `artifacts/release-v1/FINAL_VERIFICATION.md` record.

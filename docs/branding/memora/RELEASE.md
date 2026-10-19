@@ -40,6 +40,8 @@ Only this Windows user on this PC can decrypt the DPAPI payload. No AES key, por
 
 ## One-command owner-local release
 
+For the separate V1.0.1 hardening-branch QA candidate, use the explicitly gated [candidate build command](../../QA_CANDIDATE_BUILD.md). It preserves the permanent signing identity and writes candidate artifacts and provenance separately from official release outputs.
+
 After required exact-source CI jobs pass, future releases need only:
 
 ```powershell

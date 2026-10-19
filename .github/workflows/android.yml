@@ -20,11 +20,14 @@ jobs:
         run: |
           ./scripts/Test-MemoraSigning.ps1
           ./scripts/Test-MemoraReleaseSafety.ps1
+          ./scripts/Test-MemoraReleaseCandidate.ps1
           ./scripts/Test-MemoraApk.ps1
           powershell -NoProfile -ExecutionPolicy Bypass -File scripts/Test-MemoraSigning.ps1
           if ($LASTEXITCODE -ne 0) { throw 'Windows PowerShell DPAPI regressions failed' }
           powershell -NoProfile -ExecutionPolicy Bypass -File scripts/Test-MemoraReleaseSafety.ps1
           if ($LASTEXITCODE -ne 0) { throw 'Windows PowerShell release safety regressions failed' }
+          powershell -NoProfile -ExecutionPolicy Bypass -File scripts/Test-MemoraReleaseCandidate.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'Windows PowerShell QA candidate regressions failed' }
           powershell -NoProfile -ExecutionPolicy Bypass -File scripts/Test-MemoraApk.ps1
           if ($LASTEXITCODE -ne 0) { throw 'Windows PowerShell APK inspection regressions failed' }
 
