@@ -37,6 +37,7 @@ import coil.compose.AsyncImage
 import com.example.data.CollectionEntity
 import com.example.data.ItemEntity
 import com.example.data.ItemWithCollections
+import com.example.ui.theme.LocalAppDarkTheme
 import com.personallibrary.core.model.ItemKind
 import java.io.File
 import java.text.SimpleDateFormat
@@ -85,24 +86,38 @@ fun getKindIcon(kindStr: String): ImageVector {
         "PHOTO" -> Icons.Filled.Photo
         "STICKER" -> Icons.Filled.Face
         "VIDEO" -> Icons.Filled.PlayArrow
-        "AUDIO" -> Icons.Filled.Notifications
+        "AUDIO" -> Icons.Filled.Headphones
         "TEXT" -> Icons.Filled.Edit
-        "LINK" -> Icons.Filled.Share
-        "DOCUMENT" -> Icons.Filled.Info
+        "LINK" -> Icons.Filled.Link
+        "DOCUMENT" -> Icons.Filled.Description
         else -> Icons.Filled.Folder
     }
 }
 
-fun getKindColor(kindStr: String): Color {
+@Composable
+fun getKindColor(kindStr: String): Color = kindColorForTheme(kindStr, LocalAppDarkTheme.current)
+
+internal fun kindColorForTheme(kindStr: String, darkTheme: Boolean): Color {
+    // Keep each type's hue, using readable foregrounds on both the card and its tinted badge.
+    if (darkTheme) return when (kindStr) {
+        "PHOTO" -> Color(0xFF93C5FD)
+        "STICKER" -> Color(0xFFF9A8D4)
+        "VIDEO" -> Color(0xFFFCA5A5)
+        "AUDIO" -> Color(0xFFC4B5FD)
+        "TEXT" -> Color(0xFF6EE7B7)
+        "LINK" -> Color(0xFF67E8F9)
+        "DOCUMENT" -> Color(0xFFFCD34D)
+        else -> Color(0xFFCBD5E1)
+    }
     return when (kindStr) {
-        "PHOTO" -> Color(0xFF3B82F6)
-        "STICKER" -> Color(0xFFEC4899)
-        "VIDEO" -> Color(0xFFEF4444)
-        "AUDIO" -> Color(0xFF8B5CF6)
-        "TEXT" -> Color(0xFF10B981)
-        "LINK" -> Color(0xFF06B6D4)
-        "DOCUMENT" -> Color(0xFFF59E0B)
-        else -> Color(0xFF6B7280)
+        "PHOTO" -> Color(0xFF1D4ED8)
+        "STICKER" -> Color(0xFF9D174D)
+        "VIDEO" -> Color(0xFFB91C1C)
+        "AUDIO" -> Color(0xFF6D28D9)
+        "TEXT" -> Color(0xFF065F46)
+        "LINK" -> Color(0xFF155E75)
+        "DOCUMENT" -> Color(0xFF92400E)
+        else -> Color(0xFF4B5563)
     }
 }
 
@@ -224,8 +239,8 @@ fun ItemCard(
                     ) {
                         Icon(
                             imageVector = if (item.isFavorite) Icons.Filled.Star else Icons.Outlined.Star,
-                            contentDescription = if (item.isFavorite) "Favorited" else "Favorite",
-                            tint = if (item.isFavorite) Color(0xFFF59E0B) else MaterialTheme.colorScheme.outline
+                            contentDescription = if (item.isFavorite) "Remove from Favorites" else "Add to Favorites",
+                            tint = if (item.isFavorite) getKindColor("DOCUMENT") else MaterialTheme.colorScheme.outline
                         )
                     }
                 }
@@ -331,7 +346,10 @@ fun ItemCard(
                     text = "Saved ${dateFormatter.format(Date(item.createdAt))}",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.outline,
-                    fontSize = 11.sp
+                    fontSize = 11.sp,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
                 )
 
                 Row {
@@ -379,6 +397,7 @@ fun ItemGridCard(
     onSelectToggle: () -> Unit = {},
     matchingSnippet: String? = null
 ) {
+    val context = LocalContext.current
     val item = itemWithCols.item
     val kindColor = getKindColor(item.kind)
     val blobFile = remember(item.contentHash) {
@@ -461,7 +480,10 @@ fun ItemGridCard(
                     text = item.kind,
                     color = kindColor,
                     fontSize = 10.sp,
-                    fontWeight = FontWeight.Bold
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
                 )
 
                 if (item.reminderTime != null) {
@@ -474,13 +496,20 @@ fun ItemGridCard(
                 ) {
                     Icon(
                         imageVector = if (item.isFavorite) Icons.Filled.Star else Icons.Outlined.Star,
-                        contentDescription = if (item.isFavorite) "Favorited" else "Favorite",
-                        tint = if (item.isFavorite) Color(0xFFF59E0B) else MaterialTheme.colorScheme.outline,
+                        contentDescription = if (item.isFavorite) "Remove from Favorites" else "Add to Favorites",
+                        tint = if (item.isFavorite) getKindColor("DOCUMENT") else MaterialTheme.colorScheme.outline,
                         modifier = Modifier.size(16.dp)
                     )
                 }
             }
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                IconButton(
+                    onClick = { shareItemEntity(context, item, blobFile) },
+                    enabled = !isSelectMode,
+                    modifier = Modifier.size(48.dp).testTag("share_btn_${item.id}")
+                ) {
+                    Icon(Icons.Outlined.Share, contentDescription = "Share", tint = MaterialTheme.colorScheme.outline)
+                }
                 IconButton(onClick = onDelete, enabled = !isSelectMode, modifier = Modifier.size(48.dp).testTag("trash_btn_${item.id}")) {
                     Icon(Icons.Outlined.Delete, contentDescription = "Move to Trash", tint = MaterialTheme.colorScheme.outline)
                 }

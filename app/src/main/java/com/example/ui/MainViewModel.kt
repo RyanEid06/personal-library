@@ -73,7 +73,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             viewModelScope.launch(Dispatchers.Main.immediate) { invalidateAiSearch() }
         }
     }
-    private val themePreferences = ThemePreferences(prefs)
+    private val themePreferences = ThemePreferences(prefs, application)
     val themeMode = themePreferences.mode
 
     fun setThemeMode(mode: ThemeMode) = themePreferences.setMode(mode)

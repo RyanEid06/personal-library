@@ -34,8 +34,14 @@ class ManagedAssetStore(val root: Path) {
         originalName: String?,
         declaredMime: String?,
         explicitSticker: Boolean = false,
-        availableBytes: Long = Long.MAX_VALUE
+        availableBytes: Long = (root.toFile().usableSpace - 16L * 1024 * 1024).coerceAtLeast(0),
+        knownSizeBytes: Long? = null
     ): StoredAsset {
+        // Keep room for metadata/other app writes. Provider sizes are advisory;
+        // the streaming budget below still applies if they are absent or wrong.
+        if (knownSizeBytes != null && knownSizeBytes >= 0 && knownSizeBytes > availableBytes) {
+            throw IOException("Insufficient storage capacity for import")
+        }
         val safeOriginalName = sanitizeFileName(originalName ?: "unnamed_file")
         val stagingFile = File(stagingDir, "stage_${UUID.randomUUID()}_$safeOriginalName")
 

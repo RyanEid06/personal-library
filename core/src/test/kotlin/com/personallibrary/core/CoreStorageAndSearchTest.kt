@@ -54,6 +54,29 @@ class ManagedAssetStoreTest {
     @JvmField
     val tempFolder = TemporaryFolder()
 
+    @Test fun knownOversizeIsRejectedBeforeReadingOrStaging() {
+        val store = ManagedAssetStore(tempFolder.root.toPath())
+        var read = false
+        val input = object : InputStream() { override fun read(): Int { read = true; return -1 } }
+        assertThrows(IOException::class.java) {
+            store.import(input, "synthetic.bin", null, availableBytes = 10, knownSizeBytes = 11)
+        }
+        assertFalse(read)
+        assertTrue(tempFolder.root.resolve("staging").listFiles().orEmpty().isEmpty())
+        assertTrue(tempFolder.root.resolve("blobs").listFiles().orEmpty().isEmpty())
+    }
+
+    @Test fun providerUnderreportedSizeCannotBypassStreamBudget() {
+        val store = ManagedAssetStore(tempFolder.root.toPath())
+        assertThrows(IOException::class.java) {
+            store.import(ByteArray(32).inputStream(), "synthetic.bin", null, availableBytes = 16, knownSizeBytes = 1)
+        }
+        assertTrue(tempFolder.root.resolve("staging").listFiles().orEmpty().isEmpty())
+        assertTrue(tempFolder.root.resolve("blobs").listFiles().orEmpty().isEmpty())
+        val asset = store.import(ByteArray(16).inputStream(), "fits.bin", null, availableBytes = 16, knownSizeBytes = 16)
+        assertEquals(16L, store.getBlobFile(asset.hash)!!.length())
+    }
+
     @Test
     fun testDeduplicationIdenticalBytesReuseSingleBlob() {
         val store = ManagedAssetStore(tempFolder.root.toPath())

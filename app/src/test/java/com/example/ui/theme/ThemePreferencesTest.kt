@@ -17,7 +17,7 @@ class ThemePreferencesTest {
     @Test fun existingInstallDefaultsToSystemWithoutChangingOtherSettings() {
         val preferences = preferences()
         preferences.edit().putBoolean("ai_paused", true).putString("library_layout", "GRID").commit()
-        val store = ThemePreferences(preferences)
+        val store = ThemePreferences(preferences, ApplicationProvider.getApplicationContext())
         assertEquals(ThemeMode.SYSTEM, store.mode.value)
         store.setMode(ThemeMode.DARK)
         assertTrue(preferences.getBoolean("ai_paused", false))
@@ -26,11 +26,11 @@ class ThemePreferencesTest {
 
     @Test fun everySelectionUpdatesImmediatelyAndSurvivesStoreRecreation() {
         val preferences = preferences()
-        val store = ThemePreferences(preferences)
+        val store = ThemePreferences(preferences, ApplicationProvider.getApplicationContext())
         for (mode in listOf(ThemeMode.DARK, ThemeMode.LIGHT, ThemeMode.SYSTEM)) {
             store.setMode(mode)
             assertEquals(mode, store.mode.value)
-            assertEquals(mode, ThemePreferences(preferences).mode.value)
+            assertEquals(mode, ThemePreferences(preferences, ApplicationProvider.getApplicationContext()).mode.value)
         }
     }
 }

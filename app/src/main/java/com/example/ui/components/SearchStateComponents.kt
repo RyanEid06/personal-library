@@ -53,7 +53,7 @@ fun ActiveSearchFilters(
                 val name = when (collectionId) {
                     "computed_favorites" -> "Favorites"
                     "computed_unfiled" -> "Unfiled"
-                    "computed_due" -> "Due Reminders"
+                    "computed_due" -> "Reminders"
                     else -> collections.find { it.id == collectionId }?.name ?: "Collection"
                 }
                 ActiveFilterChip("Collection: $name", "active_collection_chip", "Clear collection", onClearCollection)

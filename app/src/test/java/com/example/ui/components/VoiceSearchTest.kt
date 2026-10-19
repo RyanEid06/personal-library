@@ -39,6 +39,8 @@ class VoiceSearchTest {
         assertFalse(listening)
         shadow.triggerOnError(SpeechRecognizer.ERROR_NO_MATCH)
         assertFalse(listening)
+        assertTrue("Recognition error must explain the available typed fallback", status.contains("type", ignoreCase = true))
+        assertFalse("The decorative mic has no retry click action", status.contains("tap mic", ignoreCase = true))
         recognizer!!.destroy()
         assertTrue(shadow.isDestroyed)
     }

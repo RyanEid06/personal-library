@@ -19,6 +19,7 @@ import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -50,10 +51,13 @@ enum class AppDestination(val label: String) {
 class MainActivity : androidx.fragment.app.FragmentActivity() {
 
     private val viewModel: MainViewModel by viewModels()
+    private var notificationTargetItemId by mutableStateOf<String?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        com.example.ui.theme.ThemePreferences.applyActivityTheme(this)
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        notificationTargetItemId = intent?.getStringExtra(ReminderReceiver.EXTRA_ITEM_ID)
 
         if (savedInstanceState == null) handleIntent(intent)
         else if (savedInstanceState.getBoolean("share_preview_pending") && viewModel.incomingShare.value == null) {
@@ -118,7 +122,13 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
                 } else {
                     MainAppScaffold(
                         viewModel = viewModel,
-                        intentTargetItemId = intent?.getStringExtra(ReminderReceiver.EXTRA_ITEM_ID)
+                        intentTargetItemId = notificationTargetItemId,
+                        onIntentTargetConsumed = { itemId ->
+                            if (notificationTargetItemId == itemId) {
+                                notificationTargetItemId = null
+                                intent?.removeExtra(ReminderReceiver.EXTRA_ITEM_ID)
+                            }
+                        }
                     )
                 }
             }
@@ -146,6 +156,7 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
     }
 
     private fun handleIntent(intent: Intent?) {
+        notificationTargetItemId = intent?.getStringExtra(ReminderReceiver.EXTRA_ITEM_ID)
         val payload = intent?.let(com.example.capture.SharePayloadDecoder::decode) ?: return
         if (payload.text != null || payload.uris.isNotEmpty() || payload.rejectedCount > 0) viewModel.setIncomingShare(payload)
         // Consume delivery immediately. A configuration/process restore must not replay transient grants.
@@ -156,10 +167,11 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
 @Composable
 fun MainAppScaffold(
     viewModel: MainViewModel,
-    intentTargetItemId: String?
+    intentTargetItemId: String?,
+    onIntentTargetConsumed: (String) -> Unit = {}
 ) {
-    var currentDestination by remember { mutableStateOf(AppDestination.LIBRARY) }
-    var activeDetailItem by remember { mutableStateOf<ItemWithCollections?>(null) }
+    var currentDestination by rememberSaveable { mutableStateOf(AppDestination.LIBRARY) }
+    var activeDetailItemId by rememberSaveable { mutableStateOf<String?>(null) }
     var editingItem by remember { mutableStateOf<ItemWithCollections?>(null) }
     var showAddDialog by remember { mutableStateOf(false) }
     var showVoiceSearchDialog by remember { mutableStateOf(false) }
@@ -168,21 +180,35 @@ fun MainAppScaffold(
     val incomingShare by viewModel.incomingShare.collectAsState()
     val collections by viewModel.collections.collectAsState()
     val allItems by viewModel.items.collectAsState()
+    val activeDetailItem = allItems.find { it.item.id == activeDetailItemId }
     val capture by viewModel.captureState.collectAsState()
+    val isBatchMode by viewModel.isBatchMode.collectAsState()
+    var consumedTargetItemId by rememberSaveable { mutableStateOf<String?>(null) }
+    val latestOnIntentTargetConsumed by rememberUpdatedState(onIntentTargetConsumed)
 
-    // Handle launch from notification
-    LaunchedEffect(intentTargetItemId, allItems) {
-        if (intentTargetItemId != null && activeDetailItem == null) {
+    // Wait for the item to load, then consume this delivery before later database emissions.
+    LaunchedEffect(intentTargetItemId, allItems, activeDetailItemId) {
+        if (intentTargetItemId == null) {
+            consumedTargetItemId = null
+        } else if (intentTargetItemId != consumedTargetItemId && activeDetailItemId == null) {
             val item = allItems.find { it.item.id == intentTargetItemId }
             if (item != null) {
-                activeDetailItem = item
+                consumedTargetItemId = intentTargetItemId
+                activeDetailItemId = item.item.id
+                latestOnIntentTargetConsumed(intentTargetItemId)
             }
         }
     }
 
-    // BackHandler: If on a sub-screen, return to LIBRARY
-    BackHandler(enabled = currentDestination != AppDestination.LIBRARY) {
-        currentDestination = AppDestination.LIBRARY
+    fun navigateUp() {
+        currentDestination = if (currentDestination == AppDestination.TRASH) AppDestination.SETTINGS else AppDestination.LIBRARY
+    }
+
+    // Dialogs handle their own dismissal; screen selection handles Back before navigation.
+    val hasModal = activeDetailItem != null || editingItem != null || showAddDialog ||
+        showVoiceSearchDialog || incomingShare != null
+    BackHandler(enabled = currentDestination != AppDestination.LIBRARY && !hasModal && !isBatchMode) {
+        navigateUp()
     }
 
     Scaffold(
@@ -256,9 +282,9 @@ fun MainAppScaffold(
                 AppDestination.LIBRARY -> {
                     LibraryScreen(
                         viewModel = viewModel,
-                        onOpenItemDetail = { activeDetailItem = it },
+                        onOpenItemDetail = { activeDetailItemId = it.item.id },
                         onOpenVoiceSearch = { showVoiceSearchDialog = true },
-                        onOpenSettings = { currentDestination = AppDestination.SETTINGS },
+                        onOpenSettings = { viewModel.clearSelection(); currentDestination = AppDestination.SETTINGS },
                         onOpenAddDialog = { showAddDialog = true }
                     )
                 }
@@ -278,19 +304,21 @@ fun MainAppScaffold(
                 AppDestination.SEARCH -> {
                     SearchScreen(
                         viewModel = viewModel,
-                        onOpenItemDetail = { activeDetailItem = it },
+                        onOpenItemDetail = { activeDetailItemId = it.item.id },
                         onOpenVoiceSearch = { showVoiceSearchDialog = true }
                     )
                 }
                 AppDestination.SETTINGS -> {
                     SettingsScreen(
                         viewModel = viewModel,
-                        onNavigateToTrash = { currentDestination = AppDestination.TRASH }
+                        onNavigateToTrash = { currentDestination = AppDestination.TRASH },
+                        onNavigateBack = ::navigateUp
                     )
                 }
                 AppDestination.TRASH -> {
                     TrashScreen(
-                        viewModel = viewModel
+                        viewModel = viewModel,
+                        onNavigateBack = ::navigateUp
                     )
                 }
             }
@@ -300,18 +328,18 @@ fun MainAppScaffold(
 
     // Modal: Item Details Bottom Sheet
     if (activeDetailItem != null) {
-        val currentItem = allItems.find { it.item.id == activeDetailItem!!.item.id } ?: activeDetailItem!!
+        val currentItem = activeDetailItem
         ItemDetailsDialog(
             itemWithCols = currentItem,
             fileResolver = { hash ->
                 viewModel.repository.assetStore.getBlobFile(hash)
             },
             collections = collections,
-            onDismiss = { activeDetailItem = null },
+            onDismiss = { activeDetailItemId = null },
             onFavoriteToggle = { viewModel.toggleFavorite(currentItem.item.id) },
             onDelete = {
                 viewModel.moveToTrash(currentItem.item.id)
-                activeDetailItem = null
+                activeDetailItemId = null
             },
             onCollectionsChange = { newColIds ->
                 viewModel.setItemCollections(currentItem.item.id, newColIds)
@@ -322,7 +350,7 @@ fun MainAppScaffold(
             aiExcluded = viewModel.isItemExcludedFromAi(currentItem.item.id),
             onAiExcludedChange = { viewModel.setItemAiExcluded(currentItem.item.id, it) },
             onRetryAi = { viewModel.retryAiAnalysis(currentItem.item.id) },
-            onEdit = { editingItem = currentItem; activeDetailItem = null }
+            onEdit = { editingItem = currentItem; activeDetailItemId = null }
         )
     }
 

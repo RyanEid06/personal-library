@@ -57,7 +57,7 @@ fun VoiceSearchDialog(
                 setRecognizer = { speechRecognizer = it }
             )
         } else {
-            statusText = "Microphone permission required for voice search"
+            statusText = "Microphone permission denied. Type your query below."
             Toast.makeText(context, "Microphone permission denied", Toast.LENGTH_SHORT).show()
         }
     }
@@ -186,7 +186,7 @@ internal fun startListening(
 ) {
     var onDevice = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && SpeechRecognizer.isOnDeviceRecognitionAvailable(context)
     if (!onDevice && !SpeechRecognizer.isRecognitionAvailable(context)) {
-        onStatus("Speech recognition is not available on this device")
+        onStatus("Speech recognition is not available on this device. Type your query below.")
         return
     }
 
@@ -196,7 +196,7 @@ internal fun startListening(
         } catch (_: Exception) {
             onDevice = false
             if (!SpeechRecognizer.isRecognitionAvailable(context)) {
-                onStatus("Speech recognition is not available on this device")
+                onStatus("Speech recognition is not available on this device. Type your query below.")
                 return
             }
             onStatus("Using the default speech service (may use internet)")
@@ -235,7 +235,7 @@ internal fun startListening(
 
         override fun onError(error: Int) {
             onListeningState(false)
-            onStatus("Tap mic or type query above")
+            onStatus("Speech recognition stopped. Type or edit your query below.")
         }
 
         override fun onResults(results: Bundle?) {

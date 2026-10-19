@@ -1,6 +1,25 @@
 <?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <style name="Theme.PersonalLibrary" parent="android:Theme.Material.Light.NoActionBar">
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <style name="Theme.PersonalLibrary" parent="Theme.PersonalLibrary.Light" />
+
+    <style name="Theme.PersonalLibrary.Light" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">#F8FAFC</item>
+        <item name="android:colorBackground">#F8FAFC</item>
+        <item name="android:windowSplashScreenBackground" tools:targetApi="s">#F8FAFC</item>
+        <item name="android:forceDarkAllowed">false</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar">true</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+    </style>
+
+    <style name="Theme.PersonalLibrary.Dark" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">#0F172A</item>
+        <item name="android:colorBackground">#0F172A</item>
+        <item name="android:windowSplashScreenBackground" tools:targetApi="s">#0F172A</item>
+        <item name="android:forceDarkAllowed">false</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
     </style>

@@ -21,6 +21,70 @@ import java.io.InputStream
 class CaptureSafetyTest {
     private val context: Context get() = ApplicationProvider.getApplicationContext()
 
+    @Test fun androidProviderSizeIsOptionalAndActuallyReachesPreflight() = runBlocking {
+        for (reportedSize in listOf(Long.MAX_VALUE, null, -1L)) {
+            val authority = "synthetic-size-${java.util.UUID.randomUUID()}"
+            val source = java.io.File.createTempFile("synthetic-provider-", ".txt", context.cacheDir).apply { writeText("Synthetic source") }
+            var queriedSize = false
+            val provider = object : android.content.ContentProvider() {
+                override fun onCreate() = true
+                override fun getType(uri: Uri) = "text/plain"
+                override fun query(uri: Uri, projection: Array<out String>?, selection: String?, selectionArgs: Array<out String>?, sortOrder: String?): android.database.Cursor {
+                    val columns = projection ?: arrayOf(android.provider.OpenableColumns.DISPLAY_NAME, android.provider.OpenableColumns.SIZE)
+                    return android.database.MatrixCursor(columns).apply {
+                        addRow(columns.map<String, Any?> { column ->
+                            when (column) {
+                                android.provider.OpenableColumns.DISPLAY_NAME -> "synthetic-source.txt"
+                                android.provider.OpenableColumns.SIZE -> { queriedSize = true; reportedSize }
+                                else -> null
+                            }
+                        }.toTypedArray())
+                    }
+                }
+                override fun openAssetFile(uri: Uri, mode: String) = android.content.res.AssetFileDescriptor(
+                    android.os.ParcelFileDescriptor.open(source, android.os.ParcelFileDescriptor.MODE_READ_ONLY), 0,
+                    android.content.res.AssetFileDescriptor.UNKNOWN_LENGTH)
+                override fun insert(uri: Uri, values: android.content.ContentValues?) = throw UnsupportedOperationException()
+                override fun delete(uri: Uri, selection: String?, selectionArgs: Array<out String>?) = throw UnsupportedOperationException()
+                override fun update(uri: Uri, values: android.content.ContentValues?, selection: String?, selectionArgs: Array<out String>?) = throw UnsupportedOperationException()
+            }
+            provider.attachInfo(context, android.content.pm.ProviderInfo().apply { this.authority = authority })
+            org.robolectric.shadows.ShadowContentResolver.registerProviderInternal(authority, provider)
+            val db = Room.inMemoryDatabaseBuilder(context, LibraryRoomDatabase::class.java).addCallback(DATABASE_CALLBACK).build()
+            val repository = LibraryRepository(context, db)
+            try {
+                val result = CaptureBatchProcessor.android(context, repository).save(SharePayload(uris = listOf("content://$authority/source")), emptyList())
+                assertTrue("Provider size must be queried", queriedSize)
+                if (reportedSize == Long.MAX_VALUE) {
+                    assertEquals(CaptureBatchResult(0, 1), result)
+                    assertTrue(repository.dao.getAllAssets().isEmpty())
+                    assertTrue(repository.dao.getAllItemsIncludingTrash().isEmpty())
+                } else {
+                    assertEquals(CaptureBatchResult(1, 0), result)
+                    assertEquals("Synthetic source", repository.assetStore.getBlobFile(repository.dao.getAllActiveItems().single().contentHash!!)!!.readText())
+                }
+            } finally { db.close(); source.delete() }
+        }
+    }
+
+    @Test fun knownOversizeLeavesNoItemAssetOrStagingAndDoesNotReadSource() = runBlocking {
+        val db = Room.inMemoryDatabaseBuilder(context, LibraryRoomDatabase::class.java).addCallback(DATABASE_CALLBACK).build()
+        val repository = LibraryRepository(context, db)
+        var read = false
+        try {
+            val processor = CaptureBatchProcessor(repository) { _, _ ->
+                IncomingAsset("synthetic-huge.bin", "application/octet-stream", knownSizeBytes = Long.MAX_VALUE) {
+                    object : InputStream() { override fun read(): Int { read = true; return -1 } }
+                }
+            }
+            assertEquals(CaptureBatchResult(0, 1), processor.save(SharePayload(uris = listOf("content://synthetic/oversize")), emptyList()))
+            assertFalse(read)
+            assertTrue(repository.dao.getAllItemsIncludingTrash().isEmpty())
+            assertTrue(repository.dao.getAllAssets().isEmpty())
+            assertTrue(repository.assetStore.root.resolve("staging").toFile().listFiles().orEmpty().isEmpty())
+        } finally { db.close() }
+    }
+
     @Test @org.robolectric.annotation.LooperMode(org.robolectric.annotation.LooperMode.Mode.PAUSED)
     fun captureKeepsAdmissionClosedUntilTeardownAndAllowsNextBatch() = runBlocking {
         val app = context as com.example.PersonalLibraryApp

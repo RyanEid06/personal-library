@@ -5,6 +5,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DeleteForever
 import androidx.compose.material.icons.filled.Restore
@@ -15,6 +16,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.ui.MainViewModel
@@ -23,11 +25,12 @@ import com.example.ui.components.getKindIcon
 import java.text.SimpleDateFormat
 import java.util.*
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun TrashScreen(
     viewModel: MainViewModel,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onNavigateBack: () -> Unit = {}
 ) {
     val trashItems by viewModel.trashItems.collectAsState()
     val snackbarHost = remember { SnackbarHostState() }
@@ -100,6 +103,7 @@ fun TrashScreen(
         modifier = modifier.fillMaxSize(),
         snackbarHost = { SnackbarHost(snackbarHost) },
         topBar = {
+            Column {
             TopAppBar(
                 title = {
                     Text(
@@ -108,20 +112,26 @@ fun TrashScreen(
                         fontWeight = FontWeight.Bold
                     )
                 },
-                actions = {
-                    if (trashItems.isNotEmpty()) {
-                        TextButton(onClick = { showRestoreAllConfirm = true }, modifier = Modifier.testTag("restore_all_button")) {
-                            Text("Restore All")
-                        }
-                        TextButton(
-                            onClick = { showEmptyTrashConfirm = true },
-                            modifier = Modifier.testTag("empty_trash_button")
-                        ) {
-                            Text("Empty Trash", color = MaterialTheme.colorScheme.error)
-                        }
+                navigationIcon = {
+                    IconButton(onClick = onNavigateBack) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back to Settings")
                     }
                 }
             )
+            if (trashItems.isNotEmpty()) {
+                FlowRow(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    TextButton(onClick = { showRestoreAllConfirm = true }, modifier = Modifier.testTag("restore_all_button")) {
+                        Text("Restore All")
+                    }
+                    TextButton(onClick = { showEmptyTrashConfirm = true }, modifier = Modifier.testTag("empty_trash_button")) {
+                        Text("Empty Trash", color = MaterialTheme.colorScheme.error)
+                    }
+                }
+            }
+            }
         }
     ) { innerPadding ->
         LazyColumn(
@@ -211,7 +221,8 @@ fun TrashScreen(
                                         text = item.title,
                                         style = MaterialTheme.typography.titleMedium,
                                         fontWeight = FontWeight.SemiBold,
-                                        maxLines = 1
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis
                                     )
                                     Text(
                                         text = "Trashed ${dateFormatter.format(Date(item.trashTimestamp ?: item.createdAt))}",

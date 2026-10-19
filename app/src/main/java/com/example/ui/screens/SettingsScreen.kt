@@ -14,6 +14,7 @@ import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.automirrored.filled.Input
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
@@ -43,12 +44,13 @@ import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.*
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun SettingsScreen(
     viewModel: MainViewModel,
     onNavigateToTrash: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onNavigateBack: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
@@ -360,6 +362,11 @@ fun SettingsScreen(
                         style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.Bold
                     )
+                },
+                navigationIcon = {
+                    IconButton(onClick = onNavigateBack) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back to Library")
+                    }
                 }
             )
         }
@@ -417,7 +424,7 @@ fun SettingsScreen(
 
                     StorageStatRow("Original Files (Deduplicated)", formatBytes(stats.originalsBytes))
                     StorageStatRow("Cache & Previews", formatBytes(stats.cacheBytes))
-                    StorageStatRow("Trash", formatBytes(stats.trashBytes))
+                    StorageStatRow("Trash (logical content size)", formatBytes(stats.trashBytes))
                     StorageStatRow("Active Items", "${stats.totalItems} items")
 
                     Spacer(modifier = Modifier.height(12.dp))
@@ -448,16 +455,16 @@ fun SettingsScreen(
                 elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
             ) {
                 Column(modifier = Modifier.padding(18.dp)) {
-                    Row(
+                    FlowRow(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(
                                 if (isPaired) Icons.Filled.CheckCircle else Icons.Filled.CloudOff,
                                 contentDescription = null,
-                                tint = if (isPaired) Color(0xFF10B981) else MaterialTheme.colorScheme.outline
+                                tint = if (isPaired) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
                             )
                             Spacer(modifier = Modifier.width(8.dp))
                             Text("Backend AI Pairing", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
@@ -465,14 +472,14 @@ fun SettingsScreen(
 
                         Surface(
                             shape = RoundedCornerShape(8.dp),
-                            color = if (isPaired) Color(0xFF10B981).copy(alpha = 0.15f) else MaterialTheme.colorScheme.surfaceVariant
+                            color = if (isPaired) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceVariant
                         ) {
                             Text(
                                 text = if (isPaired) "Paired" else "Not Paired",
                                 modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
                                 style = MaterialTheme.typography.labelSmall,
                                 fontWeight = FontWeight.SemiBold,
-                                color = if (isPaired) Color(0xFF047857) else MaterialTheme.colorScheme.onSurfaceVariant
+                                color = if (isPaired) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                     }
@@ -722,12 +729,12 @@ fun SettingsScreen(
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                 elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
             ) {
-                Row(
+                FlowRow(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(18.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Outlined.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.error)
@@ -756,7 +763,8 @@ fun StorageStatRow(label: String, value: String) {
         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
-        Text(label, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.outline)
+        Text(label, modifier = Modifier.weight(1f).padding(end = 12.dp),
+            style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Text(value, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
     }
 }

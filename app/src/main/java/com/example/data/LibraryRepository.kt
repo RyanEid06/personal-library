@@ -145,10 +145,11 @@ class LibraryRepository(private val context: Context, database: LibraryRoomDatab
         declaredMime: String?,
         explicitSticker: Boolean = false,
         collectionIds: List<String> = emptyList(),
-        sourceDate: Long? = null
+        sourceDate: Long? = null,
+        knownSizeBytes: Long? = null
     ): ItemEntity = withContext(Dispatchers.IO) {
         assetMutations.withLock {
-        val storedAsset = assetStore.import(input, originalName, declaredMime, explicitSticker)
+        val storedAsset = assetStore.import(input, originalName, declaredMime, explicitSticker, knownSizeBytes = knownSizeBytes)
         try {
         db.withTransaction {
         // Reference counting

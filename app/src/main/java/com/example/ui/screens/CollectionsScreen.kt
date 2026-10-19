@@ -21,12 +21,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -51,7 +53,7 @@ fun CollectionsScreen(
 
     val favoritesCount = allItems.count { it.item.isFavorite }
     val unfiledCount = allItems.count { it.collections.isEmpty() }
-    val dueCount = allItems.count { it.item.reminderTime != null && !it.item.isReminderDone }
+    val remindersCount = allItems.count { it.item.reminderTime != null && !it.item.isReminderDone }
 
     var showCreateDialog by remember { mutableStateOf(false) }
     var editingCollection by remember { mutableStateOf<CollectionEntity?>(null) }
@@ -136,11 +138,11 @@ fun CollectionsScreen(
                 )
             }
 
-            // Computed: Due Reminders
+            // Computed: all active reminders, including future reminders.
             item {
                 CollectionCard(
-                    title = "Due Reminders",
-                    itemCount = dueCount,
+                    title = "Reminders",
+                    itemCount = remindersCount,
                     icon = Icons.Filled.Alarm,
                     color = Color(0xFF0D9488),
                     onClick = { onCollectionSelected("computed_due") },
@@ -270,7 +272,8 @@ fun CollectionCard(
                     text = title,
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
-                    maxLines = 1
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
                 )
                 Text(
                     text = "$itemCount item${if (itemCount == 1) "" else "s"}",
@@ -313,7 +316,8 @@ fun CreateCollectionDialog(
     )
 
     val colorOptions = listOf(
-        "#3B82F6", "#10B981", "#F59E0B", "#EC4899", "#8B5CF6", "#06B6D4", "#EF4444"
+        "#3B82F6" to "Blue", "#10B981" to "Green", "#F59E0B" to "Amber", "#EC4899" to "Pink",
+        "#8B5CF6" to "Purple", "#06B6D4" to "Cyan", "#EF4444" to "Red"
     )
 
     Dialog(onDismissRequest = onDismiss) {
@@ -357,7 +361,7 @@ fun CreateCollectionDialog(
                         ) {
                             Icon(
                                 vector,
-                                contentDescription = "Icon $iconName",
+                                contentDescription = "${iconName.replaceFirstChar { it.uppercase() }} collection icon",
                                 modifier = Modifier.size(18.dp),
                                 tint = if (selectedIcon == iconName) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
                             )
@@ -373,19 +377,21 @@ fun CreateCollectionDialog(
                     modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    for (hex in colorOptions) {
+                    for ((hex, colorName) in colorOptions) {
                         val parsed = parseColorHex(hex)
                         Box(
                             modifier = Modifier
                                 .size(48.dp)
                                 .clip(CircleShape)
                                 .background(parsed)
-                                .semantics { contentDescription = "Color $hex"; selected = selectedColor == hex }
+                                .semantics { contentDescription = "$colorName collection color"; selected = selectedColor == hex }
                                 .clickable(enabled = !isSaving) { selectedColor = hex },
                             contentAlignment = Alignment.Center
                         ) {
                             if (selectedColor == hex) {
-                                Icon(Icons.Filled.Check, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
+                                Icon(Icons.Filled.Check, contentDescription = null,
+                                    tint = if (parsed.luminance() > 0.179f) Color.Black else Color.White,
+                                    modifier = Modifier.size(16.dp))
                             }
                         }
                     }

@@ -15,6 +15,10 @@ class PersonalLibraryApp : Application(), ImageLoaderFactory {
 
     override fun onCreate() {
         super.onCreate()
+        // Migrate a saved manual appearance into Android's persisted splash-screen mode.
+        com.example.ui.theme.ThemePreferences(
+            getSharedPreferences("personal_library_settings", MODE_PRIVATE), this
+        )
         createNotificationChannel()
         captureState
     }

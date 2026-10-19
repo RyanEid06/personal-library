@@ -3,6 +3,17 @@
 Candidate source SHA and signed APK hashes: pending final release verification.
 All items below are unexecuted physical-device checks. Automated and emulator evidence must be reported separately.
 
+Phase 6 UI and file-safety follow-up:
+
+- [ ] Navigate Library → Settings → Trash; verify visible Up and system Back return through Settings, and dialogs/selection close before navigation.
+- [ ] Open a synthetic item from a reminder, dismiss/edit it, then change another item; verify its detail does not reopen. Recreate, then open a new notification for the same item.
+- [ ] Cold-launch Light, Dark, and System preferences with matching and opposite OS appearance. API 31+ persists app splash appearance; API 29–30 may show the OS-selected starting window before the saved override can be read.
+- [ ] Check paired status, type labels, favorites and selected cards in both themes; inspect list/grid/collection actions at 130–150% font and larger display scaling.
+- [ ] Verify voice-error guidance names an available action, and type/edit a query after recognition fails.
+- [ ] Open/share synthetic image, video, audio and document originals; verify receiving apps can read granted URIs. Private app files, cache and decrypted restore staging must never receive share URIs.
+- [ ] Import a known large synthetic file with insufficient free space, then an unknown-size source that fails during copying; confirm clear failure/counts, no half-created item and no staged leftovers.
+- [ ] Confirm Trash labels its deduplicated item sum as logical content size rather than exact reclaimable space.
+
 Phase 4 privacy and lifecycle follow-up:
 
 - [ ] Exclude a collection with a distinctive synthetic name; confirm ordinary offline keyword results remain visible while Ask AI omits that collection and its items.

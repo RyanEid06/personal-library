@@ -11,7 +11,7 @@ import kotlinx.coroutines.*
 import java.io.FilterInputStream
 import java.io.InputStream
 
-data class IncomingAsset(val name: String?, val mime: String?, val open: suspend () -> InputStream)
+data class IncomingAsset(val name: String?, val mime: String?, val knownSizeBytes: Long? = null, val open: suspend () -> InputStream)
 data class CaptureBatchResult(val saved: Int, val failed: Int)
 
 class CaptureBatchProcessor(private val repository: LibraryRepository,
@@ -36,7 +36,7 @@ class CaptureBatchProcessor(private val repository: LibraryRepository,
                             job.ensureActive(); return stream.read(buffer, offset, length).also { job.ensureActive() }
                         }
                     }
-                    checked.use { repository.captureStream(it, asset.name, asset.mime, explicitSticker, collections) }
+                    checked.use { repository.captureStream(it, asset.name, asset.mime, explicitSticker, collections, knownSizeBytes = asset.knownSizeBytes) }
                     saved++
                 } finally { withContext(NonCancellable) { closer.cancelAndJoin() } }
             } catch (cancelled: CancellationException) { throw cancelled }
@@ -71,11 +71,21 @@ class CaptureBatchProcessor(private val repository: LibraryRepository,
                 }
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (_: Exception) { null }
+            val sizeSignal = CancellationSignal()
+            val size = try {
+                ProviderIo.textMetadata(cancel = sizeSignal::cancel) {
+                    resolver.query(uri, arrayOf(OpenableColumns.SIZE), null, null, null, sizeSignal)?.use {
+                        val index = it.getColumnIndex(OpenableColumns.SIZE)
+                        if (index >= 0 && it.moveToFirst() && !it.isNull(index)) it.getLong(index).takeIf { bytes -> bytes >= 0 }?.toString() else null
+                    }
+                }?.toLongOrNull()
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { null }
             val mime = try { ProviderIo.textMetadata { resolver.getType(uri) } }
                 catch (cancelled: CancellationException) { throw cancelled }
                 catch (_: Exception) { null }
             val openSignal = CancellationSignal()
-            IncomingAsset(name, mime ?: senderMime?.takeUnless { it == "*/*" }) {
+            IncomingAsset(name, mime ?: senderMime?.takeUnless { it == "*/*" }, knownSizeBytes = size) {
                 ProviderIo.open(cancel = openSignal::cancel) {
                     val descriptor = resolver.openAssetFileDescriptor(uri, "r", openSignal) ?: error("Source no longer available")
                     try { descriptor.createInputStream() } catch (error: Exception) { descriptor.close(); throw error }
