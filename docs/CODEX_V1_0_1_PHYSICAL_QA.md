@@ -12,6 +12,10 @@ Phase 4 privacy and lifecycle follow-up:
 - [ ] Change exclusions, Trash, or edit an item while an AI request is running; confirm obsolete results and source links do not appear.
 - [ ] Ask a natural-language question whose relevant synthetic note is older than many unrelated records; verify source selection.
 - [ ] Query a relevant later PDF page and verify that its page number is retained.
+- [ ] Check a grounded direct answer, conflicting sources, and insufficient evidence; open every displayed source item/page.
+- [ ] Against an older backend without the answer endpoint, verify the explicit unavailable message and retained local/related results.
+
+Known bounded-retrieval limitation: a fact on a later PDF page can be missed when that page has no matching question text or selected semantic signal. Narrow the source/collection or use additional keywords; do not interpret an insufficient-evidence response as proof that the library contains no such fact. Automated citation validation checks supplied references, not factual accuracy of every model claim. The new backend endpoint has not been deployed or exercised with a live provider during implementation.
 
 
 

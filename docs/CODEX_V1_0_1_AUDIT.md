@@ -32,13 +32,13 @@ Status vocabulary at final audit: COMPLETE / PARTIAL / NOT NEEDED / BLOCKED. Pen
 | 23 | AI INDEX LIFECYCLE | COMPLETE | Existing versioned publication/derived-data deletion retained; re-enable uses compatible cached semantics or metadata-only jobs, preserves attempts, reconciles single/bulk/deleted collection membership even after ordinary caller cancellation. JVM regressions passed; physical lifecycle QA pending. |
 | 24 | WI-FI-ONLY AI | COMPLETE | Current unmetered capability checked after caller guard for each AI/auth HTTP dispatch; queued unique work replaces obsolete constraints, offline work retains durable attempt. Synthetic policy/401/cancellation tests passed; physical network-switch QA pending. |
 | 25 | REUSE EXISTING AI INGESTION | COMPLETE | Existing LocalIndexer, durable jobs, canonical versioned chunks and embedding model reused. Interactive retrieval bounded to 160 local candidates/480 documents/4 per item, ranks natural-query terms and later page evidence. No parallel catalog/index. |
-| 26 | PHASE 5 — BOUNDED AI QUESTION ANSWERING | PARTIAL | Pending phase verification and final audit. |
-| 27 | AI Q&A FLOW | PARTIAL | Pending phase verification and final audit. |
-| 28 | BACKEND IMPLEMENTATION RULE | PARTIAL | Pending phase verification and final audit. |
-| 29 | BOUNDED EVIDENCE / TOP-K | PARTIAL | Pending phase verification and final audit. |
-| 30 | AI ANSWERS REQUIRE PROVENANCE | PARTIAL | Pending phase verification and final audit. |
-| 31 | AI ANSWER GROUNDING | PARTIAL | Pending phase verification and final audit. |
-| 32 | DO NOT BUILD V2 KNOWLEDGE GRAPH | PARTIAL | Pending phase verification and final audit. |
+| 26 | PHASE 5 — BOUNDED AI QUESTION ANSWERING | COMPLETE | Implemented only after Phase 4 GREEN+commit567c85d; bounded direct-answer flow tested with synthetic local HTTP. Live deployment/provider acceptance remains unexecuted. |
+| 27 | AI Q&A FLOW | COMPLETE | Existing fresh local snapshot/FTS/chunks/semantic ranks select cached evidence before answer POST; exclusions/filters/version/request guards retained. No-evidence flow avoids answer POST. |
+| 28 | BACKEND IMPLEMENTATION RULE | COMPLETE | Small authenticated answer endpoint reuses device sessions, rate limits, body limits, timeout/AbortSignal/provider patterns;104 backend tests/typecheck/build passed. Endpoint not deployed; client404 clearly preserves local/related matches. |
+| 29 | BOUNDED EVIDENCE / TOP-K | COMPLETE | Max12 chunks/3 per item/1200 each/12000 total text/32KiB UTF-8 text/64KiB request; question2000/title200; server independently enforces limits; client caps response32KiB. Approximate bounded recall may miss an unsignaled later page. |
+| 30 | AI ANSWERS REQUIRE PROVENANCE | COMPLETE | Request-local source refs map to local items/pages; server remaps again before provider and validates citations before mapping back. Executed VM/source tests pass; four source/answer Compose tests compile, runtime deferred. |
+| 31 | AI ANSWER GROUNDING | COMPLETE | Higher-priority evidence-only/untrusted-content prompt; strict ANSWERED/CONFLICTING/INSUFFICIENT shape and allowlisted citations; fixed local insufficiency wording. Structural validation cannot prove model factual accuracy; real provider/manual QA remains pending. |
+| 32 | DO NOT BUILD V2 KNOWLEDGE GRAPH | COMPLETE | No people/fact/relationship/knowledge graph, global memory file or duplicate AI catalog added. Existing schema5/index pipeline retained. |
 | 33 | VOICE SEARCH RECOVERY | PARTIAL | Pending phase verification and final audit. |
 | 34 | REMINDERS COLLECTION NAME | PARTIAL | Pending phase verification and final audit. |
 | 35 | DARK MODE / LIGHT MODE | PARTIAL | Pending phase verification and final audit. |

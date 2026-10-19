@@ -15,6 +15,7 @@ import androidx.compose.ui.unit.dp
 import com.example.data.ItemEntity
 import com.example.data.ItemWithCollections
 import com.example.ui.SemanticSearchResult
+import com.example.ui.AiAnswerState
 import com.example.ui.MainViewModel
 import java.io.File
 
@@ -80,7 +81,8 @@ fun SearchResultsContent(
     onTrash: (String) -> Unit,
     onSelect: (String) -> Unit,
     onClearFilters: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    answer: AiAnswerState? = null
 ) {
     val showResults = query.isNotBlank() || filtersActive
     val additions = remember(localResults, aiResults, resultsReady, localError, showResults) {
@@ -91,7 +93,8 @@ fun SearchResultsContent(
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        if (resultsReady && localError == null && !libraryEmpty && showResults && localResults.isEmpty() && additions.isNotEmpty()) {
+        if (resultsReady && localError == null && !libraryEmpty && showResults && localResults.isEmpty() &&
+            (additions.isNotEmpty() || answer?.response?.status in setOf("ANSWERED", "CONFLICTING"))) {
             item("local_empty_with_ai") {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("No local results", style = MaterialTheme.typography.titleMedium)
@@ -131,10 +134,11 @@ fun SearchResultsContent(
                 }
             }
         }
+        if (answer != null) item("ai_answer") { AiAnswerCard(answer, onOpen) }
         if (isAiSearching) item("ai_loading") {
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-                Text("Looking for additional AI matches…")
+                Text("Finding relevant evidence and preparing an answer…")
             }
         }
         if (aiError != null) item("ai_error") {

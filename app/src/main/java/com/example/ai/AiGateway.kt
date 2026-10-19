@@ -18,6 +18,9 @@ import okhttp3.Response
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.IOException
+import java.io.ByteArrayOutputStream
+import java.nio.ByteBuffer
+import java.nio.charset.CodingErrorAction
 import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resumeWithException
 
@@ -31,6 +34,7 @@ sealed class AiGatewayException(message: String, cause: Throwable? = null) : IOE
     class RateLimitedException(msg: String = "Request rate limit exceeded") : AiGatewayException(msg)
     class NetworkPolicyException(msg: String = "AI needs an unmetered connection while Wi-Fi Only is enabled.") : AiGatewayException(msg)
     class RequestBlockedException(msg: String = "AI request is no longer eligible. Try again with the current settings.") : AiGatewayException(msg)
+    class AnswerUnavailableException(msg: String = "AI answers are not available on this backend yet.") : AiGatewayException(msg)
 }
 
 @Serializable
@@ -419,6 +423,63 @@ class AiGateway(
                 throw AiGatewayException.BackendUnavailableException("Embed connection error: ${e.message}")
             }
         }
+    }
+
+    suspend fun answer(
+        question: String,
+        evidence: List<AnswerEvidence>,
+        beforeRequest: suspend () -> Unit = {}
+    ): AnswerResponse = withContext(Dispatchers.IO) {
+        // Validate before session renewal, so invalid input cannot cause any dispatch.
+        val selectedEvidence = evidence.toList()
+        val payload = AnswerProtocol.encode(AnswerRequest(question, selectedEvidence))
+        executeWithAuth(beforeRequest) { token, guard ->
+            val request = Request.Builder()
+                .url("$backendBaseUrl/v1/ai/answer")
+                .addHeader("X-Device-Id", identityManager.deviceId)
+                .addHeader("Authorization", "Bearer $token")
+                .post(payload.toRequestBody("application/json".toMediaType()))
+                .build()
+            try {
+                send(request, guard) { response ->
+                    when (response.code) {
+                        200 -> AnswerProtocol.decode(readAnswerBody(response), selectedEvidence)
+                        400, 413 -> throw AiGatewayException.ValidationException("Answer request rejected")
+                        401 -> throw AiGatewayException.AuthenticationException("Unauthorized AI answer request")
+                        404 -> throw AiGatewayException.AnswerUnavailableException()
+                        429 -> throw AiGatewayException.RateLimitedException()
+                        503 -> throw AiGatewayException.UnconfiguredException()
+                        else -> throw AiGatewayException.ProviderException("AI answer request failed")
+                    }
+                }
+            } catch (cancelled: CancellationException) { throw cancelled
+            } catch (failure: AiGatewayException) { throw failure
+            } catch (_: Exception) {
+                throw AiGatewayException.BackendUnavailableException("AI answer connection failed")
+            }
+        }
+    }
+
+    private fun readAnswerBody(response: Response): String {
+        val body = response.body ?: throw AiGatewayException.ValidationException("Empty answer response")
+        val limit = AnswerProtocol.MAX_RESPONSE_BYTES
+        if (body.contentLength() > limit) throw AiGatewayException.ValidationException("Oversized answer response")
+        val output = ByteArrayOutputStream()
+        val buffer = ByteArray(4096)
+        body.byteStream().use { input ->
+            while (true) {
+                // One extra byte detects an oversized chunked/decompressed response,
+                // without buffering an unrestricted body before validation.
+                val read = input.read(buffer, 0, minOf(buffer.size, limit + 1 - output.size()))
+                if (read == -1) break
+                output.write(buffer, 0, read)
+                if (output.size() > limit) throw AiGatewayException.ValidationException("Oversized answer response")
+            }
+        }
+        return try {
+            Charsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT)
+                .onUnmappableCharacter(CodingErrorAction.REPORT).decode(ByteBuffer.wrap(output.toByteArray())).toString()
+        } catch (_: Exception) { throw AiGatewayException.ValidationException("Invalid answer encoding") }
     }
 
     suspend fun getSearchPlan(query: String, knownCollections: List<String>, beforeRequest: suspend () -> Unit = {}): SearchPlanResponse = withContext(Dispatchers.IO) {

@@ -49,8 +49,7 @@ internal class InteractiveAiRetrieval(private val dao: LibraryDao, private val p
         val (eligibility, arguments) = eligibility(context, capturedPrivacy)
         // Questions contain connecting words and possessives that need not occur in a
         // saved note. Reuse FTS prefixes as alternatives, then prefer more matched terms.
-        val terms = SearchQuery.tokens(context.query.replace(Regex("['’][sS]\\b"), ""))
-            .filter { it.length > 1 }.take(12).map { it.take(100) }.distinct()
+        val terms = interactiveAiQuestionTerms(context.query)
         val fts = terms.mapNotNull { SearchQuery.fts(it) }.joinToString(" OR ").ifBlank { null }
         val candidateText = "lower(i.title || ' ' || i.content || ' ' || COALESCE(i.extractedText, '') || ' ' || " +
             "COALESCE(i.aiDescription, '') || ' ' || COALESCE(i.aiConcepts, '') || ' ' || COALESCE(i.originalFileName, ''))"
@@ -168,6 +167,10 @@ internal class InteractiveAiRetrieval(private val dao: LibraryDao, private val p
         return clauses.joinToString(" AND ") to arguments
     }
 }
+
+internal fun interactiveAiQuestionTerms(question: String): List<String> =
+    SearchQuery.tokens(question.replace(Regex("['’][sS]\\b"), ""))
+        .filter { it.length > 1 }.take(12).map { it.take(100) }.distinct()
 
 // Hex + a non-hex prefix makes each ID an exact, delimiter-safe member even for arbitrary IDs.
 // A single bind per set avoids SQLite's bind-count ceiling for large privacy sets.

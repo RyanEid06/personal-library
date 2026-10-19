@@ -9,6 +9,7 @@ import androidx.lifecycle.viewModelScope
 import com.example.ai.AiGateway
 import com.example.ai.AiGatewayException
 import com.example.ai.AiNetworkPolicy
+import com.example.ai.AnswerResponse
 import com.example.data.CollectionEntity
 import com.example.data.ItemEntity
 import com.example.data.ItemWithCollections
@@ -140,6 +141,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _aiSearchError = MutableStateFlow<String?>(null)
     val aiSearchError: StateFlow<String?> = _aiSearchError.asStateFlow()
 
+    private val _aiAnswer = MutableStateFlow<AiAnswerState?>(null)
+    val aiAnswer: StateFlow<AiAnswerState?> = _aiAnswer.asStateFlow()
+
     private val _isAiSearching = MutableStateFlow(false)
     private var aiSearchJob: Job? = null
     private val aiSearchGeneration = AtomicLong()
@@ -248,6 +252,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _isAiSearching.value = false
         _aiSearchResults.value = emptyList()
         _aiSearchError.value = null
+        _aiAnswer.value = null
     }
 
     @MainThread
@@ -365,6 +370,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val context = captureLocalSearchContext().copy(sourceItems = emptyList())
         _aiSearchResults.value = emptyList()
         _aiSearchError.value = null
+        _aiAnswer.value = null
+        if (query.length > 2000) {
+            _isAiSearching.value = false
+            _aiSearchError.value = "Use a question of at most 2,000 characters. Your local results are still available."
+            return
+        }
         if (!aiGateway.identityManager.isPaired) {
             _isAiSearching.value = false
             _aiSearchError.value = "AI search is unavailable. Pair this device in Settings to use AI."
@@ -377,11 +388,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             try {
                 aiNetworkPolicy.requireAllowed()
                 val snapshot = interactiveAiRetrieval.load(context)
-                if (snapshot.items.isEmpty()) return@launch
                 val beforeRequest: suspend () -> Unit = {
                     ensureActive()
                     interactiveAiRetrieval.requireCurrent(snapshot, ::isCurrentRequest)
                     aiNetworkPolicy.requireAllowed()
+                }
+                if (snapshot.items.isEmpty()) {
+                    withContext(Dispatchers.Main.immediate) {
+                        beforeRequest()
+                        if (isCurrentRequest()) _aiAnswer.value = AiAnswerState(AnswerResponse("INSUFFICIENT", "", emptyList()), emptyList())
+                    }
+                    return@launch
                 }
                 // The gateway invokes this guard again at every auth/content dispatch and retry.
                 val plan = aiGateway.getSearchPlan(query, snapshot.knownCollectionNames, beforeRequest = beforeRequest)
@@ -397,13 +414,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 beforeRequest()
                 val queryVec = queryVectors.firstOrNull()?.takeIf { it.size == 768 && it.all(Float::isFinite) }
-                // With neither a Gemini plan nor an embedding, keep ordinary local FTS visible.
-                if (queryVec == null && plan.provenance != "GEMINI") {
-                    withContext(Dispatchers.Main.immediate) {
-                        if (isCurrentRequest()) _aiSearchError.value = "AI search is unavailable right now. Your local results are still available. Try again later."
-                    }
-                    return@launch
-                }
+                // Answer evidence can still come from local FTS/text when semantic planning
+                // is unavailable. No original media is opened during this interactive flow.
 
                 val docsByItem = snapshot.documents.groupBy { it.itemId }
 
@@ -480,16 +492,33 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
 
                 ensureActive()
+                val rankedResults = results.sortedByDescending { it.score }
                 withContext(Dispatchers.Main.immediate) {
                     beforeRequest()
-                    if (isCurrentRequest()) _aiSearchResults.value = results.sortedByDescending { it.score }
+                    if (isCurrentRequest()) _aiSearchResults.value = rankedResults
+                }
+                val selected = selectAnswerEvidence(query, snapshot, rankedResults)
+                val answer = if (selected.evidence.isEmpty()) AnswerResponse("INSUFFICIENT", "", emptyList())
+                    else aiGateway.answer(query, selected.evidence, beforeRequest = beforeRequest)
+                val evidenceById = selected.evidence.associateBy { it.sourceId }
+                val sources = answer.sourceIds.map { sourceId ->
+                    val evidence = evidenceById[sourceId] ?: throw AiGatewayException.ValidationException()
+                    val item = selected.sourceItems[sourceId] ?: throw AiGatewayException.ValidationException()
+                    AiAnswerSource(sourceId, item, evidence.pageNumber)
+                }
+                withContext(Dispatchers.Main.immediate) {
+                    beforeRequest()
+                    if (isCurrentRequest()) _aiAnswer.value = AiAnswerState(answer, sources)
                 }
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (failure: Exception) {
                 withContext(Dispatchers.Main.immediate) {
                     if (isCurrentRequest()) {
-                        _aiSearchResults.value = emptyList()
+                        _aiAnswer.value = null
+                        if (failure is AiGatewayException.RequestBlockedException) _aiSearchResults.value = emptyList()
                         _aiSearchError.value = when (failure) {
+                            is AiGatewayException.AnswerUnavailableException ->
+                                "Direct answers are not available on this backend yet. Your local results and related matches are still available."
                             is AiGatewayException.UnpairedException, is AiGatewayException.AuthenticationException ->
                                 "AI search is unavailable. Pair this device again in Settings."
                             is AiGatewayException.NetworkPolicyException ->

@@ -33,7 +33,7 @@ import java.util.Collections
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34], application = PersonalLibraryApp::class)
 class InteractiveAiPayloadTest {
-    @Test fun viewModelSendsQueryOnlyAndNoCollectionNamesOrCachedContent() = runBlocking {
+    @Test fun viewModelUsesQueryOnlyForPlanningAndBoundedPublicEvidenceForAnswer() = runBlocking {
         val application = ApplicationProvider.getApplicationContext<PersonalLibraryApp>()
         val prefs = application.getSharedPreferences("personal_library_settings", 0)
         prefs.edit().clear().putBoolean("ai_paused", true).commit()
@@ -52,6 +52,7 @@ class InteractiveAiPayloadTest {
             val response = when {
                 path.endsWith("/search-plan") -> """{"query":"birthday","concepts":["birthday"],"targetKinds":[],"provenance":"GEMINI"}"""
                 path.endsWith("/embed") -> """{"embeddings":[[${List(768) { "0.1" }.joinToString(",")}]]}"""
+                path.endsWith("/answer") -> """{"status":"INSUFFICIENT","answer":"","sourceIds":[]}"""
                 else -> "{}"
             }
             val bytes = response.toByteArray()
@@ -65,7 +66,7 @@ class InteractiveAiPayloadTest {
             val dao = viewModel.repository.dao
             dao.insertCollection(CollectionEntity("payload-private", "NEVER_SEND_PRIVATE_COLLECTION"))
             dao.insertCollection(CollectionEntity("payload-public", "UNNEEDED_PUBLIC_COLLECTION"))
-            dao.insertItem(ItemEntity("payload-public", "birthday", "NEVER_SEND_CACHED_PUBLIC_BODY", "TEXT", localIndexCoverage = "COMPLETE"))
+            dao.insertItem(ItemEntity("payload-public", "birthday", "Synthetic public birthday note on August 19", "TEXT", localIndexCoverage = "COMPLETE"))
             dao.insertItem(ItemEntity("payload-private", "birthday", "NEVER_SEND_PRIVATE_BODY", "TEXT", localIndexCoverage = "COMPLETE"))
             dao.insertItemCollectionCrossRef(ItemCollectionCrossRef("payload-public", "payload-public"))
             dao.insertItemCollectionCrossRef(ItemCollectionCrossRef("payload-private", "payload-private"))
@@ -78,13 +79,18 @@ class InteractiveAiPayloadTest {
             viewModel.triggerAiSearch("birthday")
             await { !viewModel.isAiSearching.value }
             assertNull(viewModel.aiSearchError.value)
-            assertEquals(listOf("/v1/ai/search-plan", "/v1/ai/embed"), requests.map { it.first })
+            assertEquals(listOf("/v1/ai/search-plan", "/v1/ai/embed", "/v1/ai/answer"), requests.map { it.first })
             val plan = Json.parseToJsonElement(requests.first().second).jsonObject
             assertEquals("birthday", plan.getValue("query").jsonPrimitive.content)
             assertTrue(plan.getValue("knownCollections").jsonArray.isEmpty())
-            val embed = Json.parseToJsonElement(requests.last().second).jsonObject
+            val embed = Json.parseToJsonElement(requests[1].second).jsonObject
             assertEquals(listOf("birthday"), embed.getValue("texts").jsonArray.map { it.jsonPrimitive.content })
             assertTrue(requests.none { (_, body) -> body.contains("NEVER_SEND") || body.contains("UNNEEDED_PUBLIC_COLLECTION") })
+            val evidence = Json.parseToJsonElement(requests.last().second).jsonObject.getValue("evidence").jsonArray
+            assertTrue(evidence.isNotEmpty())
+            assertTrue(evidence.all { it.jsonObject.getValue("text").jsonPrimitive.content.length <= 1200 })
+            assertTrue(evidence.any { it.jsonObject.getValue("text").jsonPrimitive.content.contains("August 19") })
+            assertFalse("Stable library IDs remain local", evidence.toString().contains("payload-public"))
             assertTrue(viewModel.aiSearchResults.value.any { it.item.item.id == "payload-public" })
             assertTrue(viewModel.aiSearchResults.value.none { it.item.item.id == "payload-private" })
             assertTrue(viewModel.localSearchResults.value.any { it.item.id == "payload-private" })

@@ -39,6 +39,7 @@ fun SearchScreen(
     val resultsReady by viewModel.resultsReady.collectAsState()
     val localSearchError by viewModel.localSearchError.collectAsState()
     val aiSearchError by viewModel.aiSearchError.collectAsState()
+    val aiAnswer by viewModel.aiAnswer.collectAsState()
     val selectedColId by viewModel.selectedCollectionId.collectAsState()
     val dateFilter by viewModel.dateFilter.collectAsState()
     val dateBasis by viewModel.dateBasis.collectAsState()
@@ -177,7 +178,8 @@ fun SearchScreen(
                 onFavorite = viewModel::toggleFavorite,
                 onTrash = viewModel::moveToTrash,
                 onSelect = viewModel::toggleSelection,
-                onClearFilters = viewModel::clearFilters
+                onClearFilters = viewModel::clearFilters,
+                answer = aiAnswer
             )
         }
     }
