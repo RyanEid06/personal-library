@@ -3,15 +3,23 @@ package com.example.ai
 import android.content.Context
 import com.example.BuildConfig
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
+import okhttp3.Call
+import okhttp3.Callback
+import okhttp3.Response
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.IOException
 import java.util.concurrent.TimeUnit
+import kotlin.coroutines.resumeWithException
 
 sealed class AiGatewayException(message: String, cause: Throwable? = null) : IOException(message, cause) {
     class UnpairedException(msg: String = "Device not paired with backend AI") : AiGatewayException(msg)
@@ -21,6 +29,8 @@ sealed class AiGatewayException(message: String, cause: Throwable? = null) : IOE
     class ProviderException(msg: String = "Gemini provider error") : AiGatewayException(msg)
     class ValidationException(msg: String = "Response validation failed") : AiGatewayException(msg)
     class RateLimitedException(msg: String = "Request rate limit exceeded") : AiGatewayException(msg)
+    class NetworkPolicyException(msg: String = "AI needs an unmetered connection while Wi-Fi Only is enabled.") : AiGatewayException(msg)
+    class RequestBlockedException(msg: String = "AI request is no longer eligible. Try again with the current settings.") : AiGatewayException(msg)
 }
 
 @Serializable
@@ -118,9 +128,10 @@ data class SearchPlanResponse(
     val provenance: String = "LOCAL"
 )
 
-class AiGateway(private val context: Context) {
-
-    val identityManager = DeviceIdentityManager(context)
+class AiGateway(
+    private val context: Context,
+    val identityManager: DeviceIdentityManager = DeviceIdentityManager(context)
+) {
     private val prefs = context.getSharedPreferences("ai_gateway_prefs", Context.MODE_PRIVATE)
     private val json = Json { ignoreUnknownKeys = true }
 
@@ -132,9 +143,43 @@ class AiGateway(private val context: Context) {
         .connectTimeout(20, TimeUnit.SECONDS)
         .readTimeout(75, TimeUnit.SECONDS)
         .writeTimeout(30, TimeUnit.SECONDS)
+        // Each HTTP request must pass the current caller/network guard. Hidden
+        // redirects or connection retries cannot reuse an earlier privacy check.
+        .followRedirects(false)
+        .followSslRedirects(false)
+        .retryOnConnectionFailure(false)
         .build()
 
-    suspend fun getChallenge(): String = withContext(Dispatchers.IO) {
+    private suspend fun <T> send(
+        request: Request,
+        beforeRequest: suspend () -> Unit,
+        readResponse: (Response) -> T
+    ): T {
+        currentCoroutineContext().ensureActive()
+        beforeRequest()
+        currentCoroutineContext().ensureActive()
+        return suspendCancellableCoroutine { continuation ->
+            val call = okHttpClient.newCall(request)
+            continuation.invokeOnCancellation { call.cancel() }
+            if (continuation.isActive) call.enqueue(object : Callback {
+                override fun onFailure(call: Call, error: IOException) {
+                    if (!continuation.isCancelled) continuation.resumeWithException(error)
+                }
+                override fun onResponse(call: Call, response: Response) {
+                    // Keep cancellation attached until the body is consumed,
+                    // rather than releasing the Call as soon as headers arrive.
+                    try {
+                        val value = response.use(readResponse)
+                        continuation.resumeWith(Result.success(value))
+                    } catch (error: Exception) {
+                        if (!continuation.isCancelled) continuation.resumeWithException(error)
+                    }
+                }
+            })
+        }
+    }
+
+    suspend fun getChallenge(beforeRequest: suspend () -> Unit = {}): String = withContext(Dispatchers.IO) {
         val deviceId = identityManager.deviceId
         val request = Request.Builder()
             .url("$backendBaseUrl/v1/auth/challenge?deviceId=$deviceId")
@@ -142,7 +187,7 @@ class AiGateway(private val context: Context) {
             .build()
 
         try {
-            okHttpClient.newCall(request).execute().use { response ->
+            send(request, beforeRequest) { response ->
                 if (!response.isSuccessful) {
                     throw AiGatewayException.BackendUnavailableException("Challenge request failed: HTTP ${response.code}")
                 }
@@ -150,6 +195,7 @@ class AiGateway(private val context: Context) {
                 val res = json.decodeFromString<ChallengeResponse>(body)
                 res.nonce
             }
+        } catch (e: CancellationException) { throw e
         } catch (e: AiGatewayException) {
             throw e
         } catch (e: Exception) {
@@ -179,18 +225,19 @@ class AiGateway(private val context: Context) {
             .build()
 
         try {
-            okHttpClient.newCall(request).execute().use { response ->
+            send(request, {}) { response ->
                 if (response.code == 401) {
                     throw AiGatewayException.AuthenticationException("Invalid enrollment secret or signature")
                 }
                 if (!response.isSuccessful) {
                     throw AiGatewayException.BackendUnavailableException("Enrollment failed: HTTP ${response.code}")
                 }
-                val body = response.body?.string() ?: return@withContext false
+                val body = response.body?.string() ?: return@send false
                 val res = json.decodeFromString<EnrollResponse>(body)
                 identityManager.savePairing(res.deviceCredential, res.sessionToken, res.expiresInSeconds)
                 true
             }
+        } catch (e: CancellationException) { throw e
         } catch (e: AiGatewayException) {
             throw e
         } catch (e: Exception) {
@@ -198,9 +245,9 @@ class AiGateway(private val context: Context) {
         }
     }
 
-    suspend fun renewSession(): String = withContext(Dispatchers.IO) {
+    suspend fun renewSession(beforeRequest: suspend () -> Unit = {}): String = withContext(Dispatchers.IO) {
         val cred = identityManager.deviceCredential ?: throw AiGatewayException.UnpairedException()
-        val nonce = getChallenge()
+        val nonce = getChallenge(beforeRequest)
         val deviceId = identityManager.deviceId
         val pubKey = identityManager.getPublicKeyBase64()
         val signature = identityManager.signSessionRenew(nonce, cred)
@@ -219,7 +266,7 @@ class AiGateway(private val context: Context) {
             .build()
 
         try {
-            okHttpClient.newCall(request).execute().use { response ->
+            send(request, beforeRequest) { response ->
                 if (response.code == 401) {
                     identityManager.clearPairing()
                     throw AiGatewayException.AuthenticationException("Session renewal rejected: credential invalid or revoked. Please re-pair device.")
@@ -232,6 +279,7 @@ class AiGateway(private val context: Context) {
                 identityManager.saveSessionToken(res.sessionToken, res.expiresInSeconds)
                 res.sessionToken
             }
+        } catch (e: CancellationException) { throw e
         } catch (e: AiGatewayException) {
             throw e
         } catch (e: Exception) {
@@ -239,11 +287,11 @@ class AiGateway(private val context: Context) {
         }
     }
 
-    suspend fun ensureSessionToken(): String = withContext(Dispatchers.IO) {
+    suspend fun ensureSessionToken(beforeRequest: suspend () -> Unit = {}): String = withContext(Dispatchers.IO) {
         if (identityManager.isSessionValid) {
             return@withContext identityManager.sessionToken!!
         }
-        renewSession()
+        renewSession(beforeRequest)
     }
 
     /**
@@ -256,15 +304,24 @@ class AiGateway(private val context: Context) {
      *    - retry original request exactly once
      * 4. if renewal fails 401: clear pairing and throw AuthenticationException
      */
-    private suspend fun <T> executeWithAuth(action: suspend (token: String) -> T): T {
-        var token = ensureSessionToken()
-        return try {
-            action(token)
+    private suspend fun <T> executeWithAuth(
+        beforeRequest: suspend () -> Unit,
+        action: suspend (token: String, guard: suspend () -> Unit) -> T
+    ): T = withContext(Dispatchers.IO) {
+        val guard: suspend () -> Unit = {
+            beforeRequest()
+            // A caller may suspend while checking Room. Re-read connectivity
+            // afterwards, immediately before dispatch rather than before that wait.
+            AiNetworkPolicy(context).requireAllowed()
+        }
+        var token = ensureSessionToken(guard)
+        try {
+            action(token, guard)
         } catch (e: AiGatewayException.AuthenticationException) {
             identityManager.clearSession()
-            token = renewSession()
+            token = renewSession(guard)
             try {
-                action(token)
+                action(token, guard)
             } catch (retryEx: AiGatewayException.AuthenticationException) {
                 identityManager.clearPairing()
                 throw AiGatewayException.AuthenticationException("Authentication failed after renewal. Re-pair required.")
@@ -277,8 +334,9 @@ class AiGateway(private val context: Context) {
         kind: String,
         textContent: String?,
         originalFileName: String?,
-        mediaParts: List<MediaPart> = emptyList()
-    ): AnalyzeResponse = executeWithAuth { token ->
+        mediaParts: List<MediaPart> = emptyList(),
+        beforeRequest: suspend () -> Unit = {}
+    ): AnalyzeResponse = executeWithAuth(beforeRequest) { token, guard ->
         val payload = json.encodeToString(
             AnalyzeRequest.serializer(),
             AnalyzeRequest(itemId, kind, textContent, originalFileName, mediaParts)
@@ -291,7 +349,7 @@ class AiGateway(private val context: Context) {
             .build()
 
         try {
-            okHttpClient.newCall(request).execute().use { response ->
+            send(request, guard) { response ->
                 when (response.code) {
                     200 -> {
                         val body = response.body?.string() ?: throw AiGatewayException.ValidationException("Empty analyze body")
@@ -303,6 +361,7 @@ class AiGateway(private val context: Context) {
                     else -> throw AiGatewayException.ProviderException("AI analyze failed with HTTP ${response.code}")
                 }
             }
+        } catch (e: CancellationException) { throw e
         } catch (e: AiGatewayException) {
             throw e
         } catch (e: Exception) {
@@ -310,9 +369,9 @@ class AiGateway(private val context: Context) {
         }
     }
 
-    suspend fun embed(texts: List<String>): List<FloatArray> = withContext(Dispatchers.IO) {
+    suspend fun embed(texts: List<String>, beforeRequest: suspend () -> Unit = {}): List<FloatArray> = withContext(Dispatchers.IO) {
         if (texts.isEmpty()) return@withContext emptyList()
-        executeWithAuth { token ->
+        executeWithAuth(beforeRequest) { token, guard ->
             val payload = json.encodeToString(EmbedRequest.serializer(), EmbedRequest(texts))
             val request = Request.Builder()
                 .url("$backendBaseUrl/v1/ai/embed")
@@ -322,7 +381,7 @@ class AiGateway(private val context: Context) {
                 .build()
 
             try {
-                okHttpClient.newCall(request).execute().use { response ->
+                send(request, guard) { response ->
                     when (response.code) {
                         200 -> {
                             val body = response.body?.string() ?: throw AiGatewayException.ValidationException("Empty embed body")
@@ -353,6 +412,7 @@ class AiGateway(private val context: Context) {
                         else -> throw AiGatewayException.ProviderException("Embed request failed with HTTP ${response.code}")
                     }
                 }
+            } catch (e: CancellationException) { throw e
             } catch (e: AiGatewayException) {
                 throw e
             } catch (e: Exception) {
@@ -361,9 +421,9 @@ class AiGateway(private val context: Context) {
         }
     }
 
-    suspend fun getSearchPlan(query: String, knownCollections: List<String>): SearchPlanResponse = withContext(Dispatchers.IO) {
+    suspend fun getSearchPlan(query: String, knownCollections: List<String>, beforeRequest: suspend () -> Unit = {}): SearchPlanResponse = withContext(Dispatchers.IO) {
         val planFromNetwork = try {
-            executeWithAuth { token ->
+            executeWithAuth(beforeRequest) { token, guard ->
                 val payload = json.encodeToString(
                     SearchPlanRequest.serializer(),
                     SearchPlanRequest(query, knownCollections, java.time.Instant.now().toString())
@@ -375,7 +435,7 @@ class AiGateway(private val context: Context) {
                     .post(payload.toRequestBody("application/json".toMediaType()))
                     .build()
 
-                okHttpClient.newCall(request).execute().use { response ->
+                send(request, guard) { response ->
                     if (response.isSuccessful) {
                         val body = response.body?.string()
                         if (body != null) {
@@ -386,6 +446,9 @@ class AiGateway(private val context: Context) {
                     } else null
                 }
             }
+        } catch (cancelled: CancellationException) { throw cancelled
+        } catch (blocked: AiGatewayException.NetworkPolicyException) { throw blocked
+        } catch (blocked: AiGatewayException.RequestBlockedException) { throw blocked
         } catch (_: Exception) {
             null
         }

@@ -8,6 +8,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.ai.AiGateway
 import com.example.ai.AiGatewayException
+import com.example.ai.AiNetworkPolicy
 import com.example.data.CollectionEntity
 import com.example.data.ItemEntity
 import com.example.data.ItemWithCollections
@@ -23,6 +24,7 @@ import com.personallibrary.core.migration.DateOrder
 import com.personallibrary.core.model.SemanticVectorMath
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.*
@@ -63,6 +65,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val captureState = (application as com.example.PersonalLibraryApp).captureState.state
 
     private val prefs = application.getSharedPreferences("personal_library_settings", Context.MODE_PRIVATE)
+    private val interactiveAiRetrieval = InteractiveAiRetrieval(repository.dao, prefs)
+    private val aiNetworkPolicy = AiNetworkPolicy(application)
+    private val aiPreferenceListener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+        if (key in setOf("excluded_items", "excluded_collections", "ai_paused", "ai_wifi_only")) {
+            viewModelScope.launch(Dispatchers.Main.immediate) { invalidateAiSearch() }
+        }
+    }
     private val themePreferences = ThemePreferences(prefs)
     val themeMode = themePreferences.mode
 
@@ -169,6 +178,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     )
 
     init {
+        prefs.registerOnSharedPreferenceChangeListener(aiPreferenceListener)
         // Enforce 30-day automatic Trash expiry on startup
         viewModelScope.launch(Dispatchers.IO) {
             repository.cleanAbandonedRestoreStages()
@@ -200,6 +210,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 updateStorageStats()
             }
         }
+    }
+
+    override fun onCleared() {
+        prefs.unregisterOnSharedPreferenceChangeListener(aiPreferenceListener)
+        super.onCleared()
     }
 
     fun setLibraryLayout(layout: LibraryLayout) {
@@ -346,8 +361,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         aiSearchJob?.cancel()
         val requestGeneration = aiSearchGeneration.incrementAndGet()
         val contextGeneration = localSearch.currentGeneration
-        val context = captureLocalSearchContext()
-        val knownCollectionNames = _collections.value.map { it.name }
+        // AI retrieval queries Room directly, rather than scanning the observed library snapshot.
+        val context = captureLocalSearchContext().copy(sourceItems = emptyList())
         _aiSearchResults.value = emptyList()
         _aiSearchError.value = null
         if (!aiGateway.identityManager.isPaired) {
@@ -360,16 +375,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             contextGeneration == localSearch.currentGeneration
         aiSearchJob = viewModelScope.launch(Dispatchers.IO) {
             try {
-                val active = projectLocalSearch(context.sourceItems, context).items
-                val plan = aiGateway.getSearchPlan(query, knownCollectionNames)
+                aiNetworkPolicy.requireAllowed()
+                val snapshot = interactiveAiRetrieval.load(context)
+                if (snapshot.items.isEmpty()) return@launch
+                val beforeRequest: suspend () -> Unit = {
+                    ensureActive()
+                    interactiveAiRetrieval.requireCurrent(snapshot, ::isCurrentRequest)
+                    aiNetworkPolicy.requireAllowed()
+                }
+                // The gateway invokes this guard again at every auth/content dispatch and retry.
+                val plan = aiGateway.getSearchPlan(query, snapshot.knownCollectionNames, beforeRequest = beforeRequest)
 
                 // Generate query embedding once online with gemini-embedding-2
                 val queryVectors = try {
-                    aiGateway.embed(listOf(query))
+                    aiGateway.embed(listOf(query), beforeRequest = beforeRequest)
                 } catch (cancelled: CancellationException) { throw cancelled }
+                catch (blocked: AiGatewayException.RequestBlockedException) { throw blocked }
+                catch (blocked: AiGatewayException.NetworkPolicyException) { throw blocked }
                 catch (_: Exception) {
                     emptyList()
                 }
+                beforeRequest()
                 val queryVec = queryVectors.firstOrNull()?.takeIf { it.size == 768 && it.all(Float::isFinite) }
                 // With neither a Gemini plan nor an embedding, keep ordinary local FTS visible.
                 if (queryVec == null && plan.provenance != "GEMINI") {
@@ -379,9 +405,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     return@launch
                 }
 
-                // Group all stored search documents by item to support multi-chunk indexing
-                val allDocs = repository.dao.getAllSearchDocuments()
-                val docsByItem = allDocs.groupBy { it.itemId }
+                val docsByItem = snapshot.documents.groupBy { it.itemId }
 
                 val results = mutableListOf<SemanticSearchResult>()
 
@@ -392,7 +416,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     try { Instant.parse(it).toEpochMilli() } catch (_: Exception) { null }
                 }
 
-                for (itemWithCols in active) {
+                for (itemWithCols in snapshot.items) {
                     val item = itemWithCols.item
 
                     if (plan.targetKinds.isNotEmpty() && !plan.targetKinds.contains(item.kind)) {
@@ -409,7 +433,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
                     val itemDocs = docsByItem[item.id] ?: emptyList()
                     for (doc in itemDocs) {
-                        if (queryVec != null && doc.embedding != null && doc.embeddingDimension == 768 && doc.modelVersion == "gemini-embedding-2") {
+                        if (queryVec != null && doc.embedding != null && doc.embedding.length <= 24_000 &&
+                            doc.embeddingDimension == 768 && doc.modelVersion == "gemini-embedding-2") {
                             try {
                                 val chunkVec = doc.embedding.split(",").map { it.toFloat() }.toFloatArray()
                                 val sim = SemanticVectorMath.compatibleSimilarity(queryVec, chunkVec, doc.embeddingDimension, doc.modelVersion)
@@ -428,8 +453,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         explanations.add("Semantic similarity %.2f".format(bestSim))
                     }
 
-                    val itemTextLower = "${item.title} ${item.content} ${item.extractedText ?: ""} ${item.aiDescription ?: ""} ${item.aiConcepts ?: ""}".lowercase()
-                    for (c in if (plan.provenance == "GEMINI") plan.concepts else emptyList()) {
+                    val itemTextLower = listOf(item.title.take(1000), item.content.take(8000),
+                        item.extractedText.orEmpty().take(12000), item.aiDescription.orEmpty().take(8000),
+                        item.aiConcepts.orEmpty().take(1500)).joinToString(" ").lowercase()
+                    for (c in if (plan.provenance == "GEMINI") plan.concepts.take(40).map { it.take(200) }.filter { it.isNotBlank() } else emptyList()) {
                         if (itemTextLower.contains(c.lowercase())) {
                             score += 3f
                             explanations.add("Concept '$c'")
@@ -454,6 +481,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
                 ensureActive()
                 withContext(Dispatchers.Main.immediate) {
+                    beforeRequest()
                     if (isCurrentRequest()) _aiSearchResults.value = results.sortedByDescending { it.score }
                 }
             } catch (cancelled: CancellationException) { throw cancelled }
@@ -461,10 +489,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 withContext(Dispatchers.Main.immediate) {
                     if (isCurrentRequest()) {
                         _aiSearchResults.value = emptyList()
-                        _aiSearchError.value = if (failure is AiGatewayException.UnpairedException || failure is AiGatewayException.AuthenticationException) {
-                            "AI search is unavailable. Pair this device again in Settings."
-                        } else {
-                            "AI search is unavailable right now. Your local results are still available. Try again later."
+                        _aiSearchError.value = when (failure) {
+                            is AiGatewayException.UnpairedException, is AiGatewayException.AuthenticationException ->
+                                "AI search is unavailable. Pair this device again in Settings."
+                            is AiGatewayException.NetworkPolicyException ->
+                                "AI search needs an allowed connection. When Wi-Fi-only is on, connect to an unmetered network. Your local results are still available."
+                            is AiGatewayException.RequestBlockedException ->
+                                "AI search stopped because privacy settings or library content changed. Your local results are still available. Try again when AI is enabled."
+                            else -> "AI search is unavailable right now. Your local results are still available. Try again later."
                         }
                     }
                 }
@@ -590,39 +622,76 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     suspend fun changeSelectedCollections(itemIds: Set<String>, collectionIds: Set<String>, add: Boolean): String? =
         withContext(Dispatchers.IO) {
+            var updated = false
             try {
                 repository.changeItemCollections(itemIds, collectionIds, add)
+                updated = true
+                // Finish the committed membership change even when its caller or screen closes.
+                withContext(NonCancellable + Dispatchers.IO) {
+                    withContext(Dispatchers.Main.immediate) { invalidateAiSearch() }
+                    localIndexer.reconcileAiEligibility(itemIds)
+                }
+                ensureActive()
                 null
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (invalid: IllegalArgumentException) {
-                invalid.message ?: "Check the selected collections."
+                ensureActive()
+                if (updated) "Collections updated, but AI processing could not refresh. Try again."
+                else invalid.message ?: "Check the selected collections."
             } catch (_: Exception) {
-                "Could not update collections. Try again."
+                ensureActive()
+                if (updated) "Collections updated, but AI processing could not refresh. Try again."
+                else "Could not update collections. Try again."
             }
         }
 
     fun deleteCollection(collectionId: String) {
         viewModelScope.launch(Dispatchers.IO) {
+            var deleted = false
             try {
+                val affectedItemIds = repository.dao.getItemIdsForCollection(collectionId)
                 repository.deleteCollection(collectionId)
-                withContext(Dispatchers.Main.immediate) {
-                    if (_selectedCollectionId.value == collectionId) {
-                        _selectedCollectionId.value = null
-                        refreshFilteredResults()
+                deleted = true
+                withContext(NonCancellable + Dispatchers.IO) {
+                    withContext(Dispatchers.Main.immediate) {
+                        invalidateAiSearch()
+                        if (_selectedCollectionId.value == collectionId) {
+                            _selectedCollectionId.value = null
+                            refreshFilteredResults()
+                        }
                     }
+                    localIndexer.reconcileAiEligibility(affectedItemIds)
                 }
+                ensureActive()
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (_: Exception) {
-                libraryMessageEvents.send("Could not delete the collection. Saved items remain in Memora.")
+                ensureActive()
+                libraryMessageEvents.send(if (deleted) "Collection deleted, but AI processing could not refresh. Saved items remain in Memora."
+                    else "Could not delete the collection. Saved items remain in Memora.")
             }
         }
     }
 
     fun setItemCollections(itemId: String, collectionIds: List<String>) {
         viewModelScope.launch(Dispatchers.IO) {
-            repository.setItemCollections(itemId, collectionIds)
+            var updated = false
+            try {
+                repository.setItemCollections(itemId, collectionIds)
+                updated = true
+                withContext(NonCancellable + Dispatchers.IO) {
+                    withContext(Dispatchers.Main.immediate) { invalidateAiSearch() }
+                    localIndexer.reconcileAiEligibility(listOf(itemId))
+                }
+                ensureActive()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                ensureActive()
+                libraryMessageEvents.send(if (updated) "Collections updated, but AI processing could not refresh. Try again."
+                    else "Could not update collections. Try again.")
+            }
         }
     }
 
@@ -635,18 +704,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val current = (prefs.getStringSet("excluded_items", emptySet()) ?: emptySet()).toMutableSet()
         if (excluded) current.add(itemId) else current.remove(itemId)
         prefs.edit().putStringSet("excluded_items", current).apply()
-        if (excluded) androidx.work.WorkManager.getInstance(getApplication()).cancelUniqueWork("ai_job_$itemId")
+        invalidateAiSearch()
         viewModelScope.launch(Dispatchers.IO) {
-            if (excluded) {
-                repository.dao.updateAiStatus(itemId, "EXCLUDED")
-                repository.dao.insertOrUpdateAnalysisJob(com.example.data.AnalysisJobEntity(itemId = itemId, status = "EXCLUDED"))
-            } else {
-                repository.dao.updateAiStatus(itemId, "QUEUED")
-                val item = repository.dao.getItemById(itemId)
-                if (item != null) {
-                    localIndexer.indexItem(item)
-                }
-            }
+            localIndexer.reconcileAiEligibility(listOf(itemId))
         }
     }
 
@@ -659,21 +719,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val current = (prefs.getStringSet("excluded_collections", emptySet()) ?: emptySet()).toMutableSet()
         if (excluded) current.add(colId) else current.remove(colId)
         prefs.edit().putStringSet("excluded_collections", current).apply()
+        invalidateAiSearch()
         viewModelScope.launch(Dispatchers.IO) {
-            for (item in repository.dao.getAllActiveItems()) {
-                if (colId in repository.dao.getCollectionIdsForItem(item.id)) {
-                    if (excluded) {
-                        androidx.work.WorkManager.getInstance(getApplication()).cancelUniqueWork("ai_job_${item.id}")
-                        repository.dao.updateAiStatus(item.id, "EXCLUDED")
-                        repository.dao.insertOrUpdateAnalysisJob(com.example.data.AnalysisJobEntity(itemId = item.id, status = "EXCLUDED"))
-                    } else localIndexer.indexItem(item)
-                }
-            }
+            localIndexer.reconcileAiEligibility(repository.dao.getItemIdsForCollection(colId))
         }
     }
 
     fun setAiPaused(paused: Boolean) {
         prefs.edit().putBoolean("ai_paused", paused).apply()
+        invalidateAiSearch()
         if (paused) {
             androidx.work.WorkManager.getInstance(getApplication()).cancelAllWorkByTag("ai_enrichment")
             viewModelScope.launch(Dispatchers.IO) {
@@ -761,6 +815,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun unpairBackend() {
+        invalidateAiSearch()
         aiGateway.identityManager.clearPairing()
         _isBackendPaired.value = false
     }

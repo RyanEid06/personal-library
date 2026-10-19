@@ -3,6 +3,16 @@
 Candidate source SHA and signed APK hashes: pending final release verification.
 All items below are unexecuted physical-device checks. Automated and emulator evidence must be reported separately.
 
+Phase 4 privacy and lifecycle follow-up:
+
+- [ ] Exclude a collection with a distinctive synthetic name; confirm ordinary offline keyword results remain visible while Ask AI omits that collection and its items.
+- [ ] Move an item into and out of an excluded collection using both its editor and bulk collection actions; confirm AI eligibility resumes without losing local text or cached analysis.
+- [ ] Delete an excluded collection; confirm saved content survives and eligible former members resume AI processing.
+- [ ] Change Wi-Fi-only while work is queued and while Ask AI is running; confirm unmetered-policy feedback and no duplicate jobs.
+- [ ] Change exclusions, Trash, or edit an item while an AI request is running; confirm obsolete results and source links do not appear.
+- [ ] Ask a natural-language question whose relevant synthetic note is older than many unrelated records; verify source selection.
+- [ ] Query a relevant later PDF page and verify that its page number is retained.
+
 
 
 Produce a final real-device checklist even if automated tests are green.

@@ -131,8 +131,42 @@ data class ItemWithCollections(
     val collections: List<CollectionEntity>
 )
 
+/** Request-boundary projection: no owner text, vectors or collection names. */
+data class AiCandidateState(
+    val id: String,
+    val localIndexVersion: Int,
+    val isTrash: Boolean,
+    val kind: String,
+    val isFavorite: Boolean,
+    val createdAt: Long,
+    val sourceDate: Long?,
+    val reminderTime: Long?,
+    val isReminderDone: Boolean,
+    val collectionIds: String?
+)
+
 @Dao
 interface LibraryDao {
+
+    // The caller constructs only fixed SQL clauses and binds every data value and LIMIT.
+    @Transaction
+    @RawQuery
+    suspend fun getAiCandidates(query: androidx.sqlite.db.SupportSQLiteQuery): List<ItemWithCollections>
+
+    @RawQuery
+    suspend fun getAiCandidateDocuments(query: androidx.sqlite.db.SupportSQLiteQuery): List<SearchDocumentEntity>
+
+    @Query("""
+        SELECT i.id, i.localIndexVersion, i.isTrash, i.kind, i.isFavorite, i.createdAt,
+            i.sourceDate, i.reminderTime, i.isReminderDone,
+            (SELECT GROUP_CONCAT(hex(CAST(collectionId AS BLOB))) FROM item_collection_cross_ref
+                WHERE itemId = i.id) AS collectionIds
+        FROM items i WHERE i.id IN (:itemIds)
+    """)
+    suspend fun getAiCandidateStates(itemIds: List<String>): List<AiCandidateState>
+
+    @Query("SELECT itemId FROM item_collection_cross_ref WHERE collectionId = :collectionId")
+    suspend fun getItemIdsForCollection(collectionId: String): List<String>
 
     @Query("SELECT * FROM items WHERE isTrash = 0 ORDER BY createdAt DESC")
     fun observeActiveItems(): Flow<List<ItemEntity>>

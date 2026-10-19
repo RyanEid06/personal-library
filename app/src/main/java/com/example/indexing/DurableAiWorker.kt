@@ -9,6 +9,7 @@ import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import com.example.ai.AiGateway
 import com.example.ai.AiGatewayException
+import com.example.ai.AiNetworkPolicy
 import com.example.ai.MediaPart
 import com.example.ai.AnalyzeResponse
 import com.personallibrary.core.ExtractedPage
@@ -74,6 +75,10 @@ class DurableAiWorker(
         }
         if (!mayUpload()) return@withContext Result.success()
         val aiGateway = AiGateway(applicationContext)
+        val beforeRequest: suspend () -> Unit = {
+            if (!mayUpload()) throw AiGatewayException.RequestBlockedException()
+            AiNetworkPolicy(applicationContext).requireAllowed()
+        }
 
         try {
             if (!aiGateway.identityManager.isPaired) {
@@ -92,6 +97,10 @@ class DurableAiWorker(
                 )
                 return@withContext Result.failure()
             }
+
+            // WorkManager constraints are a scheduling aid; the current policy is authoritative.
+            // Check before charging a durable attempt, and again at every concrete HTTP dispatch.
+            beforeRequest()
 
             // Update status to ANALYZING and record job progress
             if (!repository.updateAnalysisJobIfCurrent(
@@ -160,12 +169,12 @@ class DurableAiWorker(
             } else if (batches.isNotEmpty()) {
                 for (batch in batches) {
                     if (!mayUpload()) return@withContext Result.success()
-                    responses.add(aiGateway.analyze(itemId, initialItem.kind, batch.text, initialItem.originalFileName))
+                    responses.add(aiGateway.analyze(itemId, initialItem.kind, batch.text, initialItem.originalFileName, beforeRequest = beforeRequest))
                 }
             } else {
                 if (!mayUpload()) return@withContext Result.success()
                 responses.add(aiGateway.analyze(itemId, initialItem.kind, textForAnalysis.take(PdfAnalysisBounds.MAX_PROMPT_CHARS).ifBlank { null },
-                    initialItem.originalFileName, mediaParts))
+                    initialItem.originalFileName, mediaParts, beforeRequest = beforeRequest))
             }
             val boundedPartial = mediaPartial || batches.any { it.partial } ||
                 (isPdf && (pages.isEmpty() || initialItem.localIndexCoverage.equals("partial", true))) ||
@@ -197,7 +206,7 @@ class DurableAiWorker(
                 for (chunkBatch in chunks.chunked(batchSize)) {
                     if (!mayUpload()) return@withContext Result.success()
                     val textsToEmbed = chunkBatch.map { it.text }
-                    val vectors = aiGateway.embed(textsToEmbed)
+                    val vectors = aiGateway.embed(textsToEmbed, beforeRequest = beforeRequest)
                     for (i in chunkBatch.indices) {
                         val chunkInfo = chunkBatch[i]
                         val vec = vectors.getOrNull(i)
@@ -230,6 +239,14 @@ class DurableAiWorker(
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
             if (!mayUpload()) return@withContext Result.success()
+            if (e is AiGatewayException.NetworkPolicyException) {
+                // A policy change is a wait condition, not a provider failure or a spent retry.
+                val pending = previousJob?.takeIf { it.expectedContentVersion == expectedVersion }
+                    ?: AnalysisJobEntity(itemId, expectedVersion, expectedVersion, metadataOnly = metadataOnly)
+                repository.updateAnalysisJobIfCurrent(pending.copy(status = "QUEUED", attempts = attempts))
+                return@withContext Result.retry()
+            }
+            if (e is AiGatewayException.RequestBlockedException) return@withContext Result.success()
             val isPermanent = e is AiGatewayException.UnconfiguredException ||
                 e is AiGatewayException.UnpairedException
 

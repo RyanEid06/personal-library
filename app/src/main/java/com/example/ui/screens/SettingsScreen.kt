@@ -560,6 +560,7 @@ fun SettingsScreen(
                             onCheckedChange = {
                                 wifiOnly = it
                                 prefs.edit().putBoolean("ai_wifi_only", it).apply()
+                                viewModel.resumePendingAiJobs()
                             }
                         )
                     }

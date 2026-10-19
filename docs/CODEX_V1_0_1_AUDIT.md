@@ -19,19 +19,19 @@ Status vocabulary at final audit: COMPLETE / PARTIAL / NOT NEEDED / BLOCKED. Pen
 | 10 | REAL MULTI-SELECT | COMPLETE | List/grid/search/collection selection, count/close/Back, off-main Select All Visible guarded by results/selection generations, union/subtract and Trash; 7 Compose regressions compile, runtime deferred. |
 | 11 | EDIT ITEM — REQUIRED V1 FEATURE | COMPLETE | Native text/link editing and media title editing, safe URI validation, original bytes/filename/timestamps/import provenance preserved; domain tests passed and editor Compose tests compile. |
 | 12 | EDITS MUST UPDATE DERIVED DATA CORRECTLY | COMPLETE | Content version invalidation/FTS/local extraction plus cached metadata-only text refresh; no cached-media full re-analysis, stale publications rejected, partial coverage preserved. JVM fake-HTTP regressions passed; cross-cutting privacy audit follows Phase 4. |
-| 13 | WHATSAPP-STYLE LIVE SEARCH — CORE V1 | PARTIAL | Pending phase verification and final audit. |
-| 14 | SEARCHABLE CONTENT | PARTIAL | Pending phase verification and final audit. |
-| 15 | PREFIX MATCHING | PARTIAL | Pending phase verification and final audit. |
-| 16 | FIX LIVE-SEARCH RACE | PARTIAL | Pending phase verification and final audit. |
-| 17 | SEARCH SNIPPETS | PARTIAL | Pending phase verification and final audit. |
-| 18 | SEARCH FILTER VISIBILITY | PARTIAL | Pending phase verification and final audit. |
-| 19 | EMPTY STATES | PARTIAL | Pending phase verification and final audit. |
-| 20 | LOCAL SEARCH + AI SEARCH UX | PARTIAL | Pending phase verification and final audit. |
-| 21 | AI EXCLUSION MUST BE STRICT | PARTIAL | Pending phase verification and final audit. |
-| 22 | DO NOT BREAK LOCAL SEARCH WHEN AI IS EXCLUDED | PARTIAL | Pending phase verification and final audit. |
-| 23 | AI INDEX LIFECYCLE | PARTIAL | Pending phase verification and final audit. |
-| 24 | WI-FI-ONLY AI | PARTIAL | Pending phase verification and final audit. |
-| 25 | REUSE EXISTING AI INGESTION | PARTIAL | Pending phase verification and final audit. |
+| 13 | WHATSAPP-STYLE LIVE SEARCH — CORE V1 | COMPLETE | Phase 3 commit 14073e9: live debounced prefix updates; narrowing FTS/domain regressions passed; Compose runtime deferred. |
+| 14 | SEARCHABLE CONTENT | COMPLETE | Existing local FTS fields preserved: title/body/filename/extracted text/AI metadata; ordinary search makes no provider request. |
+| 15 | PREFIX MATCHING | COMPLETE | Correct FTS4 quoted-token prefix syntax; exact-short-word distractor and progressive-prefix regressions passed. |
+| 16 | FIX LIVE-SEARCH RACE | COMPLETE | Shared generation/context runner cancels and rejects obsolete query/filter/data publications; focused coroutine tests passed. |
+| 17 | SEARCH SNIPPETS | COMPLETE | Existing snippet engine shares sanitized terms, prioritizes token-start evidence and handles Unicode code points; focused regressions passed. |
+| 18 | SEARCH FILTER VISIBILITY | COMPLETE | Shared visible collection/type/date chips and Clear Filters on Library/Search; Compose tests compile, runtime deferred. |
+| 19 | EMPTY STATES | COMPLETE | Distinct empty Library, query/filter zero results and AI/local errors; additive AI-only wording corrected; runtime deferred. |
+| 20 | LOCAL SEARCH + AI SEARCH UX | COMPLETE | Local results preserved alongside additive semantic matches and explicit AI progress/errors; union selection respects filters. Direct Q&A remains Phase 5. |
+| 21 | AI EXCLUSION MUST BE STRICT | COMPLETE | Phase 4: fresh filtered SQL candidates; omitted all collection-name plan metadata; per-dispatch guards cover auth/retry and publication. Synthetic payload/privacy tests passed. |
+| 22 | DO NOT BREAK LOCAL SEARCH WHEN AI IS EXCLUDED | COMPLETE | Exclusion changes eligibility/job state only; exact local document/embedding preservation and offline FTS regressions passed. |
+| 23 | AI INDEX LIFECYCLE | COMPLETE | Existing versioned publication/derived-data deletion retained; re-enable uses compatible cached semantics or metadata-only jobs, preserves attempts, reconciles single/bulk/deleted collection membership even after ordinary caller cancellation. JVM regressions passed; physical lifecycle QA pending. |
+| 24 | WI-FI-ONLY AI | COMPLETE | Current unmetered capability checked after caller guard for each AI/auth HTTP dispatch; queued unique work replaces obsolete constraints, offline work retains durable attempt. Synthetic policy/401/cancellation tests passed; physical network-switch QA pending. |
+| 25 | REUSE EXISTING AI INGESTION | COMPLETE | Existing LocalIndexer, durable jobs, canonical versioned chunks and embedding model reused. Interactive retrieval bounded to 160 local candidates/480 documents/4 per item, ranks natural-query terms and later page evidence. No parallel catalog/index. |
 | 26 | PHASE 5 — BOUNDED AI QUESTION ANSWERING | PARTIAL | Pending phase verification and final audit. |
 | 27 | AI Q&A FLOW | PARTIAL | Pending phase verification and final audit. |
 | 28 | BACKEND IMPLEMENTATION RULE | PARTIAL | Pending phase verification and final audit. |
@@ -47,13 +47,13 @@ Status vocabulary at final audit: COMPLETE / PARTIAL / NOT NEEDED / BLOCKED. Pen
 | 38 | LIST / GRID FUNCTIONAL PARITY | PARTIAL | Pending phase verification and final audit. |
 | 39 | ACCESSIBILITY | PARTIAL | Pending phase verification and final audit. |
 | 40 | ICON SEMANTICS | PARTIAL | Pending phase verification and final audit. |
-| 41 | FILTERED EMPTY STATE | PARTIAL | Pending phase verification and final audit. |
+| 41 | FILTERED EMPTY STATE | COMPLETE | Phase 3 shared filtered-empty wording and Clear Filters; Compose coverage compiled, runtime deferred. |
 | 42 | COLLECTION AI PRIVACY UI | PARTIAL | Pending phase verification and final audit. |
 | 43 | SHARE PREVIEW — OPTIONAL | PARTIAL | Pending phase verification and final audit. |
 | 44 | FILEPROVIDER — AUDIT, DON'T BREAK | PARTIAL | Pending phase verification and final audit. |
 | 45 | IMPORT STORAGE PREFLIGHT | PARTIAL | Pending phase verification and final audit. |
 | 46 | STORAGE SIZE DISPLAY | PARTIAL | Pending phase verification and final audit. |
-| 47 | FTS DATABASE OPEN BEHAVIOR | PARTIAL | Pending phase verification and final audit. |
+| 47 | FTS DATABASE OPEN BEHAVIOR | COMPLETE | Diagnostic reproduced eight unnecessary DDL changes; conditional repair preserves unchanged opens, rebuilds missing/stale indexes, and reconciles legacy triggers during 4→5 migration. Actual Room tests passed. |
 | 48 | ROOM SCHEMA EXPORT | COMPLETE | Room schema export enabled with KSP location; original schema 4 and resulting schema 5 retained. Actual Room migration-open regression passed, no destructive migration. |
 | 49 | NO CASUAL DELETE-ALL FEATURE | PARTIAL | Pending phase verification and final audit. |
 | 50 | NO "DELETE COLLECTION + CONTENT" MAGIC | PARTIAL | Pending phase verification and final audit. |

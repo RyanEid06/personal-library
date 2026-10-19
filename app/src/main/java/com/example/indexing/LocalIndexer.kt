@@ -108,18 +108,19 @@ class LocalIndexer(
         val excludedCollections = prefs.getStringSet("excluded_collections", emptySet()).orEmpty()
         if (repository.dao.getCollectionIdsForItem(itemId).any { it in excludedCollections }) return@withLock
         val versionTag = "ai_version_${item.localIndexVersion}"
+        val networkType = if (prefs.getBoolean("ai_wifi_only", true)) NetworkType.UNMETERED else NetworkType.CONNECTED
         val manager = WorkManager.getInstance(context)
         val liveWork = manager.getWorkInfosForUniqueWork("ai_job_$itemId").get().filter { !it.state.isFinished }
-        if (liveWork.any { versionTag in it.tags }) return@withLock
+        if (liveWork.any { versionTag in it.tags && it.constraints.requiredNetworkType == networkType }) return@withLock
         if (job.attempts >= 4) {
+            // An obsolete request must not survive a preference change, even at the retry ceiling.
+            if (liveWork.isNotEmpty()) manager.cancelUniqueWork("ai_job_$itemId").result.get()
             repository.updateAnalysisJobIfCurrent(job.copy(status = "NEEDS_RETRY"))
             return@withLock
         }
-        // KEEP preserves the current request's progress and backoff. Replace only obsolete content work.
-        val policy = if (liveWork.any { versionTag !in it.tags }) ExistingWorkPolicy.REPLACE else ExistingWorkPolicy.KEEP
-
-        val wifiOnly = prefs.getBoolean("ai_wifi_only", true)
-        val networkType = if (wifiOnly) NetworkType.UNMETERED else NetworkType.CONNECTED
+        // Keep unchanged work/backoff; replace the unique job when content or policy is obsolete.
+        // The durable job row remains the authority for version, metadata-only mode and attempts.
+        val policy = if (liveWork.isNotEmpty()) ExistingWorkPolicy.REPLACE else ExistingWorkPolicy.KEEP
         val constraints = Constraints.Builder()
             .setRequiredNetworkType(networkType)
             .setRequiresBatteryNotLow(true)
@@ -139,6 +140,48 @@ class LocalIndexer(
             policy,
             request
         ).result.get()
+    }
+
+    /** Privacy changes only alter AI eligibility. Local extraction and keyword documents remain intact. */
+    suspend fun reconcileAiEligibility(itemIds: Collection<String>) = withContext(Dispatchers.IO) {
+        val prefs = context.getSharedPreferences("personal_library_settings", Context.MODE_PRIVATE)
+        for (itemId in itemIds.distinct()) {
+            val shouldEnqueue = queueMutations.withLock {
+                val item = repository.dao.getItemById(itemId) ?: return@withLock false
+                if (item.isTrash) return@withLock false
+                val currentJob = repository.dao.getAnalysisJob(itemId)?.takeIf { it.expectedContentVersion == item.localIndexVersion }
+                    ?: AnalysisJobEntity(itemId, item.localIndexVersion, item.localIndexVersion)
+                val excluded = itemId in prefs.getStringSet("excluded_items", emptySet()).orEmpty() ||
+                    repository.dao.getCollectionIdsForItem(itemId).any { it in prefs.getStringSet("excluded_collections", emptySet()).orEmpty() }
+                if (excluded) {
+                    WorkManager.getInstance(context).cancelUniqueWork("ai_job_$itemId").result.get()
+                    repository.updateAnalysisJobIfCurrent(currentJob.copy(status = "EXCLUDED"))
+                    return@withLock false
+                }
+                val hasCachedAnalysis = !item.aiDescription.isNullOrBlank() || !item.aiConcepts.isNullOrBlank()
+                val documents = repository.dao.getSearchDocumentsForItem(itemId)
+                val expectedChunks = if (hasCachedAnalysis) DurableAiWorker.createChunksForItem(item, item.aiDescription, item.aiConcepts, documents) else emptyList()
+                val hasAllEmbeddings = hasCachedAnalysis && expectedChunks.isNotEmpty() && expectedChunks.all { chunk ->
+                    documents.any { document ->
+                        document.chunkIndex == chunk.index && document.pageNumber == chunk.pageNumber && document.textContent == chunk.text &&
+                            document.id in setOf("doc_${item.id}_${item.localIndexVersion}_${chunk.index}", "local_${item.id}_${item.localIndexVersion}_${chunk.index}") &&
+                            document.modelVersion == "gemini-embedding-2" && document.embeddingDimension == 768 && document.embedding?.split(',')?.let { values ->
+                                values.size == 768 && values.all { it.toFloatOrNull()?.isFinite() == true }
+                            } == true
+                    }
+                }
+                if (hasAllEmbeddings) {
+                    val status = if (item.localIndexCoverage.equals("PARTIAL", true) || documents.any { it.coverage.equals("PARTIAL", true) }) "PARTIAL" else "READY"
+                    repository.updateAnalysisJobIfCurrent(currentJob.copy(status = "COMPLETED"), status)
+                    return@withLock false
+                }
+                val terminal = currentJob.attempts >= 4 || (currentJob.status == "NEEDS_RETRY" && currentJob.lastErrorClass != "UNPAIRED")
+                repository.updateAnalysisJobIfCurrent(currentJob.copy(status = if (terminal) "NEEDS_RETRY" else "QUEUED",
+                    metadataOnly = currentJob.metadataOnly || hasCachedAnalysis))
+                !terminal
+            }
+            if (shouldEnqueue) enqueueDurableAiJob(itemId)
+        }
     }
 
     suspend fun enqueuePendingAnalysisJobs(resumeUnpaired: Boolean = false) = withContext(Dispatchers.IO) {
