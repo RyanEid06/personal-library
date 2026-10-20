@@ -1,10 +1,25 @@
 # Memora V1.0.1 worklog
 
-## Official release follow-up — verification in progress
+## Official V1.0.1 release record — 20 October 2026
 
-The owner authorized main integration and an official latest release/tag after all executable checks are green, with only ARM64 delivered to Desktop. Run39374909300 at573c0d6 passed all five jobs. The older docs-only run39374098057 failed debug instrumentation in `LibrarySelectionTest.collectionAction`: its broad collection-name matcher found three nodes (the real dialog option plus two item cards whose newly refreshed membership included the same name). Raw failure is preserved at `artifacts/release-v1.0.1/ci-39374098057-failed.log`. Scope the existing exact-name click to an actual dialog descendant, retaining all membership, saved-item and unchosen-membership assertions. This is a fixture-only correction; app/backend/build/signing inputs are unchanged. Independent Luna review confirmed the dialog scope and identified an add-assertion gap; the fixture now checks that BOTH selected items receive the collection before removal. Final local instrumentation Kotlin compilation passed in54s (`docs/v1.0.1-phase7-picker-fixture-final-compile.log`). Commit/push the focused fixture/report checkpoint, then require all five jobs on that exact source before main integration/signing/publication. The earlier candidate remains preserved; official ledger has not yet advanced. Live Render revision/provider acceptance remains unverified after a Cloudflare health challenge; physical checks remain unexecuted.
+**READY WITH KNOWN LIMITATIONS.** The owner authorized main integration, an official latest release and tag after all executable gates are green. Official APK source `5ac62b4ccbcdacdf6144827c8f09a3cfdeca5125` passed all five jobs in [CI 39389151689](https://github.com/RyanEid06/personal-library/actions/runs/39389151689) before fast-forward integration into `main` and permanent signing. The final release-record commit changes documentation only; it must pass the same five-job workflow before the annotated `v1.0.1` tag and [official release](https://github.com/RyanEid06/personal-library/releases/tag/v1.0.1) are published. APKs are reused without resigning that later documentation commit. The publishing step records final CI/tag/upload verification in ignored `artifacts/release-v1.0.1-official/FINAL_VERIFICATION.md`.
 
-## Final V1.0.1 report — 20 October 2026
+Version **1.0.1 / code 3**, package `com.personallibrary.app`, permanent certificate `98686D31BFE4370CC30024439B56D9E72DE71C081951D31F5D4FDD31D4EB0598`. Official signing advanced the existing Documents official release ledger from code2 to code3 for source `5ac62b4ccbcdacdf6144827c8f09a3cfdeca5125`; historical V1.0.0 records and the isolated earlier candidate provenance are preserved. Both official APKs passed independent signature, package/version, ABI/OCR, ZIP16KiB alignment and ARM64 ELF16KiB checks with R8/resource shrinking retained.
+
+| APK | Bytes | SHA-256 |
+| --- | ---: | --- |
+| Memora-v1.0.1-arm64-official.apk | 18,319,892 | `8471E6B03CD6502E28000C21E043BBF83B82F1062F885647252E6B8FDD72F246` |
+| Memora-v1.0.1-universal.apk | 48,356,815 | `B53D05B83E45DFB667EFFAB1D1117AAC9025701723E4F13B843D044D1FE2143D` |
+
+Only the verified ARM64 file is delivered to Desktop: `C:\Users\Administrator\Desktop\Memora-v1.0.1-arm64-official.apk`. The universal fallback is retained with repository release artifacts and GitHub release assets. The earlier Desktop candidate has been replaced by the official ARM64; its original repository artifacts remain preserved.
+
+Automated evidence: core57/57, Android JVM195/195, backend104/104 plus typecheck/build; API35 instrumentation55/55 debug and55/55 optimized, zero failures/errors/skips; lint0 errors/82 hosted warnings. The full phase/architecture/migration/backup/privacy report below remains authoritative for unchanged application inputs.
+
+Physical acceptance remains **unexecuted**: all100 checklist boxes are unchecked. Live Render deployment revision and paired Gemini acceptance are **unverified**; public health verification was blocked by a Cloudflare403 challenge; a direct request also failed host DNS resolution from this environment. Main integration may trigger the existing hosting deployment; no manual redeployment or live provider call is claimed. Android29–30 starting-window behavior and bounded later-PDF retrieval limitations remain explicit. The owner also authorized deleting the integrated `codex/v1.0.1-hardening` branch after main/tag/latest/assets verification and ancestry proof. No personal-data/device testing was performed. Root checkout preserves the unrelated untracked `.agents/` and `docs/qa/` files.
+
+The immutable goal file remains byte-identical. The A–M report below is the earlier signed-candidate checkpoint; its statements about main/publication authorization and an unchanged official ledger describe that historical checkpoint and are superseded by this official record.
+
+## Historical signed-candidate A–M report — 20 October 2026
 
 ### A. Verdict
 
@@ -282,3 +297,7 @@ Branch `codex/v1.0.1-hardening`; checkpoints and full hashes listed in B. Exact 
 2. Record its required phases and requirement audit checklist without replacing the master text.
 3. Audit current source, applicable instructions, existing QA evidence, Git history, and relevant release constraints.
 4. Execute the specified phases, preserving evidence and updating this file at every major checkpoint.
+
+## Historical fixture correction before official signing
+
+The owner authorized main integration and an official latest release/tag after all executable checks are green, with only ARM64 delivered to Desktop. Run39374909300 at573c0d6 passed all five jobs. The older docs-only run39374098057 failed debug instrumentation in `LibrarySelectionTest.collectionAction`: its broad collection-name matcher found three nodes (the real dialog option plus two item cards whose newly refreshed membership included the same name). Raw failure is preserved at `artifacts/release-v1.0.1/ci-39374098057-failed.log`. Scope the existing exact-name click to an actual dialog descendant, retaining all membership, saved-item and unchosen-membership assertions. This is a fixture-only correction; app/backend/build/signing inputs are unchanged. Independent Luna review confirmed the dialog scope and identified an add-assertion gap; the fixture now checks that BOTH selected items receive the collection before removal. Final local instrumentation Kotlin compilation passed in54s (`docs/v1.0.1-phase7-picker-fixture-final-compile.log`). Commit/push the focused fixture/report checkpoint, then require all five jobs on that exact source before main integration/signing/publication. The earlier candidate remains preserved; official ledger has not yet advanced. Live Render revision/provider acceptance remains unverified after a Cloudflare health challenge; physical checks remain unexecuted.

@@ -1,13 +1,13 @@
 # Memora V1.0.1 requirement audit
 
-Authority: `CODEX_V1_0_1_MASTER_PROMPT.md` (verbatim). Final audit for signed source `d5b506e69066d1d60dfa2890bf7a083b845765ac`; CI39370480374. Physical and live-provider acceptance remain explicit.
+Authority: `CODEX_V1_0_1_MASTER_PROMPT.md` (verbatim). Final audit for official APK source `5ac62b4ccbcdacdf6144827c8f09a3cfdeca5125`; CI39389151689; final release-record tag changes documentation only and requires its own green workflow. Physical and live-provider acceptance remain explicit.
 
 Status vocabulary at final audit: COMPLETE / PARTIAL / NOT NEEDED / BLOCKED. Pending work remains PARTIAL until evidence is recorded.
 
 | Section | Requirement | Status | Evidence / remaining work |
 | --- | --- | --- | --- |
 | 0 | NON-NEGOTIABLE RULES | COMPLETE | Existing architecture audited; scoped phase commits, synthetic fixtures, permanent identity and non-destructive migration preserved. Final exact-source hosted and permanent-signing gates passed. |
-| 1 | DEFINITION OF GREEN | COMPLETE | All executable final gates passed on source d5b506e in run39370480374; physical-only and undeployed/live checks remain explicit. |
+| 1 | DEFINITION OF GREEN | COMPLETE | All executable final gates passed on official source5ac62b4 in run39389151689; physical-only and unverified live checks remain explicit. |
 | 2 | CRITICAL AI ARCHITECTURE RULE | COMPLETE | Existing items, FTS, search_documents, embeddings and durable analysis jobs reused; no parallel catalog or global memory file. |
 | 3 | IMPLEMENTATION ORDER IS MANDATORY | COMPLETE | Phases1-6 reached local GREEN and were committed in mandatory order; Phase7 exact-source hosted/signing gate passed. |
 | 4 | BACKUP EXPORT MODE BUG — P0 | COMPLETE | Explicit BackupMode and engine-minimum/exact-confirmation policy; core tests passed. BackupAndTrashSafety6/6 in both final hosted variants. |
@@ -34,7 +34,7 @@ Status vocabulary at final audit: COMPLETE / PARTIAL / NOT NEEDED / BLOCKED. Pen
 | 25 | REUSE EXISTING AI INGESTION | COMPLETE | Existing LocalIndexer, durable jobs, canonical versioned chunks and embedding model reused. Interactive retrieval bounded to 160 local candidates/480 documents/4 per item, ranks natural-query terms and later page evidence. No parallel catalog/index. |
 | 26 | PHASE 5 — BOUNDED AI QUESTION ANSWERING | COMPLETE | Implemented only after Phase 4 GREEN+commit567c85d; bounded direct-answer flow tested with synthetic local HTTP. Live deployment/provider acceptance remains unexecuted. |
 | 27 | AI Q&A FLOW | COMPLETE | Existing fresh local snapshot/FTS/chunks/semantic ranks select cached evidence before answer POST; exclusions/filters/version/request guards retained. No-evidence flow avoids answer POST. |
-| 28 | BACKEND IMPLEMENTATION RULE | COMPLETE | Small authenticated answer endpoint reuses device sessions, rate limits, body limits, timeout/AbortSignal/provider patterns;104 backend tests/typecheck/build passed. Endpoint not deployed; client404 clearly preserves local/related matches. |
+| 28 | BACKEND IMPLEMENTATION RULE | COMPLETE | Small authenticated answer endpoint reuses device sessions, rate limits, body limits, timeout/AbortSignal/provider patterns;104 backend tests/typecheck/build passed. Live deployment unverified; client404 clearly preserves local/related matches. |
 | 29 | BOUNDED EVIDENCE / TOP-K | COMPLETE | Max12 chunks/3 per item/1200 each/12000 total text/32KiB UTF-8 text/64KiB request; question2000/title200; server independently enforces limits; client caps response32KiB. Approximate bounded recall may miss an unsignaled later page. |
 | 30 | AI ANSWERS REQUIRE PROVENANCE | COMPLETE | Request-local source refs map to local items/pages; server remaps again before provider and validates citations before mapping back. Executed VM/source tests pass. AiAnswerUi4/4 including local source/page navigation passed in both variants. |
 | 31 | AI ANSWER GROUNDING | COMPLETE | Higher-priority evidence-only/untrusted-content prompt; strict ANSWERED/CONFLICTING/INSUFFICIENT shape and allowlisted citations; fixed local insufficiency wording. Structural validation cannot prove model factual accuracy; real provider/manual QA remains pending. |
@@ -60,14 +60,14 @@ Status vocabulary at final audit: COMPLETE / PARTIAL / NOT NEEDED / BLOCKED. Pen
 | 51 | SECURITY POSITIONING | COMPLETE | Keystore/auth/HTTPS/encrypted backups/platform-backup exclusions/non-exported components retained; app lock is not represented as an encrypted vault. |
 | 52 | PRIVATE DATA LOGGING | COMPLETE | No private-content/passphrase/provider-secret logs added; backend logs request metadata and returns sanitized provider errors. Signing diagnostics remain transient. |
 | 53 | PERFORMANCE | PARTIAL | Bounded AI candidates/evidence, latest-query cancellation and off-main Select All tested; real large-library latency, scrolling and memory measurements remain device QA. |
-| 54 | VERSION / BRANCH | COMPLETE | Separate codex/v1.0.1-hardening pushed; exact signed source d5b506e, version1.0.1/code3. All5 hosted jobs passed; main unchanged. |
-| 55 | RELEASE SIGNING | COMPLETE | Actual ARM64/universal QA pair signed and verified with permanent certificate98686D31...; separate candidate ledger/reports, official hashes unchanged.51 safety checks per PS runtime passed. |
+| 54 | VERSION / BRANCH | COMPLETE | Separate hardening history preserved; owner-authorized fast-forward to main after exact source5ac62b4 five-job CI39389151689 success. Official1.0.1/code3; later tag record documentation only, with its own required green CI. |
+| 55 | RELEASE SIGNING | COMPLETE | Official ARM64/universal pair signed and independently verified with permanent certificate98686D31...; official Documents ledger advanced to code3/source5ac62b4. Historical official/candidate records preserved;51 safety checks per PS runtime passed. |
 | 56 | APK PACKAGING | COMPLETE | R8/resource-shrunk permanent-signed ARM64/universal pair passed native/OCR/signature/alignment/ARM64 ELF checks; debug/optimized emulator55/55 each. |
-| 57 | TESTING — REQUIRED | COMPLETE | Core57/57, Android195/195, backend104/104, debug55/55 and optimized55/55; lint0 errors; assemblies, Windows safety and actual permanent signing passed. Exact-source run39370480374. |
+| 57 | TESTING — REQUIRED | COMPLETE | Core57/57, Android195/195, backend104/104, debug55/55 and optimized55/55; lint0 errors; assemblies, Windows safety and actual permanent signing passed. Official exact-source run39389151689. |
 | 58 | REQUIRED REGRESSION COVERAGE | COMPLETE | Focused core/JVM/backend regressions plus55 UI/runtime cases in each debug/optimized emulator variant passed; physical follow-up remains explicit. |
 | 59 | MANUAL PHYSICAL QA CHECKLIST | COMPLETE | Same physical QA checklist finalized with synthetic navigation/provider/large-font/network/backup/reminder/theme checks; all physical checks explicitly unexecuted. |
 | 60 | DEFINITION OF DONE FOR AI | COMPLETE | All 12 AI architecture statements supported by existing pipeline, bounded local-first protocol, per-dispatch privacy/network guards, cached-only evidence, server bounds and local source mapping. Live endpoint/provider acceptance remains separate. |
 | 61 | DO NOT OVERBUILD | COMPLETE | No knowledge graph, people/fact database, global memory, cloud sync, telemetry, full wipe or major redesign added. |
 | 62 | FINAL REPORT FORMAT | COMPLETE | Final A-M report in same worklog includes exact evidence, phase hashes, schema/backup/search/AI/security, signed APK hashes, limitations and Git state. |
-| 63 | FINAL PRODUCT TARGET | PARTIAL | Requested implementation and synthetic end-to-end protocol/runtime checks complete; new answer endpoint undeployed, live-provider and physical large-library/product acceptance unexecuted. |
-| 64 | START | COMPLETE | Phased audited implementation, local checkpoint commits, exact-source five-job hosted verification and permanent-signed QA candidate delivered; physical checklist retained, no production merge/release. |
+| 63 | FINAL PRODUCT TARGET | PARTIAL | Requested implementation and synthetic end-to-end protocol/runtime checks complete; live answer endpoint deployment/revision unverified, live-provider and physical large-library/product acceptance unexecuted. |
+| 64 | START | COMPLETE | Phased audited implementation, local checkpoints, exact-source five-job hosted verification and official permanent signing completed. Owner conditionally authorized main/latest/tag after all green; physical checklist retained. |

@@ -1,10 +1,10 @@
 # V1 verification status
 
-## V1.0.1 hardening candidate — 20 October 2026
+## Official V1.0.1 — 20 October 2026
 
-**READY WITH KNOWN LIMITATIONS.** Separate branch `codex/v1.0.1-hardening`, signed source `d5b506e69066d1d60dfa2890bf7a083b845765ac`, [CI39370480374](https://github.com/RyanEid06/personal-library/actions/runs/39370480374): all5 jobs passed, core57/57, Android JVM195/195, backend104/104, API35 debug55/55 and optimized55/55; lint0 errors/82 hosted warnings. Same-permanent-key R8/resource-shrunk ARM64/universal1.0.1/code3 candidate pair verified locally under `artifacts/release-v1.0.1-candidate/`; official provenance/ledger unchanged. Final record checkpoint adds documentation only.
+**READY WITH KNOWN LIMITATIONS.** Signed official version1.0.1/code3 APKs are verified with the same permanent package/certificate. Public availability is shown by the [V1.0.1 release channel](https://github.com/RyanEid06/personal-library/releases/tag/v1.0.1) after the publication gate below. APK source `5ac62b4ccbcdacdf6144827c8f09a3cfdeca5125` passed all5 jobs in [CI 39389151689](https://github.com/RyanEid06/personal-library/actions/runs/39389151689); the final release-record/tag commit adds documentation only and must independently pass all5 jobs before publication. Core57/57, Android195/195, backend104/104, debug55/55 and optimized55/55; lint0 errors/82 hosted warnings. The optimized official ARM64/universal pair is independently verified and recorded in [the same worklog](CODEX_V1_0_1_WORKLOG.md). Only official ARM64 is delivered to Desktop.
 
-Exact APK hashes, sizes, phase commits and full A-M report live in [the same worklog](CODEX_V1_0_1_WORKLOG.md), with [all65 requirement rows](CODEX_V1_0_1_AUDIT.md) and [the physical checklist](CODEX_V1_0_1_PHYSICAL_QA.md). The new answer endpoint is tested but undeployed; live-provider/physical/OEM/performance acceptance and Android29–30 starting-window limitations are explicit. No production merge, public release or backend deployment performed. Published V1.0.0 history follows.
+The owner authorized main integration, the official tag and latest release conditional on green checks. The official signing ledger now reserves code3/source5ac62b4; V1.0.0 and isolated candidate evidence remain preserved. All100 physical checks remain unexecuted. Live Render deployment revision and paired-provider quality are unverified because the health request encountered a Cloudflare challenge. No manual backend deployment or live provider call is claimed. Android29–30 starting-window and bounded retrieval limitations remain. See [the audit](CODEX_V1_0_1_AUDIT.md) and [physical checklist](CODEX_V1_0_1_PHYSICAL_QA.md). Historical V1.0.0 records follow.
 
 ## First official release — 16 October 2026
 

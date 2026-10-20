@@ -1,10 +1,12 @@
 # Memora V1 owner handoff
 
-## V1.0.1 candidate handoff
+## Official V1.0.1 handoff
 
-The owner's requested Desktop delivery is **ARM64 only**: `C:\Users\Administrator\Desktop\Memora-v1.0.1-arm64-candidate.apk` (18,319,892 bytes). Its SHA-256 matches the certified ARM64 artifact recorded in the worklog. The universal fallback remains in repository artifacts and was not copied to the Desktop.
+The Desktop delivery is **ARM64 only**: `C:\Users\Administrator\Desktop\Memora-v1.0.1-arm64-official.apk` (18,319,892 bytes), SHA-256 `8471E6B03CD6502E28000C21E043BBF83B82F1062F885647252E6B8FDD72F246`. After verified publication, both supported variants are downloadable from the [V1.0.1 release channel](https://github.com/RyanEid06/personal-library/releases/tag/v1.0.1); the universal fallback is retained in repository artifacts and designated for the release assets. The previous Desktop candidate is superseded; its repository artifacts remain preserved.
 
-Permanent-signed1.0.1/code3 candidate source `d5b506e69066d1d60dfa2890bf7a083b845765ac` passed all5 jobs in CI39370480374, including55/55 debug and55/55 optimized tests. ARM64 primary/universal fallback files are in `artifacts/release-v1.0.1-candidate/`. Candidate hashes, full final report and outstanding limits live in [the V1.0.1 worklog](CODEX_V1_0_1_WORKLOG.md). Use [the physical QA checklist](CODEX_V1_0_1_PHYSICAL_QA.md) for device acceptance. The hardening branch targets 1.0.1/code 3 with the existing package/certificate; it does not replace the published V1.0.0 download until a separately authorized release. Historical V1 instructions follow.
+Permanent-signed1.0.1/code3 APK source `5ac62b4ccbcdacdf6144827c8f09a3cfdeca5125` passed all5 jobs in [CI 39389151689](https://github.com/RyanEid06/personal-library/actions/runs/39389151689), including55/55 debug and55/55 optimized instrumentation. The final tag may add documentation only and requires its own green five-job workflow before publication. Official code3 provenance is separate from the historical candidate. Exact pair hashes, authorization, full A–M report and known limits are in [the same worklog](CODEX_V1_0_1_WORKLOG.md).
+
+Install as an update over permanent-signed V1.0.0/code2 using the same package/certificate. Preserve an encrypted backup. All100 physical acceptance checks are still unexecuted; follow [the synthetic-only physical checklist](CODEX_V1_0_1_PHYSICAL_QA.md). Live Render deployment/provider acceptance remains unverified after a Cloudflare challenge. Historical V1.0.0 instructions follow.
 
 ## Published V1.0.0 handoff
 
@@ -13,9 +15,9 @@ Memora V1.0.0 (versionCode 2, application ID `com.personallibrary.app`) is the f
 
 ## Installation
 
-The release includes `Memora-v1.0.0-arm64-official.apk` for arm64-v8a phones and `Memora-v1.0.0-universal.apk` containing arm64-v8a/armeabi-v7a/x86/x86_64. Both require Android 10 or newer and share the same tagged source, version and permanent certificate. Download from the [official release](https://github.com/RyanEid06/personal-library/releases/tag/v1.0.0). Debug-signed `optimizedCheck` artifacts are verification-only.
+The release includes `Memora-v1.0.1-arm64-official.apk` for arm64-v8a phones and `Memora-v1.0.1-universal.apk` containing arm64-v8a/armeabi-v7a/x86/x86_64. Both require Android 10 or newer and share the same tagged source, version and permanent certificate. Download from the [official release](https://github.com/RyanEid06/personal-library/releases/tag/v1.0.1). Debug-signed `optimizedCheck` artifacts are verification-only.
 
-Export an encrypted backup of an existing library before changing installs. Keep its passphrase safely. The intended primary Desktop artifact is `Memora-v1.0.0-arm64-official.apk`, only after successful permanent-signature verification. A debug-signed installation cannot be updated by this different permanent certificate. Stop before uninstalling a valuable existing library and preserve/export its data. Nothing is uninstalled automatically. Future official updates must keep the same package/certificate and increase versionCode.
+Export an encrypted backup of an existing library before changing installs. Keep its passphrase safely. The intended primary Desktop artifact is `Memora-v1.0.1-arm64-official.apk`, only after successful permanent-signature verification. A debug-signed installation cannot be updated by this different permanent certificate. Stop before uninstalling a valuable existing library and preserve/export its data. Nothing is uninstalled automatically. Future official updates must keep the same package/certificate and increase versionCode.
 
 Report the failing action, device/Android version and visible message. Never send enrollment/API secrets or personal library content in diagnostics.
 
