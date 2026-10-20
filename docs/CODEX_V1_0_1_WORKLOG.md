@@ -107,6 +107,8 @@ Permanent-signed QA candidate pair, source `d5b506e69066d1d60dfa2890bf7a083b8457
 | [Memora-v1.0.1-arm64-candidate.apk](../artifacts/release-v1.0.1-candidate/Memora-v1.0.1-arm64-candidate.apk) | 18,319,892 | `785FAE813EB16A99C9006446394CC6EDE32A5C1243A1C50FC93C3BEB2BEE3AED` |
 | [Memora-v1.0.1-universal-candidate.apk](../artifacts/release-v1.0.1-candidate/Memora-v1.0.1-universal-candidate.apk) | 48,356,815 | `656678B2A338A92324AD6F075DED66FB89520D9EE6F2F3A258248CBB191234EB` |
 
+Owner delivery instruction, 20 October 2026: **only the ARM64 candidate was copied to the Desktop**, at `C:\Users\Administrator\Desktop\Memora-v1.0.1-arm64-candidate.apk`. The copied file is 18,319,892 bytes and its independently reread SHA-256 is `785FAE813EB16A99C9006446394CC6EDE32A5C1243A1C50FC93C3BEB2BEE3AED`, identical to the certified repository artifact. No universal APK was copied to the Desktop. Public copy-verification metadata is retained in ignored `artifacts/release-v1.0.1-candidate/desktop-delivery.json`.
+
 The permanent certificate SHA-256 is `98686D31BFE4370CC30024439B56D9E72DE71C081951D31F5D4FDD31D4EB0598`. R8, resource shrinking, ARM64 primary/universal fallback and bundled offline OCR remain enabled. Candidate reports/ledger are isolated under `artifacts/release-v1.0.1-candidate/`; official ledger/reports were independently hash-compared before/after signing and are unchanged. Signing a local QA candidate does not publish it.
 
 ### K. Known limitations

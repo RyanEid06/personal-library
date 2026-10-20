@@ -2,6 +2,8 @@
 
 ## V1.0.1 candidate handoff
 
+The owner's requested Desktop delivery is **ARM64 only**: `C:\Users\Administrator\Desktop\Memora-v1.0.1-arm64-candidate.apk` (18,319,892 bytes). Its SHA-256 matches the certified ARM64 artifact recorded in the worklog. The universal fallback remains in repository artifacts and was not copied to the Desktop.
+
 Permanent-signed1.0.1/code3 candidate source `d5b506e69066d1d60dfa2890bf7a083b845765ac` passed all5 jobs in CI39370480374, including55/55 debug and55/55 optimized tests. ARM64 primary/universal fallback files are in `artifacts/release-v1.0.1-candidate/`. Candidate hashes, full final report and outstanding limits live in [the V1.0.1 worklog](CODEX_V1_0_1_WORKLOG.md). Use [the physical QA checklist](CODEX_V1_0_1_PHYSICAL_QA.md) for device acceptance. The hardening branch targets 1.0.1/code 3 with the existing package/certificate; it does not replace the published V1.0.0 download until a separately authorized release. Historical V1 instructions follow.
 
 ## Published V1.0.0 handoff
