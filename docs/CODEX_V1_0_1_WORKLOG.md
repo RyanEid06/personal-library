@@ -1,5 +1,9 @@
 # Memora V1.0.1 worklog
 
+## Official release follow-up — verification in progress
+
+The owner authorized main integration and an official latest release/tag after all executable checks are green, with only ARM64 delivered to Desktop. Run39374909300 at573c0d6 passed all five jobs. The older docs-only run39374098057 failed debug instrumentation in `LibrarySelectionTest.collectionAction`: its broad collection-name matcher found three nodes (the real dialog option plus two item cards whose newly refreshed membership included the same name). Raw failure is preserved at `artifacts/release-v1.0.1/ci-39374098057-failed.log`. Scope the existing exact-name click to an actual dialog descendant, retaining all membership, saved-item and unchosen-membership assertions. This is a fixture-only correction; app/backend/build/signing inputs are unchanged. Independent Luna review confirmed the dialog scope and identified an add-assertion gap; the fixture now checks that BOTH selected items receive the collection before removal. Final local instrumentation Kotlin compilation passed in54s (`docs/v1.0.1-phase7-picker-fixture-final-compile.log`). Commit/push the focused fixture/report checkpoint, then require all five jobs on that exact source before main integration/signing/publication. The earlier candidate remains preserved; official ledger has not yet advanced. Live Render revision/provider acceptance remains unverified after a Cloudflare health challenge; physical checks remain unexecuted.
+
 ## Final V1.0.1 report — 20 October 2026
 
 ### A. Verdict

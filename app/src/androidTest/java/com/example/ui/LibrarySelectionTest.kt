@@ -121,7 +121,10 @@ class LibrarySelectionTest {
         compose.onNodeWithTag("item_card_${first.id}").performTouchInput { longClick() }
         selectAllVisible()
         collectionAction("bulk_add_collections", added.name)
-        compose.waitUntil(10_000) { runBlocking { vm.repository.dao.getCollectionIdsForItem(first.id).toSet() == setOf(retained.id, added.id) } }
+        compose.waitUntil(10_000) { runBlocking {
+            vm.repository.dao.getCollectionIdsForItem(first.id).toSet() == setOf(retained.id, added.id) &&
+                vm.repository.dao.getCollectionIdsForItem(second.id).toSet() == setOf(retained.id, added.id)
+        } }
         collectionAction("bulk_remove_collections", added.name)
         compose.waitUntil(10_000) { runBlocking { vm.repository.dao.getCollectionIdsForItem(first.id).toSet() == setOf(retained.id) && vm.repository.dao.getCollectionIdsForItem(second.id).toSet() == setOf(retained.id) } }
         assertActive(first.id, second.id)
@@ -241,7 +244,7 @@ class LibrarySelectionTest {
     private fun collectionAction(tag: String, name: String) {
         compose.onNodeWithTag("selection_more_button").performClick()
         compose.onNodeWithTag(tag).performClick()
-        compose.onNodeWithText(name).performClick()
+        compose.onNode(hasText(name) and hasAnyAncestor(isDialog())).performClick()
         compose.onNodeWithTag("bulk_collections_apply").performClick()
         compose.waitUntil(10_000) { compose.onAllNodesWithTag("bulk_collections_apply").fetchSemanticsNodes().isEmpty() }
     }
