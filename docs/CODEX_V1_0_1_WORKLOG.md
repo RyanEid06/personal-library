@@ -1,6 +1,135 @@
 # Memora V1.0.1 worklog
 
-## Current checkpoint
+## Final V1.0.1 report — 20 October 2026
+
+### A. Verdict
+
+**READY WITH KNOWN LIMITATIONS**
+
+This report certifies the APK source `d5b506e69066d1d60dfa2890bf7a083b845765ac` on `codex/v1.0.1-hardening`, with exact-source [CI run 39370480374](https://github.com/RyanEid06/personal-library/actions/runs/39370480374). The immutable goal remains `docs/CODEX_V1_0_1_MASTER_PROMPT.md`, SHA-256 `E1E0B7E8328464CEC98C32463795BBD39B086F0475BCB70DC620F255FD811670`. The report is added after signing; any subsequent report-only checkpoint changes documentation, not certified APK inputs. Physical-device acceptance remains unexecuted.
+
+### B. Phase report
+
+| Phase | Completed work | Verified checkpoint and result | Deferred verification |
+| --- | --- | --- | --- |
+| 1 | Explicit backup modes and passphrase policy; owned restore-stage cleanup; Trash/Undo, destructive guards and reminder restore/reboot/stale delivery safety | `f2ab99fd4c504c799f31c96e2a5b77a1691d5ff4`; core53/53, Android JVM71/71, backend32/32; lint0 errors/80 warnings; debug and AndroidTest assembly passed | Physical backup/reminder/OEM acceptance; added UI tests executed in final hosted gate |
+| 2 | Collection lifecycle, portable stable Random Links role, visible management, list/grid/search selection and bulk membership/Trash, metadata editing, Restore All | `5ab581f2499d6757a849c16c8fa104530b7b123a`; core55/55, Android JVM92/92, lint/assemblies passed | Physical WhatsApp routing/backup portability; UI coverage executed in final hosted gate |
+| 3 | FTS prefix correctness, latest-query guards, visible filters, snippets and empty states; conditional FTS repair | `14073e905c66891282abdbfbca5074e1f56f39a5`; core55/55, Android JVM121/121, lint/assemblies passed | Large-library physical latency; prefix/list/grid UI coverage executed in final hosted gate |
+| 4 | Fresh AI eligibility, excluded metadata removal, cached local-text preservation, network dispatch guards, unique-work constraint refresh and cancellation-safe reconciliation | `567c85d4d2c896a8c225872aa0759942bd54b1dc`; core55/55, Android JVM158/158, lint/assemblies passed | Real network-switch/OEM/background behavior and live provider |
+| 5 | Existing retrieval extended with bounded direct answers, authenticated server endpoint, strict evidence/citation handling, local source links and additive results | `4e0c51a1291f62897135a310e7af4a3468f9ce52`; core55/55, Android JVM180/180, backend104/104 plus typecheck/build, lint/assemblies passed | New endpoint deployment/live Gemini and factual-answer acceptance; synthetic answer UI coverage executed in final hosted gate |
+| 6 | Back/Up hierarchy and notification restoration; Light/Dark/System launch, contrast, icons, semantics and wrapping; FileProvider narrowing and import preflight | `59abd317adcb46aaedf3a6f505f29c177a7322c0`; core57/57, Android JVM195/195, lint0 errors/81 warnings, assemblies passed | Physical cold launches, TalkBack/display scaling and cross-app media grants; UI/provider coverage executed in final hosted gate |
+| 7 | 1.0.1/code3, narrow optimized-test reference rules, candidate-only permanent signing and isolated provenance; final test-fixture corrections | Production/config preparation checkpoint `9629538d1156bddb9049eca01d64d2eba723441a`; subsequent fixture checkpoint and exact signed candidate source `d5b506e69066d1d60dfa2890bf7a083b845765ac`; exact-source final results in J | Physical checklist and undeployed/live endpoint work remain explicit |
+
+Each phase reached its executable local gate before the next phase began. Hosted runtime was executed after the final implementation. First hosted run39311792325 is preserved: debug55 tests,3 fixture failures,0 errors/skips. Two failures queried merged semantics despite existing snippet child nodes; one changed the synthetic Intent launch filter, causing ActivityScenario to ignore real destroyed/recreated callbacks. Corrected fixtures retain exact snippet/display, recreation, dismissal and same-ID redelivery assertions. Production code was unchanged by that correction. Actual optimized-test linkage RED also remains preserved: generated debug reference rules missed two InlineMarker calls emitted by optimized test compilation. Exact instrumentation-only class/two-method keeps fixed the static runtime linkage; ordinary release optimization remains intact.
+
+### C. Requirement audit
+
+All numbered master sections0–64 are recorded individually in [the requirement audit](CODEX_V1_0_1_AUDIT.md). Required implementation is complete subject to the explicit limitations below. Sections35 (Android10/11 OS starting window and physical launch acceptance),53 (physical large-library performance measurements) and63 (full live-provider/product acceptance pending deployment/device QA) remain PARTIAL. Section43's optional filename-list preview is NOT NEEDED for this candidate; the existing confirmed share preview remains. Backend endpoint deployment and physical QA are not silently counted as completed.
+
+### D. Important files changed
+
+- `core/src/main/kotlin/com/personallibrary/core/backup/{BackupPassphrasePolicy,EncryptedBackupEngine,RestoreStaging}.kt` and `storage/ManagedAssetStore.kt`: engine-backed passphrase rules, portable optional collection role, owned staging, streamed budget and atomic original publication.
+- `app/src/main/java/com/example/data/{RoomEntities,LibraryRepository}.kt` and `app/schemas/com.example.data.LibraryRoomDatabase/`: non-destructive schema5, stable application role, metadata-only analysis state, safe collection/item/batch mutations and conditional FTS repair.
+- `MainViewModel.kt`, `LatestLocalSearch.kt`, Library/Search/Collections/Trash screens and shared dialogs/actions: live local results, visible filtering, generation-safe selection, editing, recoverable Trash and additive AI states.
+- `app/src/main/java/com/example/{indexing,ai}/`, `ui/InteractiveAiRetrieval.kt` and `ui/AiAnswerEvidence.kt`: bounded candidates/evidence, versioned cached index reuse, exclusion/network/auth/retry guards and request-local provenance.
+- `server/src/`: authenticated answer route/provider handling with independent byte/count/text/citation bounds and sanitized errors; no new backend architecture.
+- `MainActivity.kt`, theme resources/preferences, common cards/voice/Settings, capture and `file_paths.xml`: navigation/restoration, launch/contrast/accessibility, advisory import size and managed-original-only grants.
+- `app/build.gradle.kts`, `optimized-test-rules.pro`, `scripts/Build-MemoraRelease.ps1`, `MemoraReleasePolicy.psm1`, candidate tests and CI: update version, scoped optimized instrumentation support, same-key paired APK verification and isolated QA provenance.
+- Core/JVM/backend/Compose suites, this report, audit, checklist, plan, README/status/handoff/backup docs: regression evidence and owner handoff.
+
+Paths above are module descriptions; Git history/diff provides exact touched files. No provider/signing secret is stored in the report or Git.
+
+### E. Database / migration report
+
+Original Room schema4; resulting schema5. Migration chain1→2→3→4→5 retained. Migration4→5 adds stable collection application role and defaulted metadata-only analysis job state, without destructive replacement. Exported schemas4/5 retained; actual Room migration-open/data-retention/FTS regressions passed within Android JVM195. Destructive migration: **NO**. No parallel AI index/table/catalog was introduced.
+
+### F. Backup compatibility
+
+Encrypted V1 envelope/archive versions remain unchanged. The portable collection `applicationRole` field is optional/defaultable when reading older V1 manifests. Old-role adoption, renamed Random Links export/fresh restore/merge restore/repeated restore and identity-collision regressions pass. Routing uses stable role rather than editable display name. Valid older backups remain readable; schema evolution does not replace the portable format.
+
+Export uses explicit EXPORT state, exact untruncated engine-minimum12-character passphrase and matching confirmation; Restore uses explicit RESTORE state and transactional staged validation. Cancellation/Back/dismissal/disposal/failure/success remove private stage files and references; abandoned stages are swept while active ownership is protected, including Clear Cache. This is best-effort file deletion, not guaranteed physical flash secure erase. Real-device older-backup/fresh-install acceptance remains on the checklist.
+
+### G. Search architecture
+
+Existing Room FTS4/search documents remain authoritative. Quoted token prefixes preserve b→bi→bir→birth→birthday narrowing. Typing is debounced150ms; synchronous query/context generation invalidation plus cancellation prevents obsolete query/filter/data results from publishing. Filters refresh without that typing delay. Active collection/type/date chips and Clear Filters are visible on Library/Search; selection uses the current logical result set rather than the database or only on-screen viewport.
+
+The existing snippet engine is reused, with sanitized matching terms, token-start evidence and Unicode-safe boundaries in both layouts. Empty library, zero keyword results, empty filtered results and AI failure have distinct states. Local FTS includes title/body/filename/extraction/OCR/PDF/available derived text, remains offline and makes no ordinary keyword provider call. Conditional index repair replaces unnecessary per-open rebuilds while retaining missing/stale index recovery. AI results/answers supplement local rows.
+
+### H. AI architecture and definition of done
+
+Existing items, extracted text, versioned `search_documents`, page chunks, cached descriptions/concepts/embeddings and durable analysis jobs are reused. Existing bounded media extraction/indexing feeds the same pipeline. Metadata-only edits refresh cached title/evidence/embeddings without repeating full media analysis when reusable cached analysis exists; genuinely unanalyzed content retains its first necessary job. Body edits invalidate relevant state; version guards reject obsolete publications. Trash suppresses eligibility; restore reconciles it; permanent deletion removes source-derived state.
+
+Fresh filtered SQL/FTS retrieval and existing semantic ranking load at most160 candidate items/480 documents/4 documents per item. Selected answer evidence is at most12 chunks,3 per item,1200 characters each,12000 total text characters and32KiB aggregate UTF-8 text, within64KiB serialized request. Question limit2000 and title limit200. The client bounds response bytes to32KiB and answer characters to4000. Selection retains item/page provenance and diversity but bounded retrieval is approximate.
+
+`POST /v1/ai/answer` reuses device/session authentication, request/rate limits, provider timeout/cancellation and safe errors. Server independently validates bounds and remaps request-local references again before provider dispatch; provider never receives stable database IDs from this protocol. Higher-priority instructions treat evidence as untrusted data and require evidence-only answers, explicit insufficient/conflicting results and allowlisted citations. Responses map back to local source items/pages. Citation structure is checked; factual correctness of every model statement is not mathematically guaranteed.
+
+The endpoint code is tested but **not deployed**. An older backend404 gives an explicit unavailable state while retaining local/related matches. No live Gemini call is claimed. Wi-Fi-only means currently connected **unmetered** network, enforced for queued work and interactive AI; unique WorkManager constraints are refreshed. Each AI/auth dispatch, renewal and retry rechecks caller/privacy/network guards. Explicit device pairing is independent and carries no library evidence.
+
+All12 required AI statements are explicitly confirmed:
+
+1. Existing indexing infrastructure reused: **YES**.
+2. Giant global Gemini Markdown/JSON memory added: **NO**.
+3. Duplicate parallel AI catalog added: **NO**.
+4. Local keyword search remains local/offline: **YES**.
+5. AI exclusion applies to item evidence, candidates, semantic use, network requests and outbound collection metadata: **YES**; collection-name plan metadata is omitted.
+6. Excluded content remains in ordinary local search: **YES**; exclusion does not erase local extraction/FTS.
+7. Ask AI retrieves local candidates before server/provider calls: **YES**.
+8. Q&A sends bounded selected evidence: **YES**.
+9. Backend independently enforces evidence/request limits: **YES**.
+10. Provider credentials remain server-side: **YES**.
+11. Ordinary repeated questions repeatedly upload full original large media: **NO**; cached text/metadata/chunks are sent.
+12. Answers retain source-item/page provenance: **YES**, with local source navigation.
+
+### I. Privacy / security
+
+No private-content, passphrase or provider-key logs added. Server errors are sanitized; signing credentials are decrypted only after source/CI/version/identity checks, kept process-local and disposed/restored. Existing Android Keystore, app lock/device authentication, HTTPS, encrypted backups, platform-backup exclusions and non-exported components are preserved. App lock is not described as encrypted-vault storage.
+
+FileProvider is narrowed to `files/storage_root/blobs`; all three consumers use managed originals. Actual Android URI read/grant-root/private-cache/sibling-prefix tests passed in both final hosted variants. Windows AndroidX's slash containment does not model Android URIs correctly, so local Robolectric verifies real manifest/resource configuration rather than claiming URI runtime. Staged decrypted restore files are outside the grant root. Import checks advisory provider size and usable space minus16MiB, then retains streamed limits and transactional rollback if unknown/lying metadata or IO failure occurs. Advisory preflight cannot reserve disk against concurrent external writes.
+
+Remaining defense-in-depth/acceptance work: real receiver-app grants, OEM auth/network/reminder behavior, factual live-provider answers and physical restore lifecycle checks. No telemetry, cloud synchronization, full-wipe command, knowledge graph or provider credential in APK was introduced.
+
+### J. Automated verification and artifacts
+
+- Exact-source hosted five-job workflow: **SUCCESS**, core/android/server/emulator/signing-workflow all terminal-success.
+- Core **57/57**; Android JVM **195/195**; backend **104/104**, typecheck and build passed. Zero failures/errors/skips in these suites.
+- Hosted API35 instrumentation: **55/55 debug and55/55 optimized**, zero failures/errors/skips, verified from raw XML. Includes backup/Trash/management/selection/search/answer/navigation/large-font/provider/parity and release OCR/Room/Tink runtime checks. Direct onNewIntent coverage is distinct from real phone notification delivery.
+- Lint: local **0 errors/81 warnings**, hosted **0 errors/82 warnings**. The sole extra hosted warning is OldTargetApi for intentionally retained target36; no lint runtime error is hidden.
+- Debug and AndroidTest assembly passed; untouched optimized ARM64/universal assembly, launch Status:ok/alive PID and optimized instrumentation passed. Light/Dark branding PNGs inspected visually.
+- Optimized static audits: zero missing mapped target classes/actually invoked runtime classes, zero inaccessible inheritance edges; all3 MLKit registrar constructors public. Conditional test rules preserve only exact references, including two InlineMarker methods; ordinary release uses full R8/resource shrinking.
+- Synthetic signing safety:15 DPAPI +19 release safety +8 candidate +9 APK inspection = **51 checks in each of PowerShell7 and5.1**, passed locally; hosted Windows signing-workflow succeeded.
+- Actual permanent-key release pair built and independently verified for certificate, package/version, native ABI sets, offline OCR preservation, ZIP16KiB alignment and ARM64 ELF16KiB requirements. Both final files and pair report exist; hashes were independently reread.
+- Evidence: `docs/v1.0.1-phase7-{debug,server,signing-safety-all,optimized,optimized-linkage-green,ci-fixture-check,candidate-signing}.log`; ignored raw current-source reports/screenshots/launch logs under `artifacts/release-v1.0.1/ci-39370480374/`; signed provenance/size reports under `artifacts/release-v1.0.1-candidate/`. Logs and artifacts remain local; CI artifacts are attached to the linked run.
+
+Permanent-signed QA candidate pair, source `d5b506e69066d1d60dfa2890bf7a083b845765ac`, version1.0.1/code3, package `com.personallibrary.app`:
+
+| APK | Bytes | SHA-256 |
+| --- | ---: | --- |
+| [Memora-v1.0.1-arm64-candidate.apk](../artifacts/release-v1.0.1-candidate/Memora-v1.0.1-arm64-candidate.apk) | 18,319,892 | `785FAE813EB16A99C9006446394CC6EDE32A5C1243A1C50FC93C3BEB2BEE3AED` |
+| [Memora-v1.0.1-universal-candidate.apk](../artifacts/release-v1.0.1-candidate/Memora-v1.0.1-universal-candidate.apk) | 48,356,815 | `656678B2A338A92324AD6F075DED66FB89520D9EE6F2F3A258248CBB191234EB` |
+
+The permanent certificate SHA-256 is `98686D31BFE4370CC30024439B56D9E72DE71C081951D31F5D4FDD31D4EB0598`. R8, resource shrinking, ARM64 primary/universal fallback and bundled offline OCR remain enabled. Candidate reports/ledger are isolated under `artifacts/release-v1.0.1-candidate/`; official ledger/reports were independently hash-compared before/after signing and are unchanged. Signing a local QA candidate does not publish it.
+
+### K. Known limitations
+
+- **Deployment/live verification:** new Q&A endpoint is undeployed; direct answers require separately authorized deployment and live paired-provider QA. Local keyword/related-result fallback is retained.
+- **Platform limitation:** Android29–30 may display an OS-chosen starting window before the app can read a conflicting saved manual Light/Dark preference. API31+ application splash preference is synchronized; OEM cold-start acceptance remains unexecuted.
+- **Bounded retrieval/model limit:** a relevant later PDF page can be missed without lexical/selected-semantic ranking signal; no exhaustive recall or universal factual-grounding guarantee. Narrow the source or add query context when needed.
+- **Deferred hardware verification:** real WhatsApp/system shares, reminder timing/reboot/permissions, biometric lock, TalkBack, display scaling, cross-app grants, update over V1.0.0, fresh-device restore, unmetered transitions and large-library latency/memory/scrolling. CI35 emulator is distinct from phone/OEM proof.
+- **Optional future polish:** concise attachment filename-list preview omitted; existing confirmation retained.
+- **Confirmed unresolved high-impact implementation bug:** none confirmed after addressed regression/review findings. This states the current tested/reviewed evidence, not a claim that unknown bugs cannot exist.
+
+### L. Manual QA checklist
+
+Use the finalized [physical QA checklist](CODEX_V1_0_1_PHYSICAL_QA.md), with exact source/artifact hashes and all device checkboxes left unexecuted. It covers library capture/list/grid/favorite/sort/filter, prefix/rapid/offline search, filtered selection/bulk operations, text/link/media edit/search refresh, collection lifecycle/stable Random Links, Trash/Undo/restore/reminders/destructive confirmation, encrypted backup/cancellation/old backups, AI source/privacy/network/large-media reuse, cold themes, accessibility and Back/dialog/selection hierarchy. Use synthetic fixtures only; no personal WhatsApp/backup/phone records were used.
+
+### M. Git state and delivery boundary
+
+Branch `codex/v1.0.1-hardening`; checkpoints and full hashes listed in B. Exact signed source and hosted gate recorded above. Final report checkpoint is documentation-only and can be identified by `git log -1`; it does not replace the signed source. All implementation checkpoints are committed and pushed to this separate branch. The final report/audit/checklist/status changes form a documentation-only checkpoint, committed and pushed after the artifact build; the tracked working tree is clean at delivery. Preserved unrelated untracked `docs/qa/` remains untouched. Master bytes/hash unchanged. Main/origin/main remains `18d21b436aea3cda781267a45b3fe025ee29c9b6`; no main merge, tag, branch deletion, public release or backend deployment performed. The original same-goal specification and same worklog remain the durable continuation points.
+
+---
+
+
+## Earlier checkpoints (newest first; final report above supersedes pending statuses)
 - Fixture correction compiled **BUILD SUCCESSFUL in42s**, `docs/v1.0.1-phase7-ci-fixture-check.log`. Independent Luna/high investigation confirmed both snippet failures are merged-tree lookup errors and endorsed the exact unmerged lookup; display assertions were also retained. Navigation preserved log shows DESTROYED/new RESUMED callbacks explicitly ignored due Intent filter mismatch. Push the isolated test/worklog checkpoint now for actual runtime verification; no passing same-source jobs were manually restarted.
 - **Continuation 2026-10-20: hosted run39311792325 inspected; Phase7 runtime gate RED, candidate unsigned.** Exact source9629538 passed core57, Android195/lint0 errors, backend and signing-workflow, but debug emulator XML reports55 tests/3 failures/0 errors/0 skips. Preserved raw artifact and job log at `artifacts/release-v1.0.1/ci-39311792325/`. Two failures explicitly report the snippet child exists in the unmerged semantics tree; use that tree and retain exact text plus display assertions. Navigation log proves actual Activity destruction/recreation occurred, but ActivityScenario ignored lifecycle callbacks because the injected Intent discarded the original MAIN/LAUNCHER filter. Copy the actual launch Intent before adding the synthetic notification extra; retain both recreation and repeat-delivery assertions. No production behavior change or weakened assertion. Recompile, commit the fixture correction and push only hardening; then inspect the new exact-source workflow. Master/goal unchanged, same worklog; physical checks still unexecuted.
 - **Phase7 local release-input gate GREEN; final hosted/signing gate pending.** Narrow InlineMarker correction rebuilt in2m36s (`...phase7-optimized-linkage-green.log`); actual unchanged test DEX hash verified, **zero missing invoked classes**, zero missing mapped target classes, zero inaccessible inheritance edges, all3 OCR public constructors, signatures/alignment passed. Ordinary optimized/release inputs unchanged by conditional test keeps. Full master reread in3 contiguous chunks before final audit; all65 requirement rows retained with explicit pending/partial statuses. Final source now ready for local checkpoint and authorized push only to codex/v1.0.1-hardening; then preserve the exact CI run, inspect failures/rerun failed jobs only, sign candidate only after all5 exact-source jobs succeed. Same master/worklog/physical checklist retained.
@@ -141,7 +270,7 @@
 - Historical memory was consulted only for orientation; historical CI/release claims are not current verification.
 - Architecture decisions, implementation files, test results, discovered product bugs, and release verification: none yet; pending specification and repository audit.
 
-## Next steps
+## Original preparation next steps (historical; superseded)
 
 1. Receive and persist the full master specification verbatim; verify the saved text is complete.
 2. Record its required phases and requirement audit checklist without replacing the master text.

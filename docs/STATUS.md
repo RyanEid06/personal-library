@@ -1,10 +1,10 @@
 # V1 verification status
 
-## V1.0.1 hardening candidate — 19 October 2026
+## V1.0.1 hardening candidate — 20 October 2026
 
-The separate `codex/v1.0.1-hardening` branch contains six verified local checkpoints; Phase 7 final verification is active. Phase 6 passed core 57/57, Android JVM 195/195, lint with zero errors/81 existing warnings, debug assembly and instrumentation assembly. Final backend verification passed 104/104, typecheck and build. These results do not establish hosted emulator, signed candidate or physical-device acceptance. Exact current results, phase hashes and remaining checks are maintained in [the worklog](CODEX_V1_0_1_WORKLOG.md), with [the requirement audit](CODEX_V1_0_1_AUDIT.md) and [physical QA checklist](CODEX_V1_0_1_PHYSICAL_QA.md).
+**READY WITH KNOWN LIMITATIONS.** Separate branch `codex/v1.0.1-hardening`, signed source `d5b506e69066d1d60dfa2890bf7a083b845765ac`, [CI39370480374](https://github.com/RyanEid06/personal-library/actions/runs/39370480374): all5 jobs passed, core57/57, Android JVM195/195, backend104/104, API35 debug55/55 and optimized55/55; lint0 errors/82 hosted warnings. Same-permanent-key R8/resource-shrunk ARM64/universal1.0.1/code3 candidate pair verified locally under `artifacts/release-v1.0.1-candidate/`; official provenance/ledger unchanged. Final record checkpoint adds documentation only.
 
-Version 1.0.1/code 3 preserves package and permanent certificate. The candidate is separate from the published V1.0.0 release below; no production merge, public release or backend deployment is performed by the hardening work.
+Exact APK hashes, sizes, phase commits and full A-M report live in [the same worklog](CODEX_V1_0_1_WORKLOG.md), with [all65 requirement rows](CODEX_V1_0_1_AUDIT.md) and [the physical checklist](CODEX_V1_0_1_PHYSICAL_QA.md). The new answer endpoint is tested but undeployed; live-provider/physical/OEM/performance acceptance and Android29–30 starting-window limitations are explicit. No production merge, public release or backend deployment performed. Published V1.0.0 history follows.
 
 ## First official release — 16 October 2026
 

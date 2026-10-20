@@ -1,32 +1,32 @@
 # Memora V1.0.1 requirement audit
 
-Authority: `CODEX_V1_0_1_MASTER_PROMPT.md` (verbatim). This is a live audit, not a completion claim.
+Authority: `CODEX_V1_0_1_MASTER_PROMPT.md` (verbatim). Final audit for signed source `d5b506e69066d1d60dfa2890bf7a083b845765ac`; CI39370480374. Physical and live-provider acceptance remain explicit.
 
 Status vocabulary at final audit: COMPLETE / PARTIAL / NOT NEEDED / BLOCKED. Pending work remains PARTIAL until evidence is recorded.
 
 | Section | Requirement | Status | Evidence / remaining work |
 | --- | --- | --- | --- |
-| 0 | NON-NEGOTIABLE RULES | COMPLETE | Existing architecture audited; scoped phase commits, synthetic fixtures, permanent identity and non-destructive migration preserved. Final runtime/signing gates remain Phase 7. |
-| 1 | DEFINITION OF GREEN | PARTIAL | Pending phase verification and final audit. |
+| 0 | NON-NEGOTIABLE RULES | COMPLETE | Existing architecture audited; scoped phase commits, synthetic fixtures, permanent identity and non-destructive migration preserved. Final exact-source hosted and permanent-signing gates passed. |
+| 1 | DEFINITION OF GREEN | COMPLETE | All executable final gates passed on source d5b506e in run39370480374; physical-only and undeployed/live checks remain explicit. |
 | 2 | CRITICAL AI ARCHITECTURE RULE | COMPLETE | Existing items, FTS, search_documents, embeddings and durable analysis jobs reused; no parallel catalog or global memory file. |
-| 3 | IMPLEMENTATION ORDER IS MANDATORY | COMPLETE | Phases 1-6 verified and committed in mandatory order; Phase 7 active. |
-| 4 | BACKUP EXPORT MODE BUG — P0 | COMPLETE | Explicit BackupMode and engine-minimum/exact-confirmation policy; core tests passed; 6 Compose safety tests compile, runtime deferred to hosted/final verification. |
+| 3 | IMPLEMENTATION ORDER IS MANDATORY | COMPLETE | Phases1-6 reached local GREEN and were committed in mandatory order; Phase7 exact-source hosted/signing gate passed. |
+| 4 | BACKUP EXPORT MODE BUG — P0 | COMPLETE | Explicit BackupMode and engine-minimum/exact-confirmation policy; core tests passed. BackupAndTrashSafety6/6 in both final hosted variants. |
 | 5 | RESTORE STAGING PRIVACY — P0 | COMPLETE | Owned staging, cancel/dismiss/disposal/exception/finally cleanup, abandoned-stage sweep and active-stage cache protection; 3 core staging tests passed. |
-| 6 | REMINDER + TRASH RESTORE BUG — P0/P1 | COMPLETE | Single/batch/Undo future scheduling, past/done behavior, timezone persistence, boot/stale alarm/collision protections; focused Robolectric suites passed. Restore All UI follows Phase 2. |
-| 7 | TRASH UX AND DESTRUCTIVE SAFETY | COMPLETE | Snackbar single/bulk Undo, confirmed Delete Forever/Empty/Restore All, common reminder-aware batch restore. JVM safety tests passed; Compose tests compile, runtime deferred. |
+| 6 | REMINDER + TRASH RESTORE BUG — P0/P1 | COMPLETE | Single/batch/Undo future scheduling, past/done behavior, timezone persistence, boot/stale alarm/collision protections; focused Robolectric suites passed. Restore All UI passed in the final hosted variants. |
+| 7 | TRASH UX AND DESTRUCTIVE SAFETY | COMPLETE | Snackbar single/bulk Undo, confirmed Delete Forever/Empty/Restore All, common reminder-aware batch restore. JVM safety tests passed. BackupAndTrashSafety6/6 and management recovery UI passed in both variants. |
 | 8 | COLLECTION MANAGEMENT | COMPLETE | Visible overflow, computed protections, validated name/icon/color editing, privacy dialog, atomic membership-only deletion; management/integrity tests passed. |
 | 9 | RANDOM LINKS MUST HAVE STABLE IDENTITY | COMPLETE | Schema 4→5 portable optional application role, legacy adoption, renamed routing/export/fresh/merge restore; repeated restore and identity collision regressions passed. |
-| 10 | REAL MULTI-SELECT | COMPLETE | List/grid/search/collection selection, count/close/Back, off-main Select All Visible guarded by results/selection generations, union/subtract and Trash; 7 Compose regressions compile, runtime deferred. |
-| 11 | EDIT ITEM — REQUIRED V1 FEATURE | COMPLETE | Native text/link editing and media title editing, safe URI validation, original bytes/filename/timestamps/import provenance preserved; domain tests passed and editor Compose tests compile. |
-| 12 | EDITS MUST UPDATE DERIVED DATA CORRECTLY | COMPLETE | Content version invalidation/FTS/local extraction plus cached metadata-only text refresh; no cached-media full re-analysis, stale publications rejected, partial coverage preserved. JVM fake-HTTP regressions passed; cross-cutting privacy audit follows Phase 4. |
-| 13 | WHATSAPP-STYLE LIVE SEARCH — CORE V1 | COMPLETE | Phase 3 commit 14073e9: live debounced prefix updates; narrowing FTS/domain regressions passed; Compose runtime deferred. |
+| 10 | REAL MULTI-SELECT | COMPLETE | List/grid/search/collection selection, count/close/Back, off-main Select All Visible guarded by results/selection generations, union/subtract and Trash. LibrarySelection7/7 and list/grid management selection passed in both variants. |
+| 11 | EDIT ITEM — REQUIRED V1 FEATURE | COMPLETE | Native text/link editing and media title editing, safe URI validation, original bytes/filename/timestamps/import provenance preserved; domain tests and editor/management UI passed in both variants. |
+| 12 | EDITS MUST UPDATE DERIVED DATA CORRECTLY | COMPLETE | Content version invalidation/FTS/local extraction plus cached metadata-only text refresh; no cached-media full re-analysis, stale publications rejected, partial coverage preserved. JVM fake-HTTP regressions and Phase 4 cross-cutting privacy audit passed. |
+| 13 | WHATSAPP-STYLE LIVE SEARCH — CORE V1 | COMPLETE | Phase 3 commit 14073e9: live debounced prefix updates; narrowing FTS/domain regressions passed; LocalSearchUi8/8 including progressive prefixes passed in both variants. |
 | 14 | SEARCHABLE CONTENT | COMPLETE | Existing local FTS fields preserved: title/body/filename/extracted text/AI metadata; ordinary search makes no provider request. |
 | 15 | PREFIX MATCHING | COMPLETE | Correct FTS4 quoted-token prefix syntax; exact-short-word distractor and progressive-prefix regressions passed. |
 | 16 | FIX LIVE-SEARCH RACE | COMPLETE | Shared generation/context runner cancels and rejects obsolete query/filter/data publications; focused coroutine tests passed. |
 | 17 | SEARCH SNIPPETS | COMPLETE | Existing snippet engine shares sanitized terms, prioritizes token-start evidence and handles Unicode code points; focused regressions passed. |
-| 18 | SEARCH FILTER VISIBILITY | COMPLETE | Shared visible collection/type/date chips and Clear Filters on Library/Search; Compose tests compile, runtime deferred. |
-| 19 | EMPTY STATES | COMPLETE | Distinct empty Library, query/filter zero results and AI/local errors; additive AI-only wording corrected; runtime deferred. |
-| 20 | LOCAL SEARCH + AI SEARCH UX | COMPLETE | Local results preserved alongside additive semantic matches and explicit AI progress/errors; union selection respects filters. Direct Q&A remains Phase 5. |
+| 18 | SEARCH FILTER VISIBILITY | COMPLETE | Shared visible collection/type/date chips and Clear Filters on Library/Search. Visible filter/Clear Filters UI passed in both variants. |
+| 19 | EMPTY STATES | COMPLETE | Distinct empty Library, query/filter zero results and AI/local errors; additive AI-only wording corrected. Distinct empty/error-state UI passed in both variants. |
+| 20 | LOCAL SEARCH + AI SEARCH UX | COMPLETE | Local results preserved alongside additive semantic matches and explicit AI progress/errors; union selection respects filters. Bounded direct Q&A and its four synthetic UI cases passed in the final hosted variants; live endpoint deployment remains pending. |
 | 21 | AI EXCLUSION MUST BE STRICT | COMPLETE | Phase 4: fresh filtered SQL candidates; omitted all collection-name plan metadata; per-dispatch guards cover auth/retry and publication. Synthetic payload/privacy tests passed. |
 | 22 | DO NOT BREAK LOCAL SEARCH WHEN AI IS EXCLUDED | COMPLETE | Exclusion changes eligibility/job state only; exact local document/embedding preservation and offline FTS regressions passed. |
 | 23 | AI INDEX LIFECYCLE | COMPLETE | Existing versioned publication/derived-data deletion retained; re-enable uses compatible cached semantics or metadata-only jobs, preserves attempts, reconciles single/bulk/deleted collection membership even after ordinary caller cancellation. JVM regressions passed; physical lifecycle QA pending. |
@@ -36,21 +36,21 @@ Status vocabulary at final audit: COMPLETE / PARTIAL / NOT NEEDED / BLOCKED. Pen
 | 27 | AI Q&A FLOW | COMPLETE | Existing fresh local snapshot/FTS/chunks/semantic ranks select cached evidence before answer POST; exclusions/filters/version/request guards retained. No-evidence flow avoids answer POST. |
 | 28 | BACKEND IMPLEMENTATION RULE | COMPLETE | Small authenticated answer endpoint reuses device sessions, rate limits, body limits, timeout/AbortSignal/provider patterns;104 backend tests/typecheck/build passed. Endpoint not deployed; client404 clearly preserves local/related matches. |
 | 29 | BOUNDED EVIDENCE / TOP-K | COMPLETE | Max12 chunks/3 per item/1200 each/12000 total text/32KiB UTF-8 text/64KiB request; question2000/title200; server independently enforces limits; client caps response32KiB. Approximate bounded recall may miss an unsignaled later page. |
-| 30 | AI ANSWERS REQUIRE PROVENANCE | COMPLETE | Request-local source refs map to local items/pages; server remaps again before provider and validates citations before mapping back. Executed VM/source tests pass; four source/answer Compose tests compile, runtime deferred. |
+| 30 | AI ANSWERS REQUIRE PROVENANCE | COMPLETE | Request-local source refs map to local items/pages; server remaps again before provider and validates citations before mapping back. Executed VM/source tests pass. AiAnswerUi4/4 including local source/page navigation passed in both variants. |
 | 31 | AI ANSWER GROUNDING | COMPLETE | Higher-priority evidence-only/untrusted-content prompt; strict ANSWERED/CONFLICTING/INSUFFICIENT shape and allowlisted citations; fixed local insufficiency wording. Structural validation cannot prove model factual accuracy; real provider/manual QA remains pending. |
 | 32 | DO NOT BUILD V2 KNOWLEDGE GRAPH | COMPLETE | No people/fact/relationship/knowledge graph, global memory file or duplicate AI catalog added. Existing schema5/index pipeline retained. |
 | 33 | VOICE SEARCH RECOVERY | COMPLETE | Voice errors name available typed input; executable VoiceSearchTest passed. |
 | 34 | REMINDERS COLLECTION NAME | COMPLETE | Computed collection and active-filter chip say Reminders; stable computed_due query retained. |
 | 35 | DARK MODE / LIGHT MODE | PARTIAL | Fixed day/night/manual launch resources, API31 app splash preference and paired/type contrast; 7 SDK-expanded launch regressions passed. API29-30 OS starting window may precede saved manual override; physical cold-launch acceptance pending. |
-| 36 | NAVIGATION | COMPLETE | Hierarchical Back/visible Up, modal/selection priority, one-time notification consumption and saveable detail ID; navigation instrumentation compiles, hosted runtime pending. |
-| 37 | LIBRARY FILTER / CONTROL LAYOUT | COMPLETE | Existing horizontally scrolling filters/sort and visible active filters retained; Clear Filters remains available. Large-font tests compile; device acceptance pending. |
-| 38 | LIST / GRID FUNCTIONAL PARITY | COMPLETE | Grid Share reuses common handler; list/grid favorite/reminder/selection actions retained. Presentation tests passed; parity instrumentation compiles. |
+| 36 | NAVIGATION | COMPLETE | Hierarchical Back/visible Up, modal/selection priority, one-time notification consumption and saveable detail ID. NavigationHierarchy4/4 including actual recreation and fresh same-ID intent passed in both variants; real PendingIntent delivery remains physical QA. |
+| 37 | LIBRARY FILTER / CONTROL LAYOUT | COMPLETE | Existing horizontally scrolling filters/sort and visible active filters retained; Clear Filters remains available. Large-font 150% navigation/control test passed in both variants; physical display/TalkBack acceptance pending. |
+| 38 | LIST / GRID FUNCTIONAL PARITY | COMPLETE | Grid Share reuses common handler; list/grid favorite/reminder/selection actions retained. Presentation tests passed; ItemCardParity7/7 passed in both variants. |
 | 39 | ACCESSIBILITY | COMPLETE | 48dp controls, meaningful picker/favorite semantics, constrained card action layout and >=4.5 type-label contrast verified locally; large-font/TalkBack device acceptance pending. |
 | 40 | ICON SEMANTICS | COMPLETE | Headphones/Link/Description type icons; executable icon regressions passed. |
-| 41 | FILTERED EMPTY STATE | COMPLETE | Phase 3 shared filtered-empty wording and Clear Filters; Compose coverage compiled, runtime deferred. |
+| 41 | FILTERED EMPTY STATE | COMPLETE | Phase 3 shared filtered-empty wording and Clear Filters. Filtered-empty UI passed in both variants. |
 | 42 | COLLECTION AI PRIVACY UI | COMPLETE | Collection-specific AI Privacy remains in visible overflow dialog; no permanent card toggle. |
 | 43 | SHARE PREVIEW — OPTIONAL | NOT NEEDED | Optional filename-list preview deferred; existing confirmed share preview preserved. |
-| 44 | FILEPROVIDER — AUDIT, DON'T BREAK | COMPLETE | Only files/storage_root/blobs is exposed; real manifest/resource test passed, all three consumers audited. Real provider URI open/read/private-cache-prefix boundary instrumentation compiles; Windows AndroidX separator mismatch prevents local URI runtime claims. |
+| 44 | FILEPROVIDER — AUDIT, DON'T BREAK | COMPLETE | Only files/storage_root/blobs is exposed; real manifest/resource test passed, all three consumers audited. Windows AndroidX separator mismatch prevents local URI runtime claims. Actual Android provider open/read/private-cache/sibling boundaries1/1 passed in each variant; local Windows tests verify real manifest/resource. |
 | 45 | IMPORT STORAGE PREFLIGHT | COMPLETE | Optional provider size, 16MiB disk headroom and streamed budget reuse atomic storage/Room publication; core and real fake-provider capture regressions passed, including missing/negative/oversize metadata. |
 | 46 | STORAGE SIZE DISPLAY | COMPLETE | Settings explicitly labels logical content size; no exact reclaimable-storage claim. |
 | 47 | FTS DATABASE OPEN BEHAVIOR | COMPLETE | Diagnostic reproduced eight unnecessary DDL changes; conditional repair preserves unchanged opens, rebuilds missing/stale indexes, and reconciles legacy triggers during 4→5 migration. Actual Room tests passed. |
@@ -60,14 +60,14 @@ Status vocabulary at final audit: COMPLETE / PARTIAL / NOT NEEDED / BLOCKED. Pen
 | 51 | SECURITY POSITIONING | COMPLETE | Keystore/auth/HTTPS/encrypted backups/platform-backup exclusions/non-exported components retained; app lock is not represented as an encrypted vault. |
 | 52 | PRIVATE DATA LOGGING | COMPLETE | No private-content/passphrase/provider-secret logs added; backend logs request metadata and returns sanitized provider errors. Signing diagnostics remain transient. |
 | 53 | PERFORMANCE | PARTIAL | Bounded AI candidates/evidence, latest-query cancellation and off-main Select All tested; real large-library latency, scrolling and memory measurements remain device QA. |
-| 54 | VERSION / BRANCH | PARTIAL | Separate codex/v1.0.1-hardening branch; version1.0.1/code3 prepared. Final source commit/push and exact-source hosted verification pending. |
-| 55 | RELEASE SIGNING | PARTIAL | Same permanent key and isolated QA-candidate mode preserved; 51 synthetic safety checks per PowerShell runtime passed. Actual signing awaits exact-source five-job CI. |
-| 56 | APK PACKAGING | PARTIAL | ARM64/universal release strategy and R8/shrinking preserved; exact instrumentation-only keep rules regenerated. Final optimized/release artifact checks in progress. |
-| 57 | TESTING — REQUIRED | PARTIAL | Pending phase verification and final audit. |
-| 58 | REQUIRED REGRESSION COVERAGE | PARTIAL | Pending phase verification and final audit. |
+| 54 | VERSION / BRANCH | COMPLETE | Separate codex/v1.0.1-hardening pushed; exact signed source d5b506e, version1.0.1/code3. All5 hosted jobs passed; main unchanged. |
+| 55 | RELEASE SIGNING | COMPLETE | Actual ARM64/universal QA pair signed and verified with permanent certificate98686D31...; separate candidate ledger/reports, official hashes unchanged.51 safety checks per PS runtime passed. |
+| 56 | APK PACKAGING | COMPLETE | R8/resource-shrunk permanent-signed ARM64/universal pair passed native/OCR/signature/alignment/ARM64 ELF checks; debug/optimized emulator55/55 each. |
+| 57 | TESTING — REQUIRED | COMPLETE | Core57/57, Android195/195, backend104/104, debug55/55 and optimized55/55; lint0 errors; assemblies, Windows safety and actual permanent signing passed. Exact-source run39370480374. |
+| 58 | REQUIRED REGRESSION COVERAGE | COMPLETE | Focused core/JVM/backend regressions plus55 UI/runtime cases in each debug/optimized emulator variant passed; physical follow-up remains explicit. |
 | 59 | MANUAL PHYSICAL QA CHECKLIST | COMPLETE | Same physical QA checklist finalized with synthetic navigation/provider/large-font/network/backup/reminder/theme checks; all physical checks explicitly unexecuted. |
 | 60 | DEFINITION OF DONE FOR AI | COMPLETE | All 12 AI architecture statements supported by existing pipeline, bounded local-first protocol, per-dispatch privacy/network guards, cached-only evidence, server bounds and local source mapping. Live endpoint/provider acceptance remains separate. |
 | 61 | DO NOT OVERBUILD | COMPLETE | No knowledge graph, people/fact database, global memory, cloud sync, telemetry, full wipe or major redesign added. |
-| 62 | FINAL REPORT FORMAT | PARTIAL | Pending phase verification and final audit. |
-| 63 | FINAL PRODUCT TARGET | PARTIAL | Pending phase verification and final audit. |
-| 64 | START | PARTIAL | Pending phase verification and final audit. |
+| 62 | FINAL REPORT FORMAT | COMPLETE | Final A-M report in same worklog includes exact evidence, phase hashes, schema/backup/search/AI/security, signed APK hashes, limitations and Git state. |
+| 63 | FINAL PRODUCT TARGET | PARTIAL | Requested implementation and synthetic end-to-end protocol/runtime checks complete; new answer endpoint undeployed, live-provider and physical large-library/product acceptance unexecuted. |
+| 64 | START | COMPLETE | Phased audited implementation, local checkpoint commits, exact-source five-job hosted verification and permanent-signed QA candidate delivered; physical checklist retained, no production merge/release. |

@@ -1,7 +1,20 @@
 # Memora V1.0.1 physical-device QA
 
-Candidate source SHA and signed APK hashes: pending final release verification.
+Candidate source `d5b506e69066d1d60dfa2890bf7a083b845765ac`; [five-job CI39370480374](https://github.com/RyanEid06/personal-library/actions/runs/39370480374) passed. Version1.0.1/code3; permanent signing certificate unchanged.
+
+| APK | Bytes | SHA-256 |
+| --- | ---: | --- |
+| [Memora-v1.0.1-arm64-candidate.apk](../artifacts/release-v1.0.1-candidate/Memora-v1.0.1-arm64-candidate.apk) | 18,319,892 | `785FAE813EB16A99C9006446394CC6EDE32A5C1243A1C50FC93C3BEB2BEE3AED` |
+| [Memora-v1.0.1-universal-candidate.apk](../artifacts/release-v1.0.1-candidate/Memora-v1.0.1-universal-candidate.apk) | 48,356,815 | `656678B2A338A92324AD6F075DED66FB89520D9EE6F2F3A258248CBB191234EB` |
+
 All items below are unexecuted physical-device checks. Automated and emulator evidence must be reported separately.
+
+Update compatibility and performance follow-up:
+
+- [ ] On a disposable synthetic-only installation of permanent-signed V1.0.0/code 2, add representative library/collection/reminder records, install this same-certificate candidate as an update, and verify schema 4→5 retains them and routes renamed Random Links correctly.
+- [ ] On a fresh synthetic-only installation, restore an older valid V1 backup and a new role-bearing V1 backup; verify items, originals, memberships, stable Random Links identity and future reminders.
+- [ ] Measure rapid typing/deletion, first-result latency and scroll responsiveness in both layouts with a large synthetic library; record device, Android version, row/asset counts, timings and peak memory rather than treating bounded unit tests as performance proof.
+- [ ] Test genuine notification PendingIntent delivery with the app stopped, running and recreated; verify the requested synthetic item opens once, dismissal stays closed, and a fresh notification for the same item opens again.
 
 Phase 6 UI and file-safety follow-up:
 
