@@ -114,7 +114,7 @@ class LibraryManagementUiTest {
         compose.onNodeWithTag(tag).assertIsSelected()
         compose.onNodeWithTag(tag).performClick().assertIsNotSelected()
         compose.runOnIdle { assertEquals(0, opens) }
-        if (grid) compose.onNodeWithTag("grid_snippet_synthetic-selection").assertTextContains("Synthetic match")
+        if (grid) compose.onNodeWithTag("grid_snippet_synthetic-selection", useUnmergedTree = true).assertIsDisplayed().assertTextContains("Synthetic match")
     }
 
     @Test fun linkEditorKeepsFailureVisibleAndPreservesUserInput() {

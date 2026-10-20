@@ -119,7 +119,7 @@ class LocalSearchUiTest {
         compose.onNodeWithTag("item_card_${birthday.id}", useUnmergedTree = true).assert(hasAnyDescendant(hasText("birthday", substring = true)))
         compose.onNodeWithTag("toggle_layout_button").performClick()
         compose.onNodeWithTag("library_grid").assertIsDisplayed()
-        compose.onNodeWithTag("grid_snippet_${birthday.id}").assertTextContains("birthday", substring = true)
+        compose.onNodeWithTag("grid_snippet_${birthday.id}", useUnmergedTree = true).assertIsDisplayed().assertTextContains("birthday", substring = true)
     }
 
     @Test fun emptyStatesDistinguishLibraryQueryFiltersLoadingAndFailure() {

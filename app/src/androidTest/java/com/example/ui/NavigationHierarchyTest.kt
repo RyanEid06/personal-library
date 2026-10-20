@@ -66,7 +66,8 @@ class NavigationHierarchyTest {
     @Test fun notificationDetailSurvivesRecreationButDismissedDeliveryDoesNotReopen() {
         val id = seed()
         compose.runOnUiThread {
-            InstrumentationRegistry.getInstrumentation().callActivityOnNewIntent(compose.activity, Intent(compose.activity, MainActivity::class.java)
+            // Preserve the launch filter so ActivityScenario can observe the replacement instance.
+            InstrumentationRegistry.getInstrumentation().callActivityOnNewIntent(compose.activity, Intent(compose.activity.intent)
                 .putExtra(ReminderReceiver.EXTRA_ITEM_ID, id))
         }
         compose.onNodeWithTag("edit_item_button").assertIsDisplayed()
@@ -81,7 +82,7 @@ class NavigationHierarchyTest {
         compose.activityRule.scenario.recreate()
         compose.onNodeWithTag("edit_item_button").assertDoesNotExist()
         compose.runOnUiThread {
-            InstrumentationRegistry.getInstrumentation().callActivityOnNewIntent(compose.activity, Intent(compose.activity, MainActivity::class.java)
+            InstrumentationRegistry.getInstrumentation().callActivityOnNewIntent(compose.activity, Intent(compose.activity.intent)
                 .putExtra(ReminderReceiver.EXTRA_ITEM_ID, id))
         }
         compose.onNodeWithTag("edit_item_button").assertIsDisplayed()
