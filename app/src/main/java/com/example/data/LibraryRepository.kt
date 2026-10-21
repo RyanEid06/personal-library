@@ -980,16 +980,20 @@ class LibraryRepository(private val context: Context, database: LibraryRoomDatab
                         existing?.contentHash?.let(previousHashes::add)
                         val sourceDate = msg.parsedTimestamp ?: existing?.sourceDate
                         val originalChanged = existing != null && stored != null && stored.hash != existing.contentHash
+                        val mediaMetadataChanged = existing != null && stored != null &&
+                            (existing.kind != msg.kind.name || existing.mimeType != stored.mimeType)
+                        val analysisChanged = originalChanged || mediaMetadataChanged
                         val item = if (existing != null) {
                             existing.copy(sourceDate = sourceDate, contentHash = stored?.hash ?: existing.contentHash,
+                                kind = if (stored != null) msg.kind.name else existing.kind,
                                 originalFileName = stored?.originalName ?: existing.originalFileName,
                                 mimeType = stored?.mimeType ?: existing.mimeType, fileSizeBytes = stored?.sizeBytes ?: existing.fileSizeBytes,
-                                localIndexVersion = existing.localIndexVersion + if (originalChanged) 1 else 0,
-                                extractedText = if (originalChanged) null else existing.extractedText,
-                                localIndexCoverage = if (originalChanged) "PENDING" else existing.localIndexCoverage,
-                                aiDescription = if (originalChanged) null else existing.aiDescription,
-                                aiConcepts = if (originalChanged) null else existing.aiConcepts,
-                                aiStatus = if (originalChanged) "PENDING" else existing.aiStatus)
+                                localIndexVersion = existing.localIndexVersion + if (analysisChanged) 1 else 0,
+                                extractedText = if (analysisChanged) null else existing.extractedText,
+                                localIndexCoverage = if (analysisChanged) "PENDING" else existing.localIndexCoverage,
+                                aiDescription = if (analysisChanged) null else existing.aiDescription,
+                                aiConcepts = if (analysisChanged) null else existing.aiConcepts,
+                                aiStatus = if (analysisChanged) "PENDING" else existing.aiStatus)
                         } else {
                             val provenance = "${msg.rawText}\n\nWhatsApp provenance\nSender: ${msg.sender ?: "System"}\nSource date text: ${msg.rawDateText}\nImport timezone: ${java.util.TimeZone.getDefault().id}"
                             ItemEntity(id = msg.importKey, title = msg.attachmentFileName ?: msg.rawText.take(40).replace("\n", " "),
@@ -999,7 +1003,7 @@ class LibraryRepository(private val context: Context, database: LibraryRoomDatab
                         }
                         if (existing == null) imported++
                         dao.insertItem(item)
-                        if (originalChanged) {
+                        if (analysisChanged) {
                             dao.deleteSearchDocumentsForItem(item.id)
                             dao.deleteAnalysisJob(item.id)
                         }
@@ -1012,7 +1016,14 @@ class LibraryRepository(private val context: Context, database: LibraryRoomDatab
                         val count = counts[hash] ?: 0
                         val old = dao.getAssetByHash(hash)
                         if (count == 0) dao.deleteAsset(hash)
-                        else if (old != null) dao.updateAsset(old.copy(refCount = count))
+                        else if (old != null) {
+                            val suppliedAsset = importedAssets[hash]
+                            val repairMime = (old.mimeType.isBlank() || old.mimeType.equals("application/octet-stream", true)) &&
+                                suppliedAsset != null && suppliedAsset.mimeType.isNotBlank() && suppliedAsset.mimeType != "application/octet-stream"
+                            dao.updateAsset(old.copy(refCount = count,
+                                mimeType = if (repairMime) suppliedAsset!!.mimeType else old.mimeType,
+                                kind = if (repairMime && old.kind == ItemKind.FILE.name) suppliedAsset!!.kind.name else old.kind))
+                        }
                         else {
                             val stored = importedAssets[hash] ?: throw IOException("Missing imported original metadata")
                             if (assetStore.getBlobFile(hash)?.isFile != true) throw IOException("Missing imported original")

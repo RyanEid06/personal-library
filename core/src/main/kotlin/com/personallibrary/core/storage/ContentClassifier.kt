@@ -4,6 +4,15 @@ import com.personallibrary.core.model.ItemKind
 
 object ContentClassifier {
 
+    fun resolveMimeType(mimeType: String?, fileName: String?): String {
+        val declared = mimeType?.lowercase()?.substringBefore(";")?.trim().orEmpty()
+        // WhatsApp streams have no provider MIME; preserve the original's known media type for opening/indexing.
+        return if (declared.isEmpty() || declared == "application/octet-stream") {
+            fileName?.let { java.net.URLConnection.guessContentTypeFromName(it.lowercase()) }
+                ?: "application/octet-stream"
+        } else checkNotNull(mimeType)
+    }
+
     fun classify(
         mimeType: String?,
         fileName: String?,
@@ -11,7 +20,7 @@ object ContentClassifier {
     ): ItemKind {
         if (explicitSticker) return ItemKind.STICKER
 
-        val normalizedMime = mimeType?.lowercase()?.substringBefore(";")?.trim() ?: ""
+        val normalizedMime = resolveMimeType(mimeType, fileName).lowercase().substringBefore(";").trim()
         val normalizedName = fileName?.lowercase()?.trim() ?: ""
         val extension = normalizedName.substringAfterLast('.', "")
 

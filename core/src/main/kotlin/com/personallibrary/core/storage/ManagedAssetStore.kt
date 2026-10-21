@@ -82,7 +82,7 @@ class ManagedAssetStore(val root: Path) {
                 Files.move(stagingFile.toPath(), finalFile.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
             }
 
-            val resolvedMime = declaredMime?.ifBlank { null } ?: "application/octet-stream"
+            val resolvedMime = ContentClassifier.resolveMimeType(declaredMime, safeOriginalName)
             val kind = ContentClassifier.classify(resolvedMime, safeOriginalName, explicitSticker)
 
             return StoredAsset(

@@ -122,6 +122,61 @@ class RepositoryIntegrityTest {
         assertFalse(repository.publishAiResult(item.id, before.localIndexVersion, "stale", "stale", "READY", emptyList(), 1))
     }
 
+    @Test fun repeatedWhatsAppAttachmentRepairsLegacyMediaMetadataWithoutReplacingOwnerState() = runBlocking {
+        val chat = "13/10/2026, 09:00 - Synthetic: legacy-photo.jpg (file attached)"
+        val bytes = "synthetic unchanged jpeg original".toByteArray()
+        assertEquals(1 to 0, repository.importWhatsAppMigration(chat, attachments = mapOf("legacy-photo.jpg" to bytes.inputStream())))
+        val imported = repository.dao.getAllActiveItems().single { it.originalFileName == "legacy-photo.jpg" }
+        val extra = repository.createCollection("Owner media", "folder", "#ffffff")
+        repository.changeItemCollections(listOf(imported.id), listOf(extra.id), add = true)
+        val memberships = repository.dao.getCollectionIdsForItem(imported.id).toSet()
+        val legacy = imported.copy(title = "Owner's photo caption", kind = "FILE", mimeType = "application/octet-stream",
+            isFavorite = true, extractedText = "stale generic-file extraction", localIndexCoverage = "COMPLETE",
+            aiDescription = "stale file analysis", aiConcepts = "stale concepts", aiStatus = "READY")
+        repository.dao.updateItem(legacy)
+        repository.dao.insertSearchDocument(SearchDocumentEntity("legacy-media-chunk", imported.id, textContent = "stale file chunk"))
+        repository.dao.insertOrUpdateAnalysisJob(AnalysisJobEntity(imported.id, status = "COMPLETED"))
+        val asset = repository.dao.getAssetByHash(hash(bytes))!!
+        repository.dao.updateAsset(asset.copy(kind = "FILE", mimeType = "application/octet-stream"))
+
+        assertEquals(0 to 0, repository.importWhatsAppMigration(chat, attachments = mapOf("legacy-photo.jpg" to bytes.inputStream())))
+        val repaired = repository.dao.getItemById(imported.id)!!
+        assertEquals("PHOTO", repaired.kind)
+        assertEquals("image/jpeg", repaired.mimeType)
+        assertEquals(legacy.copy(kind = "PHOTO", mimeType = "image/jpeg", localIndexVersion = legacy.localIndexVersion + 1,
+            extractedText = null, localIndexCoverage = "PENDING", aiDescription = null, aiConcepts = null, aiStatus = "PENDING"), repaired)
+        assertEquals(memberships, repository.dao.getCollectionIdsForItem(imported.id).toSet())
+        assertEquals(asset.copy(kind = "PHOTO", mimeType = "image/jpeg"), repository.dao.getAssetByHash(hash(bytes)))
+        assertArrayEquals(bytes, repository.assetStore.getBlobFile(hash(bytes))!!.readBytes())
+        assertTrue(repository.dao.getSearchDocumentsForItem(imported.id).isEmpty())
+        assertNull(repository.dao.getAnalysisJob(imported.id))
+        assertFalse(repository.publishLocalIndex(imported.id, legacy.localIndexVersion, "stale worker", "COMPLETE", emptyList()))
+        assertFalse(repository.publishAiResult(imported.id, legacy.localIndexVersion, "stale", "stale", "READY", emptyList(), 1))
+
+        // Once repaired, the same original must not bump the version or discard fresh owner state again.
+        val indexed = repaired.copy(extractedText = "current image extraction", localIndexCoverage = "COMPLETE")
+        repository.dao.updateItem(indexed)
+        assertEquals(0 to 0, repository.importWhatsAppMigration(chat, attachments = mapOf("legacy-photo.jpg" to bytes.inputStream())))
+        assertEquals(indexed, repository.dao.getItemById(imported.id))
+    }
+
+    @Test fun whatsAppMediaMetadataRepairPreservesSpecificSharedAssetMetadataAndLinkSemantics() = runBlocking {
+        val bytes = "synthetic shared bytes with two explicit interpretations".toByteArray()
+        val owner = repository.captureStream(bytes.inputStream(), "owner.pdf", "application/pdf")
+        val specific = repository.dao.getAssetByHash(hash(bytes))!!
+        val chat = "13/10/2026, 09:00 - Synthetic: https://example.com/image legacy-photo.jpg (file attached)"
+        repository.importWhatsAppMigration(chat, attachments = mapOf("legacy-photo.jpg" to bytes.inputStream()))
+        val imported = repository.dao.getAllActiveItems().single { it.originalFileName == "legacy-photo.jpg" }
+        repository.dao.updateItem(imported.copy(kind = "FILE", mimeType = "application/octet-stream"))
+        assertEquals(0 to 0, repository.importWhatsAppMigration(chat, attachments = mapOf("legacy-photo.jpg" to bytes.inputStream())))
+        val repaired = repository.dao.getItemById(imported.id)!!
+        assertEquals("LINK", repaired.kind)
+        assertEquals("image/jpeg", repaired.mimeType)
+        assertEquals(specific.copy(refCount = 2), repository.dao.getAssetByHash(hash(bytes)))
+        assertEquals(owner, repository.dao.getItemById(owner.id))
+        assertArrayEquals(bytes, repository.assetStore.getBlobFile(hash(bytes))!!.readBytes())
+    }
+
     @Test fun captureMembershipFailureRollsBackItemRefcountAndNewBlob() = runBlocking {
         val bytes = "new blob rollback".toByteArray()
         failMemberships()

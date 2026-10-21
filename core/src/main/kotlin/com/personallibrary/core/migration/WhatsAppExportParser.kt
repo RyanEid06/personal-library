@@ -66,7 +66,7 @@ object WhatsAppExportParser {
 
                 var attachmentFileName: String? = null
                 if (isMedia) {
-                    val fileMatch = Regex("""([a-zA-Z0-9_\-.]+\.(?:jpg|jpeg|png|webp|mp4|mov|mp3|opus|m4a|wav|pdf|docx|txt|zip))""", RegexOption.IGNORE_CASE).find(body)
+                    val fileMatch = Regex("""([a-zA-Z0-9_\-.]+\.(?:jpg|jpeg|png|gif|webp|mp4|mov|mp3|opus|m4a|wav|pdf|docx|txt|zip))""", RegexOption.IGNORE_CASE).find(body)
                     attachmentFileName = fileMatch?.value
                 }
 
