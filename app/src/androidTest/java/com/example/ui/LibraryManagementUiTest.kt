@@ -94,6 +94,27 @@ class LibraryManagementUiTest {
         compose.runOnIdle { assertEquals(listOf("stable-default"), selected) }
     }
 
+    @Test fun sharePreviewWithManyCollectionsKeepsChoicesSaveAndDiscardReachable() {
+        val collections = (1..24).map { CollectionEntity("synthetic-$it", "Synthetic Collection $it") }
+        var selected: List<String>? = null
+        var visible by mutableStateOf(true)
+        show {
+            if (visible) {
+                SharePreviewDialog(SharePayload(text = "Synthetic long-list share"), collections,
+                    onDismiss = { visible = false }, onConfirmSave = { selected = it; visible = false },
+                    resolveDefaultCollectionId = { "synthetic-1" })
+            }
+        }
+        compose.onNodeWithText("Synthetic Collection 24").performScrollTo().performClick()
+        compose.onNodeWithText("Discard").performScrollTo().assertIsDisplayed().performClick()
+        compose.onNodeWithTag("save_share_button").assertDoesNotExist()
+        compose.runOnIdle { assertNull(selected); visible = true }
+        compose.onNodeWithText("Synthetic Collection 24").performScrollTo().performClick()
+        compose.onNodeWithTag("save_share_button").performScrollTo().assertIsDisplayed().assertIsEnabled().performClick()
+        compose.onNodeWithTag("save_share_button").assertDoesNotExist()
+        compose.runOnIdle { assertEquals(listOf("synthetic-1", "synthetic-24"), selected) }
+    }
+
     @Test fun listLongPressSelectsAndNormalTapTogglesWithoutOpening() = verifySelection(grid = false)
     @Test fun gridLongPressSelectsAndNormalTapTogglesWithoutOpening() = verifySelection(grid = true)
 
