@@ -6,6 +6,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.net.Uri
+import android.os.TransactionTooLargeException
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -47,6 +48,20 @@ import java.text.SimpleDateFormat
 import java.util.*
 
 private data class ReminderChoice(val time: Long, val dateOnly: Boolean, val localDate: String?)
+
+private fun copyTextToClipboard(context: Context, label: String, text: CharSequence?, successMessage: String) {
+    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+    val copied = try {
+        clipboard.setPrimaryClip(ClipData.newPlainText(label, text))
+        true
+    } catch (error: RuntimeException) {
+        if (error.cause !is TransactionTooLargeException) throw error
+        false
+    }
+    Toast.makeText(context,
+        if (copied) successMessage else "Text is too large for the clipboard. Saved content is unchanged.",
+        if (copied) Toast.LENGTH_SHORT else Toast.LENGTH_LONG).show()
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -256,9 +271,7 @@ fun ItemDetailsDialog(
                         ) {
                             TextButton(
                                 onClick = {
-                                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                    clipboard.setPrimaryClip(ClipData.newPlainText("Item text", item.content))
-                                    Toast.makeText(context, "Copied to clipboard", Toast.LENGTH_SHORT).show()
+                                    copyTextToClipboard(context, "Item text", item.content, "Copied to clipboard")
                                 }
                             ) {
                                 Icon(Icons.Outlined.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
@@ -311,9 +324,7 @@ fun ItemDetailsDialog(
                         ) {
                             TextButton(
                                 onClick = {
-                                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                    clipboard.setPrimaryClip(ClipData.newPlainText("Extracted text", item.extractedText))
-                                    Toast.makeText(context, "Extracted text copied", Toast.LENGTH_SHORT).show()
+                                    copyTextToClipboard(context, "Extracted text", extractedText, "Extracted text copied")
                                 }
                             ) {
                                 Icon(Icons.Outlined.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))

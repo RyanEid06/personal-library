@@ -132,7 +132,8 @@ class LibraryManagementUiTest {
             .performSemanticsAction(SemanticsActions.Expand) { assertTrue(it()) }
         compose.onNodeWithTag("extracted_text_preview").assertTextEquals(fullText.take(10_000))
         compose.onNodeWithText("Showing a shortened preview.").performScrollTo().assertIsDisplayed()
-        compose.onNodeWithText("Copy Extracted Text").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Copy Extracted Text").performScrollTo().assertIsDisplayed().performClick()
+        compose.onNodeWithText("Copy Extracted Text").assertIsDisplayed()
         compose.runOnIdle { assertEquals(1024 * 1024, item.extractedText!!.length) }
         // Android Back first collapses an expanded sheet, then dismisses the partial sheet.
         Espresso.pressBack()
