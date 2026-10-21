@@ -272,6 +272,10 @@ fun ItemDetailsDialog(
 
             // Extracted text (OCR or PDF machine extraction)
             if (!item.extractedText.isNullOrBlank()) {
+                // maxLines limits drawing, but the text layout still processes the input.
+                // Keep the complete extraction for search and copying; bound only this preview.
+                val extractedText = item.extractedText!!
+                val preview = remember(extractedText) { extractedText.take(10_000) }
                 Spacer(modifier = Modifier.height(10.dp))
                 Surface(
                     color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
@@ -287,11 +291,19 @@ fun ItemDetailsDialog(
                         )
                         Spacer(modifier = Modifier.height(6.dp))
                         Text(
-                            text = item.extractedText!!,
+                            text = preview,
+                            modifier = Modifier.testTag("extracted_text_preview"),
                             style = MaterialTheme.typography.bodyMedium,
                             lineHeight = 20.sp,
                             maxLines = 12
                         )
+                        if (preview.length < extractedText.length) {
+                            Text(
+                                text = "Showing a shortened preview.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                         Spacer(modifier = Modifier.height(6.dp))
                         Row(
                             modifier = Modifier.fillMaxWidth(),

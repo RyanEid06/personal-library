@@ -5,6 +5,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.runtime.*
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.lifecycle.ViewModelProvider
@@ -18,6 +19,7 @@ import com.example.model.SharePayload
 import com.example.ui.components.EditItemDialog
 import com.example.ui.components.ItemCard
 import com.example.ui.components.ItemGridCard
+import com.example.ui.components.ItemDetailsDialog
 import com.example.ui.components.SharePreviewDialog
 import com.example.ui.screens.CollectionCard
 import com.example.ui.screens.CreateCollectionDialog
@@ -113,6 +115,30 @@ class LibraryManagementUiTest {
         compose.onNodeWithTag("save_share_button").performScrollTo().assertIsDisplayed().assertIsEnabled().performClick()
         compose.onNodeWithTag("save_share_button").assertDoesNotExist()
         compose.runOnIdle { assertEquals(listOf("synthetic-1", "synthetic-24"), selected) }
+    }
+
+    @Test fun megabyteExtractedTextUsesBoundedPreviewAndKeepsDetailsUsable() {
+        val fullText = "x".repeat(1024 * 1024)
+        val item = ItemEntity("synthetic-large-document", "Synthetic large document", "", "DOCUMENT",
+            extractedText = fullText)
+        var visible by mutableStateOf(true)
+        show {
+            if (visible) ItemDetailsDialog(ItemWithCollections(item, emptyList()), { null }, emptyList(),
+                onDismiss = { visible = false }, onFavoriteToggle = {}, onDelete = {},
+                onCollectionsChange = {}, onSetReminder = { _, _, _, _ -> })
+        }
+        // A partial sheet can clip content even when its internal Column cannot scroll further.
+        compose.onNode(SemanticsMatcher.keyIsDefined(SemanticsActions.Expand))
+            .performSemanticsAction(SemanticsActions.Expand) { assertTrue(it()) }
+        compose.onNodeWithTag("extracted_text_preview").assertTextEquals(fullText.take(10_000))
+        compose.onNodeWithText("Showing a shortened preview.").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Copy Extracted Text").performScrollTo().assertIsDisplayed()
+        compose.runOnIdle { assertEquals(1024 * 1024, item.extractedText!!.length) }
+        // Android Back first collapses an expanded sheet, then dismisses the partial sheet.
+        Espresso.pressBack()
+        compose.onNode(SemanticsMatcher.keyIsDefined(SemanticsActions.Expand)).assertExists()
+        Espresso.pressBack()
+        compose.onNodeWithText("Synthetic large document").assertDoesNotExist()
     }
 
     @Test fun listLongPressSelectsAndNormalTapTogglesWithoutOpening() = verifySelection(grid = false)
