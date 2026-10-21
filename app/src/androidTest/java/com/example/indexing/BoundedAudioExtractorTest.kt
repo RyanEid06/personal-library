@@ -1,6 +1,8 @@
 package com.example.indexing
 
 import android.media.MediaMetadataRetriever
+import android.media.MediaExtractor
+import android.media.MediaFormat
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import android.content.Context
@@ -37,6 +39,23 @@ class BoundedAudioExtractorTest {
         it.setDataSource(file.absolutePath)
         it.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)!!.toLong()
     }
+    private fun encodedSampleSummary(file: File): String {
+        val extractor = MediaExtractor()
+        try {
+            extractor.setDataSource(file.absolutePath)
+            extractor.selectTrack(0)
+            val sampleRate = extractor.getTrackFormat(0).getInteger(MediaFormat.KEY_SAMPLE_RATE)
+            var samples = 0
+            val firstUs = extractor.sampleTime
+            var lastUs = firstUs
+            while (extractor.sampleTime >= 0) {
+                lastUs = extractor.sampleTime
+                samples++
+                extractor.advance()
+            }
+            return "AAC packets=$samples, sampleRate=$sampleRate, firstPtsUs=$firstUs, lastPtsUs=$lastUs"
+        } finally { extractor.release() }
+    }
 
     @Test fun shortWavAndAacProducePlayableBoundedAudioWithoutChangingOriginal() = runBlocking {
         val source = wav(2)
@@ -63,7 +82,9 @@ class BoundedAudioExtractorTest {
             assertTrue(result.partial)
             assertTrue(result.bytes.size <= BoundedAudioExtractor.MAX_BYTES)
             converted.writeBytes(result.bytes)
-            assertTrue(duration(converted) in 299000..300100)
+            val convertedDuration = duration(converted)
+            assertTrue("Expected 299000..300100ms; sourceMs=${duration(source)}, convertedMs=$convertedDuration; " +
+                encodedSampleSummary(converted), convertedDuration in 299000..300100)
             assertArrayEquals(before, hash(source))
         } finally { source.delete(); converted.delete() }
     }

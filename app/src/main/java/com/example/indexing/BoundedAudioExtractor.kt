@@ -146,7 +146,9 @@ object BoundedAudioExtractor {
                             writer.start()
                             muxerStarted = true
                         } else {
-                            if (encodedInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG == 0 && encodedInfo.size > 0) {
+                            // AAC encoders can emit padding packets after the bounded PCM ends.
+                            if (encodedInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG == 0 && encodedInfo.size > 0 &&
+                                encodedInfo.presentationTimeUs < MAX_DURATION_US) {
                                 check(muxerStarted)
                                 encodedBytes += encodedInfo.size
                                 check(encodedBytes <= MAX_BYTES && output.length() <= MAX_BYTES) { "Audio exceeds upload budget" }
