@@ -56,6 +56,7 @@ class LibraryRepository(private val context: Context, database: LibraryRoomDatab
     )
         .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
         .addCallback(DATABASE_CALLBACK)
+        .enableMultiInstanceInvalidation()
         .build()
 
     val dao = db.libraryDao()

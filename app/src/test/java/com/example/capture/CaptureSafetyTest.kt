@@ -85,10 +85,16 @@ class CaptureSafetyTest {
         } finally { db.close() }
     }
 
+    @OptIn(androidx.room.ExperimentalRoomApi::class)
     @Test @org.robolectric.annotation.LooperMode(org.robolectric.annotation.LooperMode.Mode.PAUSED)
     fun captureKeepsAdmissionClosedUntilTeardownAndAllowsNextBatch() = runBlocking {
         val app = context as com.example.PersonalLibraryApp
         app.captureState.finish("Reset test state")
+        val invalidation = org.robolectric.Robolectric.buildService(androidx.room.MultiInstanceInvalidationService::class.java).create()
+        val binding = Intent(context, androidx.room.MultiInstanceInvalidationService::class.java)
+        // Robolectric's default null binding cannot model Room's real service connection.
+        org.robolectric.Shadows.shadowOf(app).setComponentNameAndServiceForBindServiceForIntent(
+            binding, checkNotNull(binding.component), checkNotNull(invalidation.get().onBind(binding)))
         val controller = org.robolectric.Robolectric.buildService(CaptureService::class.java).create()
         val service = controller.get()
         val repository = LibraryRepository(context)
@@ -122,7 +128,13 @@ class CaptureSafetyTest {
             waitForNote(second)
             finishMainCleanup()
             assertEquals(1, app.captureState.state.value.saved)
-        } finally { controller.destroy() }
+        } finally {
+            controller.destroy()
+            (LibraryRepository::class.java.getDeclaredField("db").apply { isAccessible = true }
+                .get(repository) as LibraryRoomDatabase).close()
+            org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+            invalidation.destroy()
+        }
     }
 
     @Test fun mergesClipAndStreamUrisAndRejectsPrivateFileAndNetworkUris() {
