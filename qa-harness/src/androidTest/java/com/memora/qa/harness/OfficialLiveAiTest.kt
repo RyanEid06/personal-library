@@ -200,7 +200,7 @@ class OfficialLiveAiTest {
             check(ui.exact("AI answer") == null) { "Offline policy rejection must not publish an AI answer" }
             ui.checkpoint("T29-offline-policy-error-local-result-retained")
             File(evidenceDir, "T29-offline-policy-counts.txt").writeText(
-                "excluded=$EXISTING\neligible=1\nask_actions=$askActions\no_default_network=true\nexact_policy_error=true\nlocal_results=1\n" +
+                "excluded=$EXISTING\neligible=1\nask_actions=$askActions\nno_default_network=true\nexact_policy_error=true\nlocal_results=1\n" +
                     "Provider dispatch is prevented by the first production network-policy check; no transport spy is installed.\n" +
                     "This does not prove OS queued-work recovery, provider retry/backoff or voice-item retry.\n"
             )
@@ -231,6 +231,107 @@ class OfficialLiveAiTest {
                 if (primaryFailure != null) primaryFailure.addSuppressed(failure) else throw failure
             }
             Log.i("MemoraQA", "T29 original radios/Wi-Fi-only restored and Pause AI verified ON; Ask actions=$askActions; no Ask after reconnect")
+        }
+    }
+
+    @Test fun T29_oneExistingTextJobSurvivesOfflineRestartAndRecoversOnWifi() {
+        check(resumeControl && InstrumentationRegistry.getArguments().getString("allowSyntheticQueueRecovery") == "true") {
+            "Queue recovery requires explicit opt-in and the one known synthetic control"
+        }
+        val wifi = radioSetting("wifi_on")
+        val data = radioSetting("mobile_data")
+        check(wifi == "1" && data in setOf("0", "1")) { "Known original Wi-Fi connection is required for bounded recovery" }
+        val queuedBody = "$body\nSynthetic queue recovery marker QARECOVERY${SystemClock.elapsedRealtime()}."
+        var wifiOnly: Boolean? = null
+        var primaryFailure: Throwable? = null
+        try {
+            setPaused(true, requirePaired = true)
+            verifyIsolation(existing = EXISTING, controls = 1)
+            openControl()
+            ui.scrollTo("Exclude from AI")
+            check(labelledCheckable("Exclude from AI", right = true)?.isChecked == false)
+            setPaused(true, requirePaired = true)
+            ui.scrollTo(WIFI_ONLY, 24)
+            wifiOnly = checkNotNull(labelledCheckable(WIFI_ONLY, right = true)).isChecked
+            ui.setLabelledSwitch(WIFI_ONLY, true)
+            ui.shell("svc wifi disable")
+            ui.shell("svc data disable")
+            ui.await("Offline queue precondition requires both radios off and no default network") {
+                radioSetting("wifi_on") == "0" && radioSetting("mobile_data") == "0" &&
+                    ui.shell("dumpsys connectivity").contains("Active default network: none")
+            }
+            // Unpause only the independently verified single eligible control while offline.
+            setPaused(false, requirePaired = true)
+            openControl()
+            ui.click("Edit Item")
+            ui.waitText("Body")
+            ui.edit("Body", queuedBody)
+            ui.click("Save")
+            ui.await("Owned body edit must commit and close") { ui.exact("Body") == null }
+            openControl(queuedBody)
+            ui.scrollTo("AI Status", 24)
+            ui.await("Changed control must have a durable queued analysis job", 45000) { detailValue("AI Status") == "QUEUED" }
+            ui.checkpoint("T29-one-owned-control-QUEUED-offline-before-restart")
+            restartProduct()
+            openControl(queuedBody)
+            ui.scrollTo("AI Status", 24)
+            ui.await("Queued status must survive actual force-stop/relaunch offline", 45000) { detailValue("AI Status") == "QUEUED" }
+            check(ui.shell("dumpsys connectivity").contains("Active default network: none"))
+            ui.checkpoint("T29-exact-edited-control-QUEUED-after-offline-process-restart")
+            // No Ask or manual Retry: let the one persisted job recover on allowed Wi-Fi.
+            restoreRadio("wifi_on", "wifi", wifi)
+            ui.await("Restored Wi-Fi must regain a default network", 45000) {
+                !ui.shell("dumpsys connectivity").contains("Active default network: none")
+            }
+            val deadline = SystemClock.uptimeMillis() + 90000
+            while (SystemClock.uptimeMillis() < deadline && detailValue("AI Status") !in setOf("READY", "PARTIAL", "NEEDS_RETRY", "UNSUPPORTED")) {
+                SystemClock.sleep(500)
+            }
+            // Official Room observer issue may hide worker publication until a fresh query/process.
+            setPaused(true)
+            restartProduct()
+            openControl(queuedBody)
+            ui.scrollTo("AI Status", 24)
+            val recoveredStatus = detailValue("AI Status")
+            ui.checkpoint("T29-fresh-control-status-after-Wifi-observation-before-cleanup")
+            check(recoveredStatus == "READY") {
+                "One queued control did not reach READY after allowed Wi-Fi recovery (status=$recoveredStatus)"
+            }
+            ui.scrollTo("AI Description", 24)
+            val description = detailValue("AI Description")
+            check(description.isNotBlank() && listOf("Thursday", "14:20", "EMBER57", "silver orchard").any {
+                description.contains(it, ignoreCase = true)
+            }) { "Recovered job must publish actual analysis associated with this synthetic control" }
+            ui.checkpoint("T29-same-control-READY-real-analysis-after-Wifi-recovery")
+            File(evidenceDir, "T29-durable-queue-recovery.txt").writeText(
+                "excluded=$EXISTING\neligible=1\nqueued_before_restart=true\nqueued_after_offline_restart=true\nready_after_wifi=true\nask_actions=0\nmanual_retry_actions=0\n" +
+                    "Edited only the known control body; no new eligible item. Actual force-stop/relaunch and automatic background analysis on allowed Wi-Fi.\n" +
+                    "UI does not expose WorkManager request IDs/attempts; this proves functional persisted-job recovery, not request identity or metered-cellular rejection.\n"
+            )
+        } catch (failure: Throwable) {
+            primaryFailure = failure
+            throw failure
+        } finally {
+            var cleanupFailure: Throwable? = null
+            val actions = listOf<() -> Unit>(
+                { setPaused(true) },
+                { wifiOnly?.let { original ->
+                    setPaused(true)
+                    ui.setLabelledSwitch(WIFI_ONLY, original)
+                    check(labelledCheckable(WIFI_ONLY, right = true)?.isChecked == original)
+                } },
+                { restoreRadio("wifi_on", "wifi", wifi) },
+                { restoreRadio("mobile_data", "data", data) },
+                { setPaused(true); ui.checkpoint("FINAL-T29-QUEUE-Pause-Background-AI-ON") }
+            )
+            actions.forEach { action ->
+                runCatching(action).exceptionOrNull()?.let { failure ->
+                    if (cleanupFailure == null) cleanupFailure = failure else cleanupFailure!!.addSuppressed(failure)
+                }
+            }
+            cleanupFailure?.let { failure ->
+                if (primaryFailure != null) primaryFailure.addSuppressed(failure) else throw failure
+            }
         }
     }
 
@@ -300,18 +401,29 @@ class OfficialLiveAiTest {
     }
 
     private fun library() {
-        for (attempt in 0 until 8) {
-            if (ui.exact("Back to Settings") != null) {
-                ui.click("Back to Settings")
-                ui.await("Nested Settings page must close") { ui.exact("Back to Library") != null }
-            } else if (ui.exact("Back to Library") != null) {
-                ui.click("Back to Library")
-                ui.await("Settings must return to Library") { ui.exact("Library") != null }
-            } else if (ui.exact("Edit Item") != null || ui.exact("Storage & AI Details") != null || ui.exact("AI Status") != null ||
-                ui.exact("Exclude from AI") != null || ui.exact("Add to Library") != null || ui.exact("AI Privacy") != null) {
+        if (ui.exact("Back to Settings") != null) {
+            ui.click("Back to Settings")
+            ui.await("Nested Settings page must close") { ui.exact("Back to Library") != null }
+        }
+        if (ui.exact("Back to Library") != null) {
+            ui.click("Back to Library")
+            ui.await("Settings must return to Library") { ui.exact("Library") != null }
+        }
+        // A scrolled membership sheet can hide every detail label, including Edit Item.
+        repeat(2) {
+            if (ui.nodes().any { it.contentDescription?.toString() == "Drag handle" }) {
                 ui.back()
                 SystemClock.sleep(200)
-            } else if (ui.exact("Library") != null) break
+            }
+        }
+        ui.await("Item sheet must dismiss before Library navigation") {
+            ui.nodes().none { it.contentDescription?.toString() == "Drag handle" }
+        }
+        if (ui.exact("Edit Item") != null || ui.exact("Add to Library") != null || ui.exact("AI Privacy") != null) {
+            ui.back()
+            ui.await("Item dialog must close") {
+                ui.exact("Edit Item") == null && ui.exact("Add to Library") == null && ui.exact("AI Privacy") == null
+            }
         }
         if (ui.exact("Cancel selection") != null) ui.click("Cancel selection")
         ui.click("Library")
@@ -353,7 +465,7 @@ class OfficialLiveAiTest {
         ui.await("Privacy inspection must close") { ui.exact("AI Privacy") == null }
     }
 
-    private fun openControl() {
+    private fun openControl(expectedBody: String = body) {
         library()
         ui.edit(SEARCH_INPUT, token)
         ui.await("Exactly one committed control must be visible", 45000) {
@@ -362,8 +474,8 @@ class OfficialLiveAiTest {
         ui.click(title)
         ui.waitText("Edit Item")
         ui.waitText(title)
-        ui.scrollTo(body, 24)
-        ui.waitText(body)
+        ui.scrollTo(expectedBody, 24)
+        ui.waitText(expectedBody)
     }
 
     private fun libraryCount(): Int? = ui.nodes().filter { it.isVisibleToUser }.mapNotNull {
