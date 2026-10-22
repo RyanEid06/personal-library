@@ -589,6 +589,16 @@ class OfficialEnvironmentTest {
     }
 
     private fun library() {
+        // Memberships can scroll Edit Item out of view in the expanded item sheet.
+        repeat(2) {
+            if (ui.nodes().any { it.contentDescription?.toString() == "Drag handle" }) {
+                ui.back()
+                SystemClock.sleep(200)
+            }
+        }
+        ui.await("Item sheet must dismiss before Library navigation") {
+            ui.nodes().none { it.contentDescription?.toString() == "Drag handle" }
+        }
         if (ui.exact("Edit Item") != null || ui.exact("Add to Library") != null) {
             ui.back()
             ui.await("Item dialog must dismiss") { ui.exact("Edit Item") == null && ui.exact("Add to Library") == null }

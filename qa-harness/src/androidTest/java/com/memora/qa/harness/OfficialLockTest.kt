@@ -105,6 +105,7 @@ class OfficialLockTest {
         // This is artificial fixture data. It is never sent through runner arguments or written to evidence.
         val pin = (100000 + SecureRandom().nextInt(900000)).toString()
         var setupAttempted = false
+        var primaryFailure: Throwable? = null
         try {
             check(!keyguard.isDeviceSecure) { "Credential-free precondition changed before setup" }
             setupAttempted = true
@@ -124,7 +125,10 @@ class OfficialLockTest {
             enterCredential(wrong)
             privateAwait("One wrong credential must report native rejection") {
                 check(!libraryVisible()) { "Wrong credential exposed the library" }
-                ui.nodes().any { it.isVisibleToUser && Regex("(?i)(wrong|incorrect|try again)").containsMatchIn(it.text?.toString().orEmpty()) }
+                val nativePackage = foreground()
+                nativePackage in NATIVE_AUTH && (credentialField() != null || nativePinPad() != null) &&
+                    ui.nodes().any { it.isVisibleToUser && it.packageName?.toString() == nativePackage &&
+                        Regex("(?i)(wrong|incorrect|try again)").containsMatchIn(it.text?.toString().orEmpty()) }
             }
             check(!libraryVisible()) { "Rejected credential must leave the library inaccessible" }
             // Remain inside the native credential UI; no screenshot is taken with input present.
@@ -148,8 +152,15 @@ class OfficialLockTest {
                 "Native credential cancel, one rejection, successful PIN, settled locked accessibility, Home/resume and cold restart verified.\n" +
                     "Biometric enrollment/sensor, notification redaction, recents masking and first-frame visual privacy are untested.\n"
             )
+        } catch (error: Throwable) {
+            primaryFailure = error
+            throw error
         } finally {
-            if (setupAttempted) cleanupSyntheticCredential(pin)
+            if (setupAttempted) {
+                try { cleanupSyntheticCredential(pin) } catch (cleanup: Throwable) {
+                    primaryFailure?.addSuppressed(cleanup) ?: throw cleanup
+                }
+            }
         }
     }
 
@@ -195,19 +206,45 @@ class OfficialLockTest {
         check(lockedVisible()) { "Credential authentication must start from Memora's lock screen" }
         credentialUiActive = true
         ui.clickNode(checkNotNull(ui.exact("Unlock Library")))
-        privateAwait("Expected native PIN/password entry or native credential fallback") {
-            if (foreground() !in NATIVE_AUTH) return@privateAwait false
-            if (credentialField() != null) return@privateAwait true
-            val fallback = listOf("Use PIN", "Use screen lock", "Use device credential", "Use password")
-                .firstNotNullOfOrNull { ui.exact(it) }
-            fallback?.let(ui::clickNode)
-            false
+        try {
+            privateAwait("Expected native PIN/password entry or native credential fallback") {
+                if (foreground() !in NATIVE_AUTH) return@privateAwait false
+                if (credentialField() != null || nativePinPad() != null) return@privateAwait true
+                val fallback = listOf("Use PIN", "Use screen lock", "Use device credential", "Use password")
+                    .firstNotNullOfOrNull { ui.exact(it) }
+                fallback?.let(ui::clickNode)
+                false
+            }
+        } catch (error: Throwable) {
+            // Structural diagnostics only: native text, descriptions and field values may contain credentials.
+            File(evidenceDir, "native-prompt-structure.txt").writeText(ui.nodes().joinToString("\n") {
+                "package=${it.packageName} class=${it.className} id=${it.viewIdResourceName} " +
+                    "visible=${it.isVisibleToUser} editable=${it.isEditable} password=${it.isPassword} clickable=${it.isClickable}"
+            })
+            throw error
         }
     }
 
     private fun enterCredential(value: String) {
         check(credentialUiActive && foreground() in NATIVE_AUTH) { "Credential entry refused outside native authentication" }
-        privateAwait("Native password field required") { credentialField() != null }
+        privateAwait("Native credential field or PIN keypad required") { credentialField() != null || nativePinPad() != null }
+        if (nativePinPad() != null) {
+            // API37's native Compose PIN pad deliberately exposes no editable/password node.
+            fun nativeAction(id: String) = ui.nodes().singleOrNull {
+                it.isVisibleToUser && it.packageName?.toString() == "com.android.systemui" && it.viewIdResourceName == id
+            }
+            repeat(6) { ui.clickNode(checkNotNull(nativeAction("com.android.systemui:id/delete_button"))) }
+            value.forEach { digit ->
+                check(nativePinPad() != null && foreground() == "com.android.systemui") { "Native PIN keypad changed during input" }
+                val key = ui.nodes().singleOrNull {
+                    it.isVisibleToUser && it.packageName?.toString() == "com.android.systemui" && it.text?.toString() == digit.toString()
+                }
+                check(key != null) { "Unique native digit key required" }
+                ui.clickNode(key)
+            }
+            ui.clickNode(checkNotNull(nativeAction("com.android.systemui:id/key_enter")))
+            return
+        }
         check(checkNotNull(credentialField()).performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, Bundle().apply {
             putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, value)
         })) { "Native credential field rejected synthetic input" }
@@ -215,6 +252,9 @@ class OfficialLockTest {
     }
 
     private fun credentialField() = ui.nodes().filter { it.isVisibleToUser && it.isEditable && it.isPassword }.singleOrNull()
+    private fun nativePinPad() = ui.nodes().singleOrNull {
+        it.isVisibleToUser && it.packageName?.toString() == "com.android.systemui" && it.viewIdResourceName == "cred_pin_pad"
+    }
     private fun awaitAuthenticated() {
         privateAwait("Native authentication must reveal the library", 30000) { libraryVisible() && credentialField() == null }
         credentialUiActive = false
