@@ -16,6 +16,7 @@ import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import com.personallibrary.core.backup.BackupManifest
+import com.personallibrary.core.backup.BackupItemRecord
 import com.personallibrary.core.backup.RestorePreview
 import com.personallibrary.core.backup.RestoreStaging
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -261,20 +262,7 @@ class OfficialBackupTest {
         launchProduct()
         library()
         val afterName = "$token-after.plb"
-        assertPublicBackupAbsent(afterName)
-        settingsBackup()
-        ui.click("Export Backup")
-        ui.waitText("Export Encrypted Backup")
-        setPassword(0, fixturePassphrase)
-        setPassword(1, fixturePassphrase)
-        ui.click("Choose Destination")
-        awaitPicker()
-        downloads()
-        setFilename(afterName)
-        notices.clear()
-        pickerClick("Save", "SAVE")
-        awaitNotice("Encrypted backup exported successfully (.plb)")
-        val afterArchive = inspectPublicArchive(readOwnPublicBackup("/sdcard/Download/$afterName"))
+        val afterArchive = exportAndInspectCurrentLibrary(afterName)
         assertArchiveGraphEqual(beforeArchive.manifest, afterArchive.manifest)
         Log.i("MemoraQA", "T41 full public archive graph identical: items=${afterArchive.totalItems} collections=${afterArchive.totalCollections} assets=${afterArchive.totalAssets}; every asset hash and size verified")
         ui.checkpoint("T41-full-archive-fields-relationships-and-all-assets-verified")
@@ -288,9 +276,109 @@ class OfficialBackupTest {
         check(original.delete()) { "Owned source fixture must be removed after successful round trip" }
     }
 
+    @Test fun T41_fullArchiveReconstructsIntoHostClearedSyntheticApp() {
+        val arguments = InstrumentationRegistry.getArguments()
+        check(arguments.getString("hostClearedRestore") == "true") { "Explicit host-coordinated synthetic restore required" }
+        val rollback = arguments.getString("rollbackSnapshot").orEmpty()
+        check(rollback.matches(Regex("memora-official-before-t41-empty-restore-[0-9-]+"))) {
+            "Host must first save and verify a unique rollback snapshot"
+        }
+        val evidenceDir = File(context.filesDir, "qa-evidence/$token")
+        check(!File(evidenceDir, "READY_FOR_HOST_CLEAR.txt").exists() && !File(evidenceDir, "HOST_CLEARED_PRODUCT").exists()) {
+            "A fresh run token with no previous host barrier is required"
+        }
+        val baseline = libraryCount()
+        check(baseline in 211..500) { "Expected the known bounded synthetic library" }
+        val bodyMarker = "QAREINDEX${System.currentTimeMillis()}BODY"
+        val original = File(context.filesDir, "synthetic-shares/$token.pdf").apply {
+            parentFile!!.mkdirs()
+            writeBytes(tinyPdf("$token $bodyMarker"))
+        }
+        saveSyntheticPdf(original)
+        library()
+        awaitCount(baseline + 1)
+        val backupName = "$token.plb"
+        val before = exportAndInspectCurrentLibrary(backupName)
+        check(before.totalItems >= baseline + 1 && before.totalCollections > 1 && before.totalAssets > 1)
+        check(before.manifest.items.single { it.originalFileName == original.name }.contentHash == hash(original.readBytes()))
+        ui.checkpoint("T41-full-archive-authenticated-before-host-clear")
+        File(evidenceDir, "READY_FOR_HOST_CLEAR.txt").writeText(
+            "rollback=$rollback\nitems=${before.totalItems}\nactive=${baseline + 1}\ncollections=${before.totalCollections}\nassets=${before.totalAssets}\n"
+        )
+        Log.i("MemoraQA", "T41 verified export ready for explicit host clear; token=$token rollback=$rollback")
+        // The harness never resets data. The host verifies its rollback snapshot, clears only this
+        // disposable product package, then creates this owned barrier file. The password stays in memory.
+        ui.await("Waiting for verified host clear of the synthetic product only", 180000) {
+            File(evidenceDir, "HOST_CLEARED_PRODUCT").isFile
+        }
+        launchProduct()
+        library()
+        awaitCount(0)
+        ui.click("Settings")
+        ui.setLabelledSwitch("Pause Background AI", true)
+        ui.back()
+        library()
+        ui.checkpoint("T41-empty-destination-before-restore")
+        inspectBackup(backupName)
+        check(previewNumber("Total Items") == before.totalItems)
+        check(previewNumber("Existing Duplicates") == 0)
+        check(previewNumber("New Items to Restore") == before.totalItems)
+        ui.checkpoint("T41-all-archive-records-are-new")
+        notices.clear()
+        ui.click("Commit Restore")
+        awaitNotice("Restored ${before.totalItems} items successfully", 120000)
+        ui.await("Full restore preview must close", 30000) { ui.exact("Restore Archive Preview") == null }
+        ui.shell("am force-stop $PRODUCT")
+        launchProduct()
+        library()
+        awaitCount(baseline + 1)
+        // This marker exists only in the PDF body, so a filename match cannot prove reindexing.
+        ui.edit(SEARCH, bodyMarker)
+        awaitCount(1)
+        ui.click(original.name)
+        ui.waitText("Page 1 of 1", 30000)
+        ui.checkpoint("T41-restored-body-only-local-search")
+        assertMembershipChecked("Random Links")
+        verifyRestoredOriginal(original)
+        launchProduct()
+        library()
+        val afterName = "$token-after.plb"
+        val after = exportAndInspectCurrentLibrary(afterName)
+        assertArchiveGraphEqual(before.manifest, after.manifest, derivedIndexWasRebuilt = true)
+        val restoredPdf = after.manifest.items.single { it.originalFileName == original.name }
+        check(restoredPdf.extractedText?.contains(bodyMarker) == true) {
+            "The restored PDF must have a freshly rebuilt local text index"
+        }
+        Log.i("MemoraQA", "T41 empty-destination reconstruction PASS: items=${after.totalItems} collections=${after.totalCollections} assets=${after.totalAssets}; exact graph and all asset hashes/sizes after process restart")
+        ui.checkpoint("T41-empty-destination-full-graph-and-all-originals-verified")
+        listOf(backupName, afterName).forEach { name ->
+            ui.shell("rm -- /sdcard/Download/$name")
+            assertPublicBackupAbsent(name)
+        }
+        check(context.contentResolver.delete(checkNotNull(publicSource), null, null) == 1)
+        check(original.delete())
+    }
+
+    private fun exportAndInspectCurrentLibrary(name: String): RestorePreview {
+        assertPublicBackupAbsent(name)
+        settingsBackup()
+        ui.click("Export Backup")
+        ui.waitText("Export Encrypted Backup")
+        setPassword(0, fixturePassphrase)
+        setPassword(1, fixturePassphrase)
+        ui.click("Choose Destination")
+        awaitPicker()
+        downloads()
+        setFilename(name)
+        notices.clear()
+        pickerClick("Save", "SAVE")
+        awaitNotice("Encrypted backup exported successfully (.plb)")
+        return inspectPublicArchive(readOwnPublicBackup("/sdcard/Download/$name"))
+    }
+
     private fun launchProduct() {
         context.startActivity(Intent.makeMainActivity(ComponentName(PRODUCT, "com.example.MainActivity")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK))
-        ui.await("Memora must be foreground") { foreground() == PRODUCT }
+        ui.await("Memora library must be ready") { foreground() == PRODUCT && ui.exact("Library") != null }
     }
 
     private fun library() {
@@ -512,14 +600,45 @@ class OfficialBackupTest {
         return preview
     }
 
-    private fun assertArchiveGraphEqual(before: BackupManifest, after: BackupManifest) {
-        check(before.items.associateBy { it.id } == after.items.associateBy { it.id }) { "Backup item fields changed across restore" }
+    private fun assertArchiveGraphEqual(before: BackupManifest, after: BackupManifest, derivedIndexWasRebuilt: Boolean = false) {
+        val beforeItems = before.items.associateBy { it.id }
+        val afterItems = after.items.associateBy { it.id }
+        val changedFields = mutableMapOf<String, Int>()
+        val fields = BackupItemRecord::class.java.declaredFields.filterNot { java.lang.reflect.Modifier.isStatic(it.modifiers) }
+        for (id in beforeItems.keys.intersect(afterItems.keys)) {
+            if (beforeItems[id] == afterItems[id]) continue
+            fields.forEach { field ->
+                field.isAccessible = true
+                if (field.get(beforeItems.getValue(id)) != field.get(afterItems.getValue(id))) {
+                    changedFields[field.name] = changedFields.getOrDefault(field.name, 0) + 1
+                }
+            }
+        }
+        // Diagnostics expose counts and field names only, never record IDs, contents or passphrases.
+        val diagnostic = "missing=${(beforeItems.keys - afterItems.keys).size} added=${(afterItems.keys - beforeItems.keys).size} changedFields=${changedFields.toSortedMap()}"
+        File(context.filesDir, "qa-evidence/$token/T41-item-field-change-counts.txt").apply {
+            parentFile!!.mkdirs()
+            writeText(diagnostic)
+        }
+        Log.i("MemoraQA", "T41 item field comparison: $diagnostic")
+        fun portableItem(item: BackupItemRecord) = if (derivedIndexWasRebuilt) {
+            // BACKUP_FORMAT.md:46 requires rebuilding derived indexes instead of trusting archived AI state.
+            item.copy(extractedText = null, aiDescription = null, aiConcepts = null, aiStatus = "PENDING")
+        } else item
+        check(beforeItems.mapValues { portableItem(it.value) } == afterItems.mapValues { portableItem(it.value) }) {
+            "Backup portable item fields changed across restore: $diagnostic"
+        }
+        if (derivedIndexWasRebuilt) {
+            check(after.items.all { it.aiDescription == null && it.aiConcepts == null && it.aiStatus !in setOf("READY", "PARTIAL", "PROCESSING") }) {
+                "Fresh unpaired/paused restore must not trust archived ready AI analysis"
+            }
+        }
         check(before.collections.associateBy { it.id } == after.collections.associateBy { it.id }) { "Backup collection fields changed across restore" }
         check(before.memberships.toSet() == after.memberships.toSet()) { "Backup membership edges changed across restore" }
         check(before.reminders.associateBy { it.id } == after.reminders.associateBy { it.id }) { "Backup reminder fields changed across restore" }
         check(before.assets.associateBy { it.hash } == after.assets.associateBy { it.hash }) { "Backup original metadata changed across restore" }
         check(before.version == after.version && before.app == after.app) { "Backup format identity changed" }
-        // exportTimestamp is the only intentionally changing manifest field; every record field is compared above.
+        // Only exportTimestamp and, for fresh restore, the four documented derived fields may change.
     }
 
     private fun assertPublicBackupAbsent(name: String) {
