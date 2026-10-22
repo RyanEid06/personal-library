@@ -30,6 +30,7 @@ class OfficialLiveAiTest {
     private lateinit var token: String
     private lateinit var title: String
     private lateinit var body: String
+    private lateinit var evidenceDir: File
     private var guarded = false
     private var askActions = 0
     private var resumeControl = false
@@ -49,7 +50,8 @@ class OfficialLiveAiTest {
         token = priorControl ?: "QALIVE${SystemClock.elapsedRealtime()}"
         title = "$token Silver orchard control"
         body = "$token: The silver orchard meeting is on Thursday at 14:20. The entry code is EMBER57. This is artificial QA data."
-        ui = ReleaseUi(instrumentation.uiAutomation, File(context.filesDir, "qa-evidence/$token"))
+        evidenceDir = File(context.filesDir, "qa-evidence/$token-${java.util.UUID.randomUUID()}")
+        ui = ReleaseUi(instrumentation.uiAutomation, evidenceDir)
         check(ui.shell("getprop ro.kernel.qemu").trim() == "1") { "Only the synthetic emulator is allowed" }
         val avds = listOf("ro.boot.qemu.avd_name", "ro.kernel.qemu.avd_name")
             .map { ui.shell("getprop $it").trim() }.filter { it.isNotEmpty() }
@@ -60,6 +62,7 @@ class OfficialLiveAiTest {
             "Expected permanent release signer"
         }
         guarded = true
+        Log.i("MemoraQA", "Live invocation evidence=${evidenceDir.name}; control=$token")
         instrumentation.uiAutomation.serviceInfo = instrumentation.uiAutomation.serviceInfo.apply {
             flags = flags or AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS or AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS
         }
@@ -69,10 +72,10 @@ class OfficialLiveAiTest {
     @Test fun T27_T28_oneIsolatedLiveTextEnrichmentAnswerAndExactSource() {
         var primaryFailure: Throwable? = null
         try {
+            check(resumeControl) { "This scope rerun must reuse a supplied resumeControlToken; never create another eligible item" }
             setPaused(true, requirePaired = true)
-            verifyIsolation(existing = EXISTING, controls = if (resumeControl) 1 else 0)
-            if (!resumeControl) createUnfiledControl()
-            // QA-003 on the official APK can hide committed rows. Restart only after the Add dialog closed.
+            verifyIsolation(existing = EXISTING, controls = 1)
+            // Refresh the existing exact control without creating a second eligible item.
             restartProduct()
             verifyIsolation(existing = EXISTING, controls = 1)
             openControl()
@@ -112,14 +115,14 @@ class OfficialLiveAiTest {
             // Recheck the whole permitted set immediately before the only interactive request.
             verifyIsolation(existing = EXISTING, controls = 1)
             setPaused(false, requirePaired = true)
-            library()
-            ui.click("Search")
-            ui.waitText("Search Library")
+            prepareIsolatedTextSearch()
             val question = "For the silver orchard meeting in $token, what day and time is it and what is the entry code?"
             ui.edit(ASK_INPUT, question)
             ui.await("The question must settle before the live request") {
                 ui.nodes().any { it.isEditable && it.text?.toString() == question } && ui.exact("Searching your library…") == null
             }
+            ui.waitText("Collection: Unfiled")
+            ui.waitText("Type: Notes & Text")
             check(askActions == 0) { "Only one Ask action is authorized" }
             askActions++
             ui.click("Ask AI")
@@ -160,6 +163,128 @@ class OfficialLiveAiTest {
                 }
             }
         }
+    }
+
+    @Test fun T29_offlineWifiOnlyInteractivePolicyRetainsLocalControlAndNeverUnpauses() {
+        check(resumeControl) { "Offline policy test must reuse a supplied known resumeControlToken; never create another eligible item" }
+        val wifi = radioSetting("wifi_on")
+        val data = radioSetting("mobile_data")
+        check(wifi in setOf("0", "1") && data in setOf("0", "1")) { "Original radio states must be known before offline mutation" }
+        var wifiOnly: Boolean? = null
+        var primaryFailure: Throwable? = null
+        try {
+            setPaused(true, requirePaired = true)
+            verifyIsolation(existing = EXISTING, controls = 1)
+            openControl() // Exact supplied token/title/body, not an arbitrary eligible row.
+            ui.scrollTo("Exclude from AI")
+            check(labelledCheckable("Exclude from AI", right = true)?.isChecked == false) { "The one exact resumed control must already be eligible" }
+            setPaused(true, requirePaired = true)
+            ui.scrollTo(WIFI_ONLY, 24)
+            wifiOnly = checkNotNull(labelledCheckable(WIFI_ONLY, right = true)).isChecked
+            ui.setLabelledSwitch(WIFI_ONLY, true)
+            check(labelledCheckable(WIFI_ONLY, right = true)?.isChecked == true)
+            ui.shell("svc wifi disable")
+            ui.shell("svc data disable")
+            ui.await("Both synthetic emulator radios must be off") { radioSetting("wifi_on") == "0" && radioSetting("mobile_data") == "0" }
+            ui.await("Offline policy requires no active default network") { ui.shell("dumpsys connectivity").contains("Active default network: none") }
+            prepareIsolatedTextSearch()
+            ui.checkpoint("T29-offline-local-control-type-and-scope-before-Ask")
+            check(askActions == 0) { "Only one offline Ask action is authorized" }
+            askActions++
+            ui.click("Ask AI") // Production requires the allowed network before loading paused AI scope or dispatching.
+            check(awaitAnswerOutcome() == OFFLINE_POLICY_ERROR) { "Expected exact pre-dispatch Wi-Fi-only policy rejection" }
+            ui.scrollTo("Local results (1)", 24)
+            ui.waitText("Local results (1)")
+            ui.scrollTo(title, 24)
+            ui.waitText(title)
+            check(ui.exact("AI answer") == null) { "Offline policy rejection must not publish an AI answer" }
+            ui.checkpoint("T29-offline-policy-error-local-result-retained")
+            File(evidenceDir, "T29-offline-policy-counts.txt").writeText(
+                "excluded=$EXISTING\neligible=1\nask_actions=$askActions\no_default_network=true\nexact_policy_error=true\nlocal_results=1\n" +
+                    "Provider dispatch is prevented by the first production network-policy check; no transport spy is installed.\n" +
+                    "This does not prove OS queued-work recovery, provider retry/backoff or voice-item retry.\n"
+            )
+        } catch (failure: Throwable) {
+            primaryFailure = failure
+            throw failure
+        } finally {
+            // Pause before reconnecting, attempt every restoration, and verify Pause ON again last.
+            var cleanupFailure: Throwable? = null
+            val actions = listOf<() -> Unit>(
+                { setPaused(true) },
+                { wifiOnly?.let { original ->
+                    setPaused(true)
+                    ui.setLabelledSwitch(WIFI_ONLY, original)
+                    check(labelledCheckable(WIFI_ONLY, right = true)?.isChecked == original) { "Original Wi-Fi-only preference must restore" }
+                } },
+                { restoreRadio("wifi_on", "wifi", wifi) },
+                { restoreRadio("mobile_data", "data", data) },
+                { setPaused(true); ui.checkpoint("FINAL-T29-Pause-Background-AI-ON") }
+            )
+            actions.forEach { action ->
+                runCatching(action).exceptionOrNull()?.let { failure ->
+                    if (cleanupFailure == null) cleanupFailure = failure else cleanupFailure!!.addSuppressed(failure)
+                }
+            }
+            cleanupFailure?.let { failure ->
+                Log.e("MemoraQA", "CRITICAL: offline policy cleanup did not verify every original state and final Pause ON")
+                if (primaryFailure != null) primaryFailure.addSuppressed(failure) else throw failure
+            }
+            Log.i("MemoraQA", "T29 original radios/Wi-Fi-only restored and Pause AI verified ON; Ask actions=$askActions; no Ask after reconnect")
+        }
+    }
+
+    private fun prepareIsolatedTextSearch() {
+        library()
+        ui.click("Collections")
+        ui.waitText("Add Collection")
+        scrollTop()
+        ui.click("Manage Unfiled")
+        ui.click("Open")
+        ui.waitText("Collection: Unfiled")
+        ui.click("Search")
+        ui.waitText("Search Library")
+        ui.edit(ASK_INPUT, token)
+        selectType("Documents")
+        ui.await("Purely local Documents filter must exclude the exact text control", 45000) {
+            ui.exact("No items match these filters") != null && ui.exact(title) == null && ui.exact("Searching your library…") == null
+        }
+        ui.checkpoint("T28-local-Unfiled-Documents-negative-no-Ask")
+        selectType("Notes & Text")
+        ui.await("Unfiled text scope must retain exactly the known local control", 45000) {
+            ui.exact("Local results (1)") != null && ui.exact(title) != null && ui.exact("Searching your library…") == null
+        }
+        ui.waitText("Collection: Unfiled")
+        ui.waitText("Type: Notes & Text")
+        ui.checkpoint("T28-local-Unfiled-text-positive-before-only-Ask")
+    }
+
+    private fun selectType(label: String) {
+        val kinds = setOf("All", "Photos", "Stickers", "Videos", "Audio", "Notes & Text", "Links", "Documents", "Other Files")
+        for (forward in listOf(true, false)) {
+            for (attempt in 0 until 10) {
+                if (ui.exact(label) != null) {
+                    ui.click(label)
+                    ui.waitText("Type: $label")
+                    return
+                }
+                val strip = ui.nodes().filter { node ->
+                    val bounds = Rect().also(node::getBoundsInScreen)
+                    node.isVisibleToUser && node.isScrollable && bounds.width() > bounds.height() * 2 &&
+                        descendants(node).any { it.isVisibleToUser && it.text?.toString() in kinds }
+                }.singleOrNull() ?: throw AssertionError("Unique native horizontal type strip required")
+                if (!strip.performAction(if (forward) AccessibilityNodeInfo.ACTION_SCROLL_FORWARD else AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD)) break
+                SystemClock.sleep(150)
+            }
+        }
+        throw AssertionError("Exact content-type chip is unavailable: $label")
+    }
+
+    private fun radioSetting(key: String) = ui.shell("settings get global $key").trim()
+    private fun restoreRadio(key: String, service: String, original: String) {
+        check(original in setOf("0", "1") && service in setOf("wifi", "data"))
+        ui.shell("svc $service ${if (original == "1") "enable" else "disable"}")
+        ui.await("Original $service radio state must restore") { radioSetting(key) == original }
     }
 
     private fun launchProduct() {
@@ -226,19 +351,6 @@ class OfficialLiveAiTest {
         ui.checkpoint("privacy-existing-$existing-excluded-control-count-$controls")
         ui.click("Cancel")
         ui.await("Privacy inspection must close") { ui.exact("AI Privacy") == null }
-    }
-
-    private fun createUnfiledControl() {
-        library()
-        ui.click("Add")
-        ui.waitText("Add to Library")
-        ui.edit("Title (Optional)", title)
-        ui.edit("Note Content / Text / Grades", body)
-        // The existing Add dialog starts with no selected collections; do not assign this control.
-        ui.scrollTo("Save Note", 24)
-        ui.click("Save Note")
-        ui.await("Add dialog must dismiss", 45000) { ui.exact("Add to Library") == null }
-        // The caller restarts before querying, preserving independent QA despite official QA-003.
     }
 
     private fun openControl() {
@@ -354,6 +466,8 @@ class OfficialLiveAiTest {
         private const val CERTIFICATE = "98686d31bfe4370cc30024439b56d9e72de71c081951d31f5d4fdd31d4eb0598"
         private const val SEARCH_INPUT = "Search notes, photos, links..."
         private const val ASK_INPUT = "Search by concept, note, file, or grade..."
+        private const val WIFI_ONLY = "Wi-Fi Only for AI Network Calls"
+        private const val OFFLINE_POLICY_ERROR = "AI search needs an allowed connection. When Wi-Fi-only is on, connect to an unmetered network. Your local results are still available."
         private val ERROR_PREFIXES = listOf("Direct answers are not available", "AI search is unavailable", "AI search needs", "AI search stopped",
             "There isn't enough evidence in the selected library items to answer this question.")
     }

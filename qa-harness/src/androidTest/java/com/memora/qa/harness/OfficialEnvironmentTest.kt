@@ -2,11 +2,14 @@ package com.memora.qa.harness
 
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.content.ComponentName
+import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Rect
+import android.net.Uri
 import android.os.SystemClock
+import android.provider.MediaStore
 import android.util.Log
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -83,6 +86,327 @@ class OfficialEnvironmentTest {
                 ui.checkpoint("T43-$mode-persisted-selection")
             }
         }
+    }
+
+    @Test fun T44_bothThemesCaptureImplementedScreensAndSafeDialogsForVisualReview() {
+        appearance()
+        val originalTheme = listOf("Light", "Dark", "System").single { themeSelected(it) }
+        val title = "QA $marker Visual note"
+        val body = "$marker synthetic visual review café مرحبا 🚀"
+        val collection = "QA $marker Visual collection"
+        val pdf = InstrumentationRegistry.getArguments().getString("visualPdfName") ?: "QA-BK-3626615.pdf"
+        check(pdf.matches(Regex("QA-BK-[0-9]+\\.pdf"))) { "Known synthetic PDF required for visual review" }
+        library()
+        ui.await("Original Library layout must be observable from actual cards") { visualLibraryLayout() != null }
+        val originalLayout = checkNotNull(visualLibraryLayout())
+        val captures = mutableListOf<String>()
+        var restoreSource: Uri? = null
+        var complete = false
+        var environmentRestored = false
+        fun capture(mode: String, state: String) {
+            SystemClock.sleep(250) // Let the requested native state render before its independent visual review.
+            ui.checkpoint("T44-$mode-$state")
+            captures += "$mode\t$state"
+        }
+        fun count(): Int? = ui.nodes().filter { it.isVisibleToUser }.firstNotNullOfOrNull {
+            Regex("^(\\d+) items • (Saved|Source) Date$").matchEntire(it.text?.toString().orEmpty())?.groupValues?.get(1)?.toInt()
+        }
+        fun cancel(title: String) {
+            ui.waitText(title)
+            ui.click("Cancel")
+            ui.await("Visual-only dialog must close: $title") { ui.exact(title) == null }
+        }
+        fun collectionMenu(action: String) {
+            library()
+            ui.click("Collections")
+            ui.scrollTo("Manage $collection", 24)
+            ui.click("Manage $collection")
+            ui.click(action)
+        }
+        fun ownedTrashAction(action: String) {
+            ui.scrollTo(title, 24)
+            var ancestor = checkNotNull(ui.exact(title))
+            repeat(10) {
+                val matches = visualDescendants(ancestor).filter {
+                    it.isVisibleToUser && (it.text?.toString() == action || it.contentDescription?.toString() == action)
+                }
+                check(matches.size < 2) { "Ambiguous owned-note Trash action; refusing another record" }
+                if (matches.size == 1) { ui.clickNode(matches.single()); return }
+                ancestor = ancestor.parent ?: throw AssertionError("Owned-note Trash row required")
+            }
+            throw AssertionError("Owned-note Trash action missing")
+        }
+        try {
+            restoring(listOf({
+                restartProduct() // Also dismisses any interrupted menu, dialog, selection or sheet.
+                ui.await("Library layout must be observable for cleanup") { visualLibraryLayout() != null }
+                val currentLayout = checkNotNull(visualLibraryLayout()) { "Ambiguous cleanup layout; refusing a blind toggle" }
+                if (currentLayout != originalLayout) ui.click("Toggle Grid/List View")
+                ui.await("Original actual Library layout must restore") { visualLibraryLayout() == originalLayout }
+                appearance()
+                ui.click(originalTheme)
+                ui.await("Original visual-review theme must restore") { themeSelected(originalTheme) }
+                ui.back()
+                library()
+                ui.await("Original actual layout must remain after theme cleanup") { visualLibraryLayout() == originalLayout }
+                environmentRestored = true
+            })) {
+                library()
+                ui.await("Bounded known synthetic library required") { count()?.let { it in 211..500 } == true }
+                val baseline = checkNotNull(count())
+                createCollection(collection)
+                addNote(title, body)
+                searchAndOpen(title, body)
+                setMembership(collection)
+                library()
+                ui.await("Only the owned visual-review note may be added") { count() == baseline + 1 }
+                // This deliberately invalid, owned public file opens only the restore passphrase UI.
+                // No password is entered and no inspection/restore is submitted.
+                val restoreName = "$marker-visual-dialog.plb"
+                restoreSource = checkNotNull(context.contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, ContentValues().apply {
+                    put(MediaStore.Downloads.DISPLAY_NAME, restoreName)
+                    put(MediaStore.Downloads.RELATIVE_PATH, "Download/")
+                    put(MediaStore.Downloads.MIME_TYPE, "application/octet-stream")
+                    put(MediaStore.Downloads.IS_PENDING, 1)
+                }))
+                checkNotNull(context.contentResolver.openOutputStream(checkNotNull(restoreSource))).use {
+                    it.write("Synthetic T44 dialog fixture; not a backup archive.".toByteArray())
+                }
+                check(context.contentResolver.update(checkNotNull(restoreSource), ContentValues().apply { put(MediaStore.Downloads.IS_PENDING, 0) }, null, null) == 1)
+
+                listOf("Light", "Dark").forEach { mode ->
+                    appearance()
+                    ui.click(mode)
+                    ui.await("Visual-review theme must be selected") { themeSelected(mode) }
+                    capture(mode, "settings-appearance")
+                    ui.back()
+                    library()
+                    ui.await("Original actual Library layout required before toggle") { visualLibraryLayout() == originalLayout }
+                    capture(mode, "library-$originalLayout-original")
+                    ui.click("Toggle Grid/List View")
+                    val alternateLayout = if (originalLayout == "list") "grid" else "list"
+                    ui.await("Toggle must change actual visible card layout") { visualLibraryLayout() == alternateLayout }
+                    capture(mode, "library-$alternateLayout-alternate")
+                    ui.click("Toggle Grid/List View")
+                    ui.await("Second toggle must restore actual original card layout") { visualLibraryLayout() == originalLayout }
+                    ui.edit(SEARCH, "$marker no-match")
+                    ui.await("Library empty-search state must settle") { count() == 0 && ui.exact("Searching your library…") == null }
+                    capture(mode, "library-empty-search")
+                    library()
+                    ui.click(listOf("Newest Saved", "Oldest Saved", "Newest Source Date", "Oldest Source Date", "Title (A-Z)").first { ui.exact(it) != null })
+                    ui.waitText("Title (A-Z)")
+                    capture(mode, "library-sort-menu")
+                    ui.back()
+                    ui.click(listOf("Group", "Day", "Month", "Year").first { ui.exact(it) != null })
+                    ui.waitText("Date Grouping")
+                    capture(mode, "library-grouping-menu")
+                    ui.back()
+                    ui.click(listOf("All Time", "This Month", "This Year", "Custom Range").first { ui.exact(it) != null })
+                    ui.waitText("Date Basis")
+                    capture(mode, "library-date-filter-and-basis")
+                    ui.click("Custom Range")
+                    ui.waitText("Choose date range")
+                    capture(mode, "library-date-range-dialog")
+                    cancel("Choose date range")
+
+                    ui.edit(SEARCH, marker)
+                    ui.await("Owned visual note must be the only Library result") { count() == 1 && ui.exact(title) != null }
+                    capture(mode, "library-local-result-and-filter-strip")
+                    var selectable: AccessibilityNodeInfo? = ui.exact(title)
+                    var selected = false
+                    repeat(12) {
+                        val node = selectable
+                        if (!selected && node != null && node.isLongClickable) selected = node.performAction(AccessibilityNodeInfo.ACTION_LONG_CLICK)
+                        if (!selected) selectable = node?.parent
+                    }
+                    check(selected) { "Owned note must expose real long-click selection" }
+                    ui.waitText("1 selected")
+                    capture(mode, "library-selection-toolbar")
+                    ui.click("Selection actions")
+                    capture(mode, "library-selection-menu")
+                    ui.click("Add to collections")
+                    ui.waitText("Add 1 items to collections")
+                    capture(mode, "library-bulk-add-dialog")
+                    cancel("Add 1 items to collections")
+                    ui.click("Selection actions")
+                    ui.click("Remove from collections")
+                    ui.waitText("Remove 1 items from collections")
+                    capture(mode, "library-bulk-remove-dialog")
+                    cancel("Remove 1 items from collections")
+                    ui.click("Cancel selection")
+
+                    searchAndOpen(title, body)
+                    capture(mode, "note-detail-body")
+                    ui.scrollTo("Edit Item")
+                    ui.click("Edit Item")
+                    ui.waitText("Title")
+                    ui.waitText("Body")
+                    capture(mode, "note-edit-dialog-no-changes")
+                    ui.click("Cancel")
+                    ui.await("Read-only note edit form must close") { ui.exact("Title") == null && ui.exact("Body") == null }
+                    ui.scrollTo("Remind Me")
+                    ui.click("Remind Me")
+                    ui.waitText("Reminder type")
+                    capture(mode, "reminder-type-dialog")
+                    ui.back()
+                    ui.scrollTo("Storage & AI Details", 24)
+                    capture(mode, "note-detail-memberships-and-metadata")
+                    library()
+                    ui.edit(SEARCH, pdf)
+                    ui.await("Known synthetic PDF must remain unique") { count() == 1 && ui.exact(pdf) != null }
+                    ui.click(pdf)
+                    ui.waitText("Page 1 of 1", 30000)
+                    capture(mode, "pdf-detail-rendered")
+                    library()
+                    ui.click("Add")
+                    ui.waitText("Add to Library")
+                    capture(mode, "add-note-tab")
+                    ui.click("Link")
+                    ui.waitText("Web URL (https://...)")
+                    capture(mode, "add-link-tab")
+                    ui.click("Import Files")
+                    ui.waitText("Choose Files from Device")
+                    capture(mode, "add-file-tab")
+                    cancel("Add to Library")
+
+                    library()
+                    ui.click("Collections")
+                    ui.waitText("Add Collection")
+                    capture(mode, "collections-overview")
+                    ui.click("Add Collection")
+                    ui.waitText("New Collection")
+                    capture(mode, "collection-create-dialog")
+                    cancel("New Collection")
+                    listOf("Edit Collection", "AI Privacy", "Delete Collection").forEach { action ->
+                        collectionMenu(action)
+                        val dialog = if (action == "Delete Collection") "Delete Collection?" else action
+                        ui.waitText(dialog)
+                        capture(mode, "collection-${action.replace(' ', '-')}-dialog")
+                        cancel(dialog)
+                    }
+
+                    library()
+                    ui.click("Search")
+                    ui.waitText("Search Library")
+                    capture(mode, "search-initial-offline-hint")
+                    ui.edit("Search by concept, note, file, or grade...", "$marker no-match")
+                    ui.waitText("No results found", 45000)
+                    capture(mode, "search-no-results")
+                    ui.edit("Search by concept, note, file, or grade...", marker)
+                    ui.waitText("Local results (1)", 45000)
+                    ui.waitText(title)
+                    capture(mode, "search-local-result-ask-ai-idle")
+                    library()
+                    ui.click("Settings")
+                    listOf("Local Storage Breakdown", "Backend AI Pairing", "AI Automation & Privacy", "WhatsApp 'Random Links' Migration",
+                        "Encrypted Backup & Portability", "Biometric App Lock", "Trash & 30-Day Purge").forEach { section ->
+                        ui.scrollTo(section, 24)
+                        capture(mode, "settings-$section")
+                    }
+                    ui.scrollTo("Import Chat Archive", 24)
+                    ui.click("Import Chat Archive")
+                    ui.waitText("Import WhatsApp export")
+                    capture(mode, "migration-picker-dialog-no-input")
+                    cancel("Import WhatsApp export")
+                    ui.scrollTo("Export Backup", 24)
+                    ui.click("Export Backup")
+                    ui.waitText("Export Encrypted Backup")
+                    capture(mode, "export-passphrase-dialog-empty")
+                    cancel("Export Encrypted Backup")
+                    ui.click("Restore")
+                    visualSelectRestoreSource(restoreName)
+                    ui.waitText("Decrypt & Inspect Backup")
+                    capture(mode, "restore-passphrase-dialog-empty")
+                    cancel("Decrypt & Inspect Backup")
+                    ui.scrollTo("View Trash", 24)
+                    ui.click("View Trash")
+                    ui.waitText("Back to Settings")
+                    capture(mode, if (ui.exact("Trash is empty") != null) "trash-empty-baseline" else "trash-existing-populated-baseline")
+                    restartProduct()
+                    searchAndOpen(title, body)
+                    ui.scrollTo("Trash", 24)
+                    ui.click("Trash") // Only this run's unique note is ever moved; original records are untouched.
+                    ui.await("Owned note detail must close after Trash") { ui.exact("Edit Item") == null }
+                    library()
+                    ui.click("Settings")
+                    ui.scrollTo("View Trash", 24)
+                    ui.click("View Trash")
+                    ui.waitText("Back to Settings")
+                    ui.scrollTo(title, 24)
+                    capture(mode, "trash-owned-note-populated")
+                    ownedTrashAction("Delete Forever")
+                    ui.waitText("Delete Forever?")
+                    capture(mode, "trash-delete-owned-note-confirmation")
+                    cancel("Delete Forever?")
+                    listOf("Restore All", "Empty Trash").forEach { action ->
+                        ui.click(action)
+                        ui.waitText("$action?")
+                        capture(mode, "trash-${action.replace(' ', '-')}-confirmation")
+                        cancel("$action?")
+                    }
+                    ownedTrashAction("Restore")
+                    ui.await("Owned note must leave Trash after its scoped restore") { ui.exact(title) == null }
+                    restartProduct()
+                    ui.await("Visual note and original library must remain after safe dialogs") { count() == baseline + 1 }
+                    searchAndOpen(title, body)
+                    capture(mode, "owned-note-restored-original-library-retained")
+                }
+                complete = true
+            }
+        } finally {
+            try {
+                restoreSource?.let { check(context.contentResolver.delete(it, null, null) == 1) { "Owned public dialog fixture must be removed" } }
+            } finally {
+                File(evidenceDir, "T44-capture-inventory.txt").writeText(
+                    "Capture traversal completed=$complete. These are screenshot states awaiting independent rendered visual review, not T44 visual PASS.\n" +
+                        "Original theme/layout cleanup confirmed=$environmentRestored. Owned note/collection retained for evidence; host snapshot rollback remains required.\n" +
+                        "Restore dialog used an invalid synthetic public sentinel only; no passphrase, decryption or restore was submitted.\n" +
+                        "Media/share previews rely on separate earlier evidence. Empty-library onboarding, provider/error/loading states, every media renderer, physical device, first-frame flashes and exhaustive localization are not covered.\n" +
+                        captures.joinToString("\n", postfix = "\n")
+                )
+            }
+        }
+    }
+
+    private fun visualLibraryLayout(): String? {
+        val root = instrumentation.uiAutomation.rootInActiveWindow ?: return null
+        if (root.packageName?.toString() != PRODUCT || ui.exact("Settings") == null) return null
+        val rootBounds = Rect().also(root::getBoundsInScreen)
+        if (rootBounds.width() <= 0) return null
+        // Observe real item cards, not the toggle's identical description or private preferences.
+        val cards = ui.nodes().filter { it.isVisibleToUser && it.isLongClickable }
+        if (cards.isEmpty()) return null
+        val layouts = cards.map { card ->
+            val ratio = Rect().also(card::getBoundsInScreen).width().toFloat() / rootBounds.width()
+            when (ratio) {
+                in 0.30f..0.60f -> "grid"
+                in 0.75f..1.00f -> "list"
+                else -> return null
+            }
+        }.toSet()
+        return layouts.singleOrNull()
+    }
+
+    private fun visualDescendants(node: AccessibilityNodeInfo): List<AccessibilityNodeInfo> = listOf(node) +
+        (0 until node.childCount).flatMap { node.getChild(it)?.let(::visualDescendants).orEmpty() }
+
+    private fun visualSelectRestoreSource(name: String) {
+        val pickers = setOf("com.android.documentsui", "com.google.android.documentsui")
+        fun foreground() = instrumentation.uiAutomation.rootInActiveWindow?.packageName?.toString()
+        ui.await("Real restore document picker required") { foreground() in pickers }
+        ui.await("Native document picker roots action required") { listOf("Show roots", "Show navigation roots").any { ui.exact(it) != null } }
+        ui.click(listOf("Show roots", "Show navigation roots").first { ui.exact(it) != null })
+        fun downloads() = ui.nodes().filter {
+            it.isVisibleToUser && it.viewIdResourceName == "android:id/title" && it.text?.toString() in setOf("Downloads", "Download")
+        }.singleOrNull()
+        ui.await("Unique Downloads picker root required") { foreground() in pickers && downloads() != null }
+        ui.clickNode(checkNotNull(downloads()))
+        ui.await("Native Downloads picker drawer must close") {
+            foreground() in pickers && ui.nodes().none { it.isVisibleToUser && it.viewIdResourceName?.endsWith(":id/roots_list") == true }
+        }
+        ui.scrollTo(name, 30)
+        check(foreground() in pickers) { "Restore fixture selection refused outside native picker" }
+        ui.click(name)
     }
 
     @Test fun T45_largeFontSmallViewportRotationAndForcedRtlControlsRemainAccessible() {

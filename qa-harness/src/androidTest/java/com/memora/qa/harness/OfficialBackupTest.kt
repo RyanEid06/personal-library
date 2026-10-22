@@ -34,7 +34,7 @@ import java.security.MessageDigest
 import java.util.Collections
 import java.util.Locale
 
-/** Real SAF backup/restore of the guarded synthetic release library; no product-private reads. */
+/** Real SAF backup/restore; optional cleanup check reads only synthetic restore-stage paths. */
 @RunWith(AndroidJUnit4::class)
 class OfficialBackupTest {
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
@@ -42,6 +42,7 @@ class OfficialBackupTest {
     private lateinit var ui: ReleaseUi
     private lateinit var token: String
     private var guarded = false
+    private var testMethod = ""
     private var publicSource: Uri? = null
     private lateinit var archiveStaging: RestoreStaging
     private val inspectedArchives = mutableListOf<RestorePreview>()
@@ -50,6 +51,7 @@ class OfficialBackupTest {
     private lateinit var fixturePassphrase: String
 
     @get:Rule val evidence = object : TestWatcher() {
+        override fun starting(description: Description) { testMethod = description.methodName }
         override fun failed(error: Throwable, description: Description) {
             if (guarded) runCatching { ui.checkpoint("FAILED") }
             Log.e("MemoraQA", "${description.methodName}: FAIL ${error.javaClass.simpleName}")
@@ -67,10 +69,20 @@ class OfficialBackupTest {
         val avds = listOf("ro.boot.qemu.avd_name", "ro.kernel.qemu.avd_name")
             .map { ui.shell("getprop $it").trim() }.filter { it.isNotEmpty() }
         check(avds.isNotEmpty() && avds.all { it == "Memora-QA-API37" }) { "Wrong or unidentified AVD" }
-        val info = context.packageManager.getPackageInfo(PRODUCT, PackageManager.GET_SIGNING_CERTIFICATES)
-        check(info.versionName == "1.0.1" && info.longVersionCode == 3L) { "Expected official 1.0.1/code3" }
-        check(hash(checkNotNull(info.signingInfo).apkContentsSigners.single().toByteArray()) == CERTIFICATE) {
-            "Expected permanent release signer"
+        if (testMethod == UPGRADE_METHOD) {
+            val arguments = InstrumentationRegistry.getArguments()
+            check(arguments.getString("class") == "${javaClass.name}#$UPGRADE_METHOD" &&
+                arguments.getString("hostUpgrade") == "true") { "Only the explicitly selected host upgrade method may run on 1.0.0" }
+            check(arguments.getString("rollbackSnapshot").orEmpty().matches(ROLLBACK_SNAPSHOT)) {
+                "Host must first verify the preserved official rollback snapshot"
+            }
+            assertPublishedApk("1.0.0", 2L, OLD_APK_SHA256)
+        } else {
+            val info = context.packageManager.getPackageInfo(PRODUCT, PackageManager.GET_SIGNING_CERTIFICATES)
+            check(info.versionName == "1.0.1" && info.longVersionCode == 3L) { "Expected official 1.0.1/code3" }
+            check(hash(checkNotNull(info.signingInfo).apkContentsSigners.single().toByteArray()) == CERTIFICATE) {
+                "Expected permanent release signer"
+            }
         }
         guarded = true
         archiveStaging = RestoreStaging(File(context.cacheDir, "qa-backup-stage/$token"))
@@ -276,6 +288,197 @@ class OfficialBackupTest {
         check(original.delete()) { "Owned source fixture must be removed after successful round trip" }
     }
 
+    @Test fun T40_cancelRemovesPrivateStageAndPreservesCompleteGraph() {
+        check(InstrumentationRegistry.getArguments().getString("inspectSyntheticProductStage") == "true") {
+            "Explicit synthetic-only, read-only restore staging inspection required"
+        }
+        val baseline = libraryCount()
+        check(baseline in 211..500) { "Expected the known bounded synthetic library" }
+        check(productStageEntryCount() == 0) { "Pre-test product staging must be empty" }
+        val bodyMarker = "QACANCEL${System.currentTimeMillis()}BODY"
+        val original = File(context.filesDir, "synthetic-shares/$token.pdf").apply {
+            parentFile!!.mkdirs()
+            writeBytes(tinyPdf("$token $bodyMarker"))
+        }
+        saveSyntheticPdf(original)
+        library()
+        awaitCount(baseline + 1)
+        // Finish the fixture's independent local indexing before taking the cancellation baseline.
+        awaitBodyOnlySearch(bodyMarker)
+        ui.click(original.name)
+        ui.waitText("Page 1 of 1", 30000)
+        library()
+        val backupName = "$token.plb"
+        val before = exportAndInspectCurrentLibrary(backupName)
+        val baselinePdf = before.manifest.items.single { it.originalFileName == original.name }
+        check(baselinePdf.extractedText?.contains(bodyMarker) == true) {
+            "The fixture's local extraction must be settled before the strict cancellation baseline"
+        }
+        check(baselinePdf.aiStatus in setOf("QUEUED", "EXCLUDED")) {
+            "The fixture's local analysis queue publication must also be settled before the baseline"
+        }
+        inspectBackup(backupName)
+        check(previewNumber("Total Items") == before.totalItems)
+        check(previewNumber("Existing Duplicates") == before.totalItems)
+        check(previewNumber("New Items to Restore") == 0)
+        val stagedEntries = productStageEntryCount()
+        check(stagedEntries > 1) { "Positive control must observe the product's populated private restore stage" }
+        val stageRoot = "/data/user/0/$PRODUCT/cache/staging"
+        val stagedFiles = ui.shell("su 0 find $stageRoot -type f").lineSequence().filter { it.isNotBlank() }.toList()
+        check(stagedFiles.isNotEmpty() && stagedFiles.all {
+            it.matches(Regex("$stageRoot/restore_stage_[^/]+/assets/[0-9a-f]{64}"))
+        }) { "Positive control must contain actual staged asset files, not only empty directories" }
+        check(stagedFiles.map { it.substringAfterLast('/') }.sorted() == before.manifest.assets.map { it.hash }.sorted()) {
+            "Private stage must contain exactly the authenticated archive's asset files"
+        }
+        ui.checkpoint("T40-private-stage-positive-control")
+        ui.click("Cancel")
+        ui.await("Cancelled restore preview must close") { ui.exact("Restore Archive Preview") == null }
+        ui.await("Cancel must remove every private product staging entry", 30000) { productStageEntryCount() == 0 }
+        ui.shell("am force-stop $PRODUCT")
+        launchProduct()
+        library()
+        awaitCount(baseline + 1)
+        openMarker(original.name)
+        ui.waitText("Page 1 of 1", 30000)
+        assertMembershipChecked("Random Links")
+        verifyRestoredOriginal(original)
+        launchProduct()
+        library()
+        val afterName = "$token-after.plb"
+        val after = exportAndInspectCurrentLibrary(afterName)
+        assertArchiveGraphEqual(before.manifest, after.manifest)
+        check(productStageEntryCount() == 0)
+        File(context.filesDir, "qa-evidence/$token/T40-private-stage-counts.txt").writeText(
+            "before=0\npreview=$stagedEntries\npreview_asset_files=${stagedFiles.size}\nafter_cancel=0\nafter_restart_and_reexport=0\n"
+        )
+        ui.checkpoint("T40-cancel-private-cleanup-and-exact-graph-verified")
+        listOf(backupName, afterName).forEach { name ->
+            ui.shell("rm -- /sdcard/Download/$name")
+            assertPublicBackupAbsent(name)
+        }
+        check(context.contentResolver.delete(checkNotNull(publicSource), null, null) == 1)
+        check(original.delete())
+    }
+
+    private fun productStageEntryCount(): Int {
+        check(guarded && InstrumentationRegistry.getArguments().getString("inspectSyntheticProductStage") == "true")
+        // Dedicated rootable synthetic AVD only. Read names beneath this fixed staging root;
+        // never read file contents, databases, preferences, keys, or any other private directory.
+        val root = "/data/user/0/$PRODUCT/cache/staging"
+        val listing = ui.shell("su 0 find $root").lineSequence().filter { it.isNotBlank() }.toList()
+        check(listing.firstOrNull() == root) { "The fixed private staging root must be positively readable" }
+        val entries = listing.drop(1)
+        check(entries.all { it.startsWith("$root/restore_stage_") }) { "Staging inspection failed or found an unexpected path" }
+        return entries.size
+    }
+
+    @Test fun T47_publishedUpgradePreservesCompleteSyntheticGraph() {
+        val rollback = checkNotNull(InstrumentationRegistry.getArguments().getString("rollbackSnapshot"))
+        val evidenceDir = File(context.filesDir, "qa-evidence/$token").apply { mkdirs() }
+        val barrier = File(evidenceDir, "HOST_UPGRADED_PRODUCT")
+        check(!File(evidenceDir, "READY_FOR_HOST_UPGRADE.txt").exists() && !barrier.exists()) { "Fresh upgrade barrier required" }
+        check(libraryCount() == 0) { "Upgrade requires the host-installed fresh disposable 1.0.0 library" }
+        ui.click("Settings")
+        ui.scrollTo("Not Paired")
+        ui.waitText("Not Paired")
+        library()
+        // The old release has no default collection on a fresh install; create its legacy row through UI.
+        ui.click("Collections")
+        ui.click("Add Collection")
+        ui.waitText("New Collection")
+        ui.edit("Collection Name", "Random Links")
+        ui.click("Create")
+        ui.await("Legacy collection must be created") { ui.exact("New Collection") == null && ui.exact("Random Links") != null }
+        val bodyMarker = "QAUPGRADE${System.currentTimeMillis()}BODY"
+        val original = File(context.filesDir, "synthetic-shares/$token.pdf").apply {
+            parentFile!!.mkdirs()
+            writeBytes(tinyPdf("$token $bodyMarker"))
+        }
+        saveSyntheticPdf(original)
+        awaitCount(1)
+        ui.edit(SEARCH, token)
+        awaitCount(1)
+        ui.click(original.name)
+        ui.waitText("Page 1 of 1", 30000)
+        ui.click("Favorite")
+        assertMembershipChecked("Random Links")
+        library()
+        val noteTitle = "$token upgrade note"
+        val noteBody = "$token synthetic owner note preserved across the published upgrade."
+        ui.click("Add")
+        ui.waitText("Add to Library")
+        ui.edit("Title (Optional)", noteTitle)
+        ui.edit("Note Content / Text / Grades", noteBody)
+        ui.scrollTo("Random Links")
+        ui.click("Random Links")
+        ui.scrollTo("Save Note")
+        ui.click("Save Note")
+        ui.await("Synthetic note must be saved") { ui.exact("Add to Library") == null }
+        library()
+        awaitCount(2)
+        // Finish local extraction before the baseline: an asynchronous first index is not upgrade drift.
+        awaitBodyOnlySearch(bodyMarker)
+        ui.waitText(original.name)
+        library()
+        val backupName = "$token.plb"
+        val before = exportAndInspectCurrentLibrary(backupName)
+        check(before.totalItems == 2 && before.totalCollections == 1 && before.totalAssets == 1)
+        val legacy = before.manifest.collections.single()
+        check(legacy.name == "Random Links" && legacy.appRole == null)
+        val pdf = before.manifest.items.single { it.originalFileName == original.name }
+        check(pdf.isFavorite && pdf.contentHash == hash(original.readBytes()) && pdf.extractedText?.contains(bodyMarker) == true)
+        check(before.manifest.items.all { it.aiStatus == "QUEUED" }) { "Paused old-release local indexing must finish before export" }
+        check(before.manifest.items.single { it.title == noteTitle }.content == noteBody)
+        check(before.manifest.memberships.size == 2 && before.manifest.memberships.all { it.collectionId == legacy.id })
+        ui.checkpoint("T47-old-published-archive-authenticated")
+        File(evidenceDir, "READY_FOR_HOST_UPGRADE.txt").writeText(
+            "token=$token\nrollback=$rollback\nitems=${before.totalItems}\nactive=2\ncollections=${before.totalCollections}\nassets=${before.totalAssets}\noldApkSha256=$OLD_APK_SHA256\nnewApkSha256=$NEW_APK_SHA256\n"
+        )
+        Log.i("MemoraQA", "T47 authenticated old export ready for host install -r; token=$token rollback=$rollback")
+        // The host alone installs the verified new APK with -r, never -d or a second uninstall.
+        ui.await("Waiting for verified host upgrade of the synthetic product only", 180000) { barrier.isFile }
+        assertPublishedApk("1.0.1", 3L, NEW_APK_SHA256)
+        launchProduct()
+        library()
+        awaitCount(2)
+        ui.click("Settings")
+        ui.scrollTo("Pause Background AI")
+        assertMembershipChecked("Pause Background AI")
+        ui.scrollTo("Not Paired")
+        ui.waitText("Not Paired")
+        library()
+        ui.edit(SEARCH, bodyMarker)
+        awaitCount(1)
+        ui.click(original.name)
+        ui.waitText("Page 1 of 1", 30000)
+        assertMembershipChecked("Random Links")
+        verifyRestoredOriginal(original)
+        ui.checkpoint("T47-upgraded-body-search-membership-original")
+        ui.shell("am force-stop $PRODUCT")
+        launchProduct()
+        library()
+        awaitCount(2)
+        val afterName = "$token-after.plb"
+        val after = exportAndInspectCurrentLibrary(afterName)
+        // Schema 4→5 adopts exactly this legacy ID. Every other portable field, including all
+        // derived item fields, remains strict: this is an upgrade, not a fresh archive restore.
+        check(after.manifest.collections.single { it.id == legacy.id }.appRole == "RANDOM_LINKS")
+        check(after.manifest.collections.count { it.appRole == "RANDOM_LINKS" } == 1)
+        val expected = before.manifest.copy(collections = before.manifest.collections.map {
+            if (it.id == legacy.id) it.copy(appRole = "RANDOM_LINKS") else it
+        })
+        assertArchiveGraphEqual(expected, after.manifest)
+        Log.i("MemoraQA", "T47 published 1.0.0/code2 to 1.0.1/code3: exact stable graph, one legacy role adoption and every asset hash/size verified after restart")
+        ui.checkpoint("T47-published-upgrade-full-graph-verified")
+        listOf(backupName, afterName).forEach { name ->
+            ui.shell("rm -- /sdcard/Download/$name")
+            assertPublicBackupAbsent(name)
+        }
+        check(context.contentResolver.delete(checkNotNull(publicSource), null, null) == 1)
+        check(original.delete())
+    }
+
     @Test fun T41_fullArchiveReconstructsIntoHostClearedSyntheticApp() {
         val arguments = InstrumentationRegistry.getArguments()
         check(arguments.getString("hostClearedRestore") == "true") { "Explicit host-coordinated synthetic restore required" }
@@ -365,7 +568,9 @@ class OfficialBackupTest {
         ui.click("Export Backup")
         ui.waitText("Export Encrypted Backup")
         setPassword(0, fixturePassphrase)
-        setPassword(1, fixturePassphrase)
+        // 1.0.0 infers export mode from "Choose Destination" and hides confirmation; 1.0.1 fixes that mode.
+        val oldUpgradeExport = testMethod == UPGRADE_METHOD && context.packageManager.getPackageInfo(PRODUCT, 0).longVersionCode == 2L
+        if (!oldUpgradeExport) setPassword(1, fixturePassphrase)
         ui.click("Choose Destination")
         awaitPicker()
         downloads()
@@ -403,6 +608,22 @@ class OfficialBackupTest {
         Regex("^(\\d+) items • Saved Date$").matchEntire(node.text?.toString().orEmpty())?.groupValues?.get(1)?.toInt()
     }.firstOrNull()
     private fun awaitCount(expected: Int) = ui.await("Expected $expected saved synthetic items", 45000) { countOrNull() == expected }
+
+    private fun awaitBodyOnlySearch(bodyMarker: String) {
+        ui.edit(SEARCH, bodyMarker)
+        var nextRefresh = 0L
+        ui.await("Body-only local search must find exactly one indexed fixture", 120000) {
+            if (countOrNull() == 1) true else {
+                // QA003 also hides worker index updates from an unchanged query in published APKs.
+                if (SystemClock.uptimeMillis() >= nextRefresh) {
+                    ui.edit(SEARCH, "")
+                    ui.edit(SEARCH, bodyMarker)
+                    nextRefresh = SystemClock.uptimeMillis() + 1500
+                }
+                false
+            }
+        }
+    }
 
     private fun settingsBackup() {
         if (ui.exact("Export Backup") == null) ui.click("Settings")
@@ -566,7 +787,7 @@ class OfficialBackupTest {
             val bounds = Rect().also(text::getBoundsInScreen)
             val aligned = ui.nodes().filter {
                 val other = Rect().also(it::getBoundsInScreen)
-                it.isVisibleToUser && it.isCheckable && other.right <= bounds.left &&
+                it.isVisibleToUser && it.isCheckable && (other.right <= bounds.left || other.left >= bounds.right) &&
                     other.top < bounds.bottom && other.bottom > bounds.top
             }
             if (aligned.size == 1) return@await aligned.single().isChecked
@@ -680,6 +901,30 @@ class OfficialBackupTest {
         }
     }
 
+    private fun assertPublishedApk(version: String, code: Long, expectedHash: String) {
+        val info = context.packageManager.getPackageInfo(PRODUCT, PackageManager.GET_SIGNING_CERTIFICATES)
+        check(info.versionName == version && info.longVersionCode == code) { "Expected published $version/code$code" }
+        check(hash(checkNotNull(info.signingInfo).apkContentsSigners.single().toByteArray()) == CERTIFICATE) { "Expected permanent release signer" }
+        val application = checkNotNull(info.applicationInfo)
+        check(application.splitSourceDirs.isNullOrEmpty()) { "Expected the published universal APK" }
+        val path = application.sourceDir
+        check(path.matches(Regex("/data/app/[A-Za-z0-9_./=+~-]+/base\\.apk"))) { "Unexpected installed APK path" }
+        val digest = MessageDigest.getInstance("SHA-256")
+        var size = 0L
+        ParcelFileDescriptor.AutoCloseInputStream(instrumentation.uiAutomation.executeShellCommand("cat $path")).use { input ->
+            val buffer = ByteArray(64 * 1024)
+            while (true) {
+                val read = input.read(buffer)
+                if (read < 0) break
+                size += read
+                check(size <= 128L * 1024 * 1024) { "Installed APK exceeds published byte budget" }
+                digest.update(buffer, 0, read)
+            }
+        }
+        check(size > 0 && digest.digest().joinToString("") { "%02x".format(it) } == expectedHash) { "Installed APK differs from exact published $version artifact" }
+        Log.i("MemoraQA", "T47 installed published version=$version code=$code bytes=$size sha256=$expectedHash certificate=$CERTIFICATE")
+    }
+
     private fun hash(bytes: ByteArray) = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
 
     private fun tinyPdf(marker: String): ByteArray {
@@ -702,6 +947,10 @@ class OfficialBackupTest {
         private const val PRODUCT = "com.personallibrary.app"
         private const val SEARCH = "Search notes, photos, links..."
         private const val CERTIFICATE = "98686d31bfe4370cc30024439b56d9e72de71c081951d31f5d4fdd31d4eb0598"
+        private const val UPGRADE_METHOD = "T47_publishedUpgradePreservesCompleteSyntheticGraph"
+        private const val OLD_APK_SHA256 = "99e54e5882601b53d5e35f59d356cbaaf1a947608496b54ae581180b97818906"
+        private const val NEW_APK_SHA256 = "b53d05b83e45dfb667effab1d1117aac9025701723e4f13b843d044d1fe2143d"
+        private val ROLLBACK_SNAPSHOT = Regex("memora-official-before-t41-empty-restore-[0-9-]+")
         private val PICKERS = setOf("com.google.android.documentsui", "com.android.documentsui")
     }
 }
