@@ -170,259 +170,274 @@ fun LibraryScreen(
             )
         }
     ) { innerPadding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(innerPadding)
-        ) {
-            // Search Input Row with Mic button
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 4.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                OutlinedTextField(
-                    value = searchQuery,
-                    onValueChange = { viewModel.setSearchQuery(it) },
-                    placeholder = { Text("Search notes, photos, links...") },
-                    leadingIcon = {
-                        Icon(Icons.Filled.Search, contentDescription = null, tint = MaterialTheme.colorScheme.outline)
-                    },
-                    trailingIcon = {
-                        if (searchQuery.isNotEmpty()) {
-                            IconButton(onClick = { viewModel.setSearchQuery("") }) {
-                                Icon(Icons.Filled.Clear, contentDescription = "Clear")
-                            }
-                        } else {
-                            IconButton(
-                                onClick = onOpenVoiceSearch,
-                                modifier = Modifier.testTag("mic_search_button")
-                            ) {
-                                Icon(Icons.Filled.Mic, contentDescription = "Voice Search", tint = MaterialTheme.colorScheme.primary)
-                            }
-                        }
-                    },
-                    singleLine = true,
-                    shape = RoundedCornerShape(12.dp),
+        // Share the existing vertical lazy host so short screens can reach both controls and results.
+        val libraryHeaders = listOf<@Composable () -> Unit>(
+            {
+                // Search Input Row with Mic button
+                Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .testTag("library_search_input")
+                        .padding(horizontal = 16.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    OutlinedTextField(
+                        value = searchQuery,
+                        onValueChange = { viewModel.setSearchQuery(it) },
+                        placeholder = { Text("Search notes, photos, links...") },
+                        leadingIcon = {
+                            Icon(Icons.Filled.Search, contentDescription = null, tint = MaterialTheme.colorScheme.outline)
+                        },
+                        trailingIcon = {
+                            if (searchQuery.isNotEmpty()) {
+                                IconButton(onClick = { viewModel.setSearchQuery("") }) {
+                                    Icon(Icons.Filled.Clear, contentDescription = "Clear")
+                                }
+                            } else {
+                                IconButton(
+                                    onClick = onOpenVoiceSearch,
+                                    modifier = Modifier.testTag("mic_search_button")
+                                ) {
+                                    Icon(Icons.Filled.Mic, contentDescription = "Voice Search", tint = MaterialTheme.colorScheme.primary)
+                                }
+                            }
+                        },
+                        singleLine = true,
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("library_search_input")
+                    )
+                }
+            },
+            {
+                // Type filter strip
+                TypeFilterChipStrip(
+                    selectedKind = selectedKind,
+                    onKindSelected = { viewModel.selectKind(it) }
                 )
-            }
-
-            // Type filter strip
-            TypeFilterChipStrip(
-                selectedKind = selectedKind,
-                onKindSelected = { viewModel.selectKind(it) }
-            )
-
-            ActiveSearchFilters(
-                selectedColId, collections, selectedKind, dateFilter, dateBasis, customStart, customEnd,
-                onClearCollection = { viewModel.selectCollection(null) },
-                onClearKind = { viewModel.selectKind(null) },
-                onClearDate = { viewModel.setDateFilter(DateFilter.ALL_TIME) },
-                onClearFilters = viewModel::clearFilters
-            )
-
-            // Scroll controls as a unit so long labels and large text do not clip.
-            Row(
-                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())
-                    .padding(horizontal = 16.dp, vertical = 2.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    // Grouping dropdown
-                    Box {
-                        TextButton(
-                            onClick = { showGroupingMenu = true },
-                            contentPadding = PaddingValues(horizontal = 10.dp),
-                            modifier = Modifier.testTag("grouping_button")
-                        ) {
-                            Icon(Icons.Filled.Layers, contentDescription = null, modifier = Modifier.size(14.dp))
-                            Spacer(modifier = Modifier.width(3.dp))
-                            Text(if (dateGrouping == DateGrouping.NONE) "Group" else dateGrouping.label)
-                        }
-                        DropdownMenu(
-                            expanded = showGroupingMenu,
-                            onDismissRequest = { showGroupingMenu = false }
-                        ) {
-                            Text("Date Grouping", fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp), fontSize = 12.sp)
-                            for (dg in DateGrouping.values()) {
-                                DropdownMenuItem(
-                                    text = { Text(dg.label) },
-                                    onClick = {
-                                        viewModel.setDateGrouping(dg)
-                                        showGroupingMenu = false
-                                    }
-                                )
+            },
+            {
+                ActiveSearchFilters(
+                    selectedColId, collections, selectedKind, dateFilter, dateBasis, customStart, customEnd,
+                    onClearCollection = { viewModel.selectCollection(null) },
+                    onClearKind = { viewModel.selectKind(null) },
+                    onClearDate = { viewModel.setDateFilter(DateFilter.ALL_TIME) },
+                    onClearFilters = viewModel::clearFilters
+                )
+            },
+            {
+                // Scroll controls as a unit so long labels and large text do not clip.
+                Row(
+                    modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())
+                        .padding(horizontal = 16.dp, vertical = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        // Grouping dropdown
+                        Box {
+                            TextButton(
+                                onClick = { showGroupingMenu = true },
+                                contentPadding = PaddingValues(horizontal = 10.dp),
+                                modifier = Modifier.testTag("grouping_button")
+                            ) {
+                                Icon(Icons.Filled.Layers, contentDescription = null, modifier = Modifier.size(14.dp))
+                                Spacer(modifier = Modifier.width(3.dp))
+                                Text(if (dateGrouping == DateGrouping.NONE) "Group" else dateGrouping.label)
+                            }
+                            DropdownMenu(
+                                expanded = showGroupingMenu,
+                                onDismissRequest = { showGroupingMenu = false }
+                            ) {
+                                Text("Date Grouping", fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp), fontSize = 12.sp)
+                                for (dg in DateGrouping.values()) {
+                                    DropdownMenuItem(
+                                        text = { Text(dg.label) },
+                                        onClick = {
+                                            viewModel.setDateGrouping(dg)
+                                            showGroupingMenu = false
+                                        }
+                                    )
+                                }
                             }
                         }
-                    }
 
-                    // Date filter & basis menu
-                    Box {
-                        TextButton(
-                            onClick = { showDateFilterMenu = true },
-                            contentPadding = PaddingValues(horizontal = 10.dp),
-                            modifier = Modifier.testTag("date_filter_button")
-                        ) {
-                            Icon(Icons.Outlined.CalendarToday, contentDescription = null, modifier = Modifier.size(14.dp))
-                            Spacer(modifier = Modifier.width(3.dp))
-                            Text(dateFilter.label)
-                        }
-                        DropdownMenu(
-                            expanded = showDateFilterMenu,
-                            onDismissRequest = { showDateFilterMenu = false }
-                        ) {
-                            Text("Date Basis", fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp), fontSize = 12.sp)
-                            DropdownMenuItem(
-                                text = { Text(if (dateBasis == DateBasis.SAVED_DATE) "✓ Saved Date" else "Saved Date") },
-                                onClick = {
-                                    viewModel.setDateBasis(DateBasis.SAVED_DATE)
-                                    showDateFilterMenu = false
-                                }
-                            )
-                            DropdownMenuItem(
-                                text = { Text(if (dateBasis == DateBasis.SOURCE_DATE) "✓ Source Date" else "Source Date") },
-                                onClick = {
-                                    viewModel.setDateBasis(DateBasis.SOURCE_DATE)
-                                    showDateFilterMenu = false
-                                }
-                            )
-                            HorizontalDivider()
-                            Text("Filter Range", fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp), fontSize = 12.sp)
-                            for (df in DateFilter.values()) {
+                        // Date filter & basis menu
+                        Box {
+                            TextButton(
+                                onClick = { showDateFilterMenu = true },
+                                contentPadding = PaddingValues(horizontal = 10.dp),
+                                modifier = Modifier.testTag("date_filter_button")
+                            ) {
+                                Icon(Icons.Outlined.CalendarToday, contentDescription = null, modifier = Modifier.size(14.dp))
+                                Spacer(modifier = Modifier.width(3.dp))
+                                Text(dateFilter.label)
+                            }
+                            DropdownMenu(
+                                expanded = showDateFilterMenu,
+                                onDismissRequest = { showDateFilterMenu = false }
+                            ) {
+                                Text("Date Basis", fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp), fontSize = 12.sp)
                                 DropdownMenuItem(
-                                    text = { Text(df.label) },
+                                    text = { Text(if (dateBasis == DateBasis.SAVED_DATE) "✓ Saved Date" else "Saved Date") },
                                     onClick = {
-                                        if (df == DateFilter.CUSTOM) showCustomRangeDialog = true else viewModel.setDateFilter(df)
+                                        viewModel.setDateBasis(DateBasis.SAVED_DATE)
                                         showDateFilterMenu = false
                                     }
                                 )
-                            }
-                        }
-                    }
-
-                    // Sort order menu
-                    Box {
-                        TextButton(
-                            onClick = { showSortMenu = true },
-                            contentPadding = PaddingValues(horizontal = 10.dp),
-                            modifier = Modifier.testTag("sort_order_button")
-                        ) {
-                            Icon(Icons.AutoMirrored.Outlined.Sort, contentDescription = null, modifier = Modifier.size(14.dp))
-                            Spacer(modifier = Modifier.width(3.dp))
-                            Text(sortOrder.label)
-                        }
-                        DropdownMenu(
-                            expanded = showSortMenu,
-                            onDismissRequest = { showSortMenu = false }
-                        ) {
-                            for (so in SortOrder.values()) {
                                 DropdownMenuItem(
-                                    text = { Text(so.label) },
+                                    text = { Text(if (dateBasis == DateBasis.SOURCE_DATE) "✓ Source Date" else "Source Date") },
                                     onClick = {
-                                        viewModel.setSortOrder(so)
-                                        showSortMenu = false
+                                        viewModel.setDateBasis(DateBasis.SOURCE_DATE)
+                                        showDateFilterMenu = false
                                     }
                                 )
+                                HorizontalDivider()
+                                Text("Filter Range", fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp), fontSize = 12.sp)
+                                for (df in DateFilter.values()) {
+                                    DropdownMenuItem(
+                                        text = { Text(df.label) },
+                                        onClick = {
+                                            if (df == DateFilter.CUSTOM) showCustomRangeDialog = true else viewModel.setDateFilter(df)
+                                            showDateFilterMenu = false
+                                        }
+                                    )
+                                }
+                            }
+                        }
+
+                        // Sort order menu
+                        Box {
+                            TextButton(
+                                onClick = { showSortMenu = true },
+                                contentPadding = PaddingValues(horizontal = 10.dp),
+                                modifier = Modifier.testTag("sort_order_button")
+                            ) {
+                                Icon(Icons.AutoMirrored.Outlined.Sort, contentDescription = null, modifier = Modifier.size(14.dp))
+                                Spacer(modifier = Modifier.width(3.dp))
+                                Text(sortOrder.label)
+                            }
+                            DropdownMenu(
+                                expanded = showSortMenu,
+                                onDismissRequest = { showSortMenu = false }
+                            ) {
+                                for (so in SortOrder.values()) {
+                                    DropdownMenuItem(
+                                        text = { Text(so.label) },
+                                        onClick = {
+                                            viewModel.setSortOrder(so)
+                                            showSortMenu = false
+                                        }
+                                    )
+                                }
                             }
                         }
                     }
                 }
             }
-
-            // Items Content (List or Grid)
-            if (!resultsReady || localSearchError != null || items.isEmpty()) {
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    LibraryResultState(
-                        resultsReady, localSearchError, allItems.isEmpty(), searchQuery,
-                        hasSearchFilters(selectedColId, selectedKind, dateFilter), viewModel::clearFilters
-                    )
+        )
+        val showResultState = !resultsReady || localSearchError != null || items.isEmpty()
+        val resultState: @Composable () -> Unit = {
+            Box(Modifier.fillMaxWidth().heightIn(min = 160.dp).padding(16.dp), contentAlignment = Alignment.Center) {
+                LibraryResultState(
+                    resultsReady, localSearchError, allItems.isEmpty(), searchQuery,
+                    hasSearchFilters(selectedColId, selectedKind, dateFilter), viewModel::clearFilters
+                )
+            }
+        }
+        // Keep each layout's host stable while search loads or becomes empty so typing keeps focus.
+        if (libraryLayout == LibraryLayout.GRID) {
+            LazyVerticalGrid(
+                columns = GridCells.Fixed(2),
+                state = gridState,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(innerPadding)
+                    .padding(horizontal = 12.dp)
+                    .testTag("library_grid"),
+                contentPadding = PaddingValues(bottom = 88.dp, top = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                libraryHeaders.forEachIndexed { index, header ->
+                    item(key = "library_header_$index", span = { androidx.compose.foundation.lazy.grid.GridItemSpan(2) }) { header() }
                 }
-            } else if (libraryLayout == LibraryLayout.GRID) {
-                LazyVerticalGrid(
-                    columns = GridCells.Fixed(2),
-                    state = gridState,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(horizontal = 12.dp)
-                        .testTag("library_grid"),
-                    contentPadding = PaddingValues(bottom = 88.dp, top = 4.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    for (section in groupedSections) {
-                        if (section.title.isNotBlank()) {
-                            item(span = { androidx.compose.foundation.lazy.grid.GridItemSpan(2) }) {
+                if (showResultState) {
+                    item(key = "library_result_state", span = { androidx.compose.foundation.lazy.grid.GridItemSpan(2) }) { resultState() }
+                } else for (section in groupedSections) {
+                    if (section.title.isNotBlank()) {
+                        item(span = { androidx.compose.foundation.lazy.grid.GridItemSpan(2) }) {
+                            Text(
+                                text = section.title,
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.padding(vertical = 8.dp, horizontal = 4.dp)
+                            )
+                        }
+                    }
+                    items(section.items, key = { it.item.id }) { itemWithCols ->
+                        ItemGridCard(
+                            itemWithCols = itemWithCols,
+                            fileResolver = { hash -> viewModel.repository.assetStore.getBlobFile(hash) },
+                            onClick = { onOpenItemDetail(itemWithCols) },
+                            onFavoriteToggle = { viewModel.toggleFavorite(itemWithCols.item.id) },
+                            onDelete = { viewModel.moveToTrash(itemWithCols.item.id) },
+                            isSelectMode = isBatchMode,
+                            isSelected = itemWithCols.item.id in selectedItemIds,
+                            onSelectToggle = { viewModel.toggleSelection(itemWithCols.item.id) },
+                            matchingSnippet = viewModel.buildMatchSnippet(itemWithCols.item, searchQuery)
+                        )
+                    }
+                }
+            }
+        } else {
+            LazyColumn(
+                state = listState,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(innerPadding)
+                    .testTag("library_list"),
+                contentPadding = PaddingValues(bottom = 88.dp, top = 4.dp)
+            ) {
+                libraryHeaders.forEachIndexed { index, header ->
+                    item(key = "library_header_$index") { header() }
+                }
+                if (showResultState) {
+                    item(key = "library_result_state") { resultState() }
+                } else for (section in groupedSections) {
+                    if (section.title.isNotBlank()) {
+                        item {
+                            Surface(
+                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
                                 Text(
                                     text = section.title,
                                     style = MaterialTheme.typography.titleSmall,
                                     fontWeight = FontWeight.Bold,
                                     color = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.padding(vertical = 8.dp, horizontal = 4.dp)
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
                                 )
                             }
                         }
-                        items(section.items, key = { it.item.id }) { itemWithCols ->
-                            ItemGridCard(
-                                itemWithCols = itemWithCols,
-                                fileResolver = { hash -> viewModel.repository.assetStore.getBlobFile(hash) },
-                                onClick = { onOpenItemDetail(itemWithCols) },
-                                onFavoriteToggle = { viewModel.toggleFavorite(itemWithCols.item.id) },
-                                onDelete = { viewModel.moveToTrash(itemWithCols.item.id) },
-                                isSelectMode = isBatchMode,
-                                isSelected = itemWithCols.item.id in selectedItemIds,
-                                onSelectToggle = { viewModel.toggleSelection(itemWithCols.item.id) },
-                                matchingSnippet = viewModel.buildMatchSnippet(itemWithCols.item, searchQuery)
-                            )
-                        }
                     }
-                }
-            } else {
-                LazyColumn(
-                    state = listState,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .testTag("library_list"),
-                    contentPadding = PaddingValues(bottom = 88.dp, top = 4.dp)
-                ) {
-                    for (section in groupedSections) {
-                        if (section.title.isNotBlank()) {
-                            item {
-                                Surface(
-                                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
-                                    shape = RoundedCornerShape(8.dp)
-                                ) {
-                                    Text(
-                                        text = section.title,
-                                        style = MaterialTheme.typography.titleSmall,
-                                        fontWeight = FontWeight.Bold,
-                                        color = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
-                                    )
-                                }
-                            }
+                    items(section.items, key = { it.item.id }) { itemWithCols ->
+                        val snippet = remember(itemWithCols.item, searchQuery) {
+                            viewModel.buildMatchSnippet(itemWithCols.item, searchQuery)
                         }
-                        items(section.items, key = { it.item.id }) { itemWithCols ->
-                            val snippet = remember(itemWithCols.item, searchQuery) {
-                                viewModel.buildMatchSnippet(itemWithCols.item, searchQuery)
-                            }
-                            ItemCard(
-                                itemWithCols = itemWithCols,
-                                fileResolver = { hash -> viewModel.repository.assetStore.getBlobFile(hash) },
-                                onClick = { onOpenItemDetail(itemWithCols) },
-                                onFavoriteToggle = { viewModel.toggleFavorite(itemWithCols.item.id) },
-                                onDelete = { viewModel.moveToTrash(itemWithCols.item.id) },
-                                isSelectMode = isBatchMode,
-                                isSelected = selectedItemIds.contains(itemWithCols.item.id),
-                                onSelectToggle = { viewModel.toggleSelection(itemWithCols.item.id) },
-                                matchingSnippet = snippet,
-                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 5.dp)
-                            )
-                        }
+                        ItemCard(
+                            itemWithCols = itemWithCols,
+                            fileResolver = { hash -> viewModel.repository.assetStore.getBlobFile(hash) },
+                            onClick = { onOpenItemDetail(itemWithCols) },
+                            onFavoriteToggle = { viewModel.toggleFavorite(itemWithCols.item.id) },
+                            onDelete = { viewModel.moveToTrash(itemWithCols.item.id) },
+                            isSelectMode = isBatchMode,
+                            isSelected = selectedItemIds.contains(itemWithCols.item.id),
+                            onSelectToggle = { viewModel.toggleSelection(itemWithCols.item.id) },
+                            matchingSnippet = snippet,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 5.dp)
+                        )
                     }
                 }
             }
