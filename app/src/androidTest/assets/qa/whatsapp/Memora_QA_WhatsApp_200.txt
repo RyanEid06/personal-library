@@ -1,0 +1,218 @@
+03/04/2026, 08:00 - Karim: QA-MSG-001 | Just a regular message without any attachment or link.
+03/04/2026, 08:31 - Nour: QA-MSG-002 | A message with slashes / backslashes \ and underscores_ plus hyphens -.
+03/04/2026, 09:02 - Elias: QA-MSG-003 | Color contrast note: links must stay readable in light and dark modes.
+03/04/2026, 09:33 - Omar: QA-MSG-004 | Could we group all the interesting articles by topic?
+03/04/2026, 10:04 - Maya: QA-MSG-005 | The next link is a reserved demonstration URL: https://example.com/test-item
+03/04/2026, 10:35 - Karim: QA-MSG-006 | If you see this item twice after one import, that may be an actual duplicate.
+03/04/2026, 11:06 - Elias: QA-MSG-007 | Could we group all the interesting articles by topic?
+03/04/2026, 11:37 - Lina: QA-MSG-008 | The next link is a reserved demonstration URL: https://example.com/test-item
+03/04/2026, 12:08 - Omar: QA-MSG-009 | If you see this item twice after one import, that may be an actual duplicate.
+Second line: this is part of the SAME WhatsApp message.
+Third line: preserve paragraph boundaries and punctuation!
+03/04/2026, 12:39 - Karim: QA-MSG-010 | I tagged this one #reading and #wishlist just to test hashtags.
+03/04/2026, 13:10 - Nour: QA-MSG-011 | Emoji sequence check: 🚀✨📚🎨🧪
+03/04/2026, 13:41 - Elias: QA-MSG-012 | Question: can we edit the item title after importing the message?
+03/04/2026, 14:12 - Omar: QA-MSG-013 | The café review is fake, but the import test should be real ☕
+03/04/2026, 14:43 - Maya: QA-MSG-014 | Emoji sequence check: 🚀✨📚🎨🧪
+03/04/2026, 15:14 - Karim: QA-MSG-015 | Question: can we edit the item title after importing the message?
+03/04/2026, 15:45 - Elias: QA-MSG-016 | The café review is fake, but the import test should be real ☕
+04/05/2026, 08:00 - Omar: QA-MSG-017 | Search should also find words with accents: bibliothèque, résumé, façade.
+04/05/2026, 08:31 - Maya: QA-MSG-018 | The offline-first behavior should keep this saved even without a network.
+04/05/2026, 09:02 - Karim: QA-MSG-019 | Please check whether search finds “compass” in this fictional message.
+04/05/2026, 09:33 - Elias: QA-MSG-020 | I am sending an identical-looking topic with a different timestamp for dedup checks.
+04/05/2026, 10:04 - Lina: QA-MSG-021 | The offline-first behavior should keep this saved even without a network.
+04/05/2026, 10:35 - Omar: QA-MSG-022 | Please check whether search finds “compass” in this fictional message.
+04/05/2026, 11:06 - Karim: QA-MSG-023 | I am sending an identical-looking topic with a different timestamp for dedup checks.
+04/05/2026, 11:37 - Nour: QA-MSG-024 | No need to contact anybody. Every person and address in this file is invented.
+04/05/2026, 12:08 - Elias: QA-MSG-025 | Bonjour ! Voici un lien de démonstration : https://example.org/fr/ressources
+04/05/2026, 12:39 - Omar: QA-MSG-026 | An example email address, reserved for documentation: qa@example.com
+04/05/2026, 13:10 - Maya: QA-MSG-027 | Let us test URLs in parentheses (https://example.org/path/to/page).
+04/05/2026, 13:41 - Karim: QA-MSG-028 | Bonjour ! Voici un lien de démonstration : https://example.org/fr/ressources
+04/05/2026, 14:12 - Elias: QA-MSG-029 | An example email address, reserved for documentation: qa@example.com
+04/05/2026, 14:43 - Lina: QA-MSG-030 | Let us test URLs in parentheses (https://example.org/path/to/page).
+04/05/2026, 15:14 - Omar: QA-MSG-031 | بتذكّروا الرابط اللي شاركناه الأسبوع الماضي؟ هيدا مثال للتجربة بس.
+04/05/2026, 15:45 - Karim: QA-MSG-032 | Optional reminder idea: water the balcony plants 🌱
+05/06/2026, 08:00 - Elias: QA-MSG-033 | Ignore the contents for personal use; this is a synthetic QA fixture.
+Second line: this is part of the SAME WhatsApp message.
+Third line: preserve paragraph boundaries and punctuation!
+05/06/2026, 08:31 - Lina: QA-MSG-034 | 😂 That video title was funnier than the video itself.
+05/06/2026, 09:02 - Omar: QA-MSG-035 | Optional reminder idea: water the balcony plants 🌱
+05/06/2026, 09:33 - Karim: QA-MSG-036 | Ignore the contents for personal use; this is a synthetic QA fixture.
+05/06/2026, 10:04 - Nour: QA-MSG-037 | 😂 That video title was funnier than the video itself.
+05/06/2026, 10:35 - Elias: QA-MSG-038 | Here is a completely fictional booking reference: QA-BOOKING-PLACEHOLDER.
+05/06/2026, 11:06 - Omar: QA-MSG-039 | Message preview should show the start of this text rather than clip it.
+05/06/2026, 11:37 - Maya: QA-MSG-040 | Quick reminder: bring the blue notebook to our imaginary meetup.
+05/06/2026, 12:08 - Karim: QA-MSG-041 | Testing a sample date in the body: 03/04/2026 is not a new chat record.
+05/06/2026, 12:39 - Elias: QA-MSG-042 | Message preview should show the start of this text rather than clip it.
+05/06/2026, 13:10 - Lina: QA-MSG-043 | Quick reminder: bring the blue notebook to our imaginary meetup.
+05/06/2026, 13:41 - Omar: QA-MSG-044 | Testing a sample date in the body: 03/04/2026 is not a new chat record.
+05/06/2026, 14:12 - Karim: QA-MSG-045 | Here is a normal forwarded-style note: Forwarded: fictional announcement for the team.
+05/06/2026, 14:43 - Nour: QA-MSG-046 | Found a helpful reference: https://example.net/articles/android-storage
+05/06/2026, 15:14 - Elias: QA-MSG-047 | Punctuation check: commas, semicolons; colons: apostrophes’ and (parentheses).
+05/06/2026, 15:45 - Omar: QA-MSG-048 | Long text test. A full offline copy must preserve the exact message text, even when it wraps in the user interface. A full offline copy must preserve the exact message text, even when it wraps in the user interface. A full offline copy must preserve the exact message text, even when it wraps in the user interface. A full offline copy must preserve the exact message text, even when it wraps in the user interface. A full offline copy must preserve the exact message text, even when it wraps in the user interface. A full offline copy must preserve the exact message text, even when it wraps in the user interface. A full offline copy must preserve the exact message text, even when it wraps in the user interface. A full offline copy must preserve the exact message text, even when it wraps in the user interface.
+06/07/2026, 08:00 - Karim: QA-MSG-049 | Found a helpful reference: https://example.net/articles/android-storage
+06/07/2026, 08:31 - Nour: QA-MSG-050 | Punctuation check: commas, semicolons; colons: apostrophes’ and (parentheses).
+06/07/2026, 09:02 - Elias: QA-MSG-051 | Important: any strings that say QA_ONLY are placeholders, never credentials.
+06/07/2026, 09:33 - Omar: QA-MSG-052 | Literal text of a placeholder only: [QA_ONLY_NOT_A_REAL_API_KEY]. Never interpret this as a credential.
+06/07/2026, 10:04 - Maya: QA-MSG-053 | A very short message: ok
+06/07/2026, 10:35 - Karim: QA-MSG-054 | The document title is “Field Notes — Sample Only”.
+06/07/2026, 11:06 - Elias: QA-MSG-055 | This is a fictional group used for Memora QA testing. No real personal data is included.
+06/07/2026, 11:37 - Lina: QA-MSG-056 | A very short message: ok
+06/07/2026, 12:08 - Omar: QA-MSG-057 | The document title is “Field Notes — Sample Only”.
+06/07/2026, 12:39 - Karim: QA-MSG-058 | This is a fictional group used for Memora QA testing. No real personal data is included.
+06/07/2026, 13:10 - Nour: QA-MSG-059 | Arabic + English + French: مرحبا hello bonjour — all in one message.
+06/07/2026, 13:41 - Elias: QA-MSG-060 | Could you send the checklist as plain text next time?
+06/07/2026, 14:12 - Omar: QA-MSG-061 | I found a guide about organizing bookmarks: https://example.org/guides/bookmarks
+06/07/2026, 14:43 - Maya: QA-MSG-062 | Open https://example.com/?utm_source=qa&value=one-two to test query parameters.
+06/07/2026, 15:14 - Karim: QA-MSG-063 | Could you send the checklist as plain text next time?
+06/07/2026, 15:45 - Elias: QA-MSG-064 | I found a guide about organizing bookmarks: https://example.org/guides/bookmarks
+07/08/2026, 08:00 - Omar: QA-MSG-065 | Open https://example.com/?utm_source=qa&value=one-two to test query parameters.
+07/08/2026, 08:31 - Maya: QA-MSG-066 | Planning a fictional trip on an imaginary budget. No location details are real.
+07/08/2026, 09:02 - Karim: QA-MSG-067 | Here is a safe example link for the UI test: https://example.com/recipes/soup
+07/08/2026, 09:33 - Elias: QA-MSG-068 | Sample structured content follows:
+Title: Safe QA Item
+URL: https://example.com/structured
+Tag: #synthetic
+07/08/2026, 10:04 - Lina: QA-MSG-069 | A message with slashes / backslashes \ and underscores_ plus hyphens -.
+07/08/2026, 10:35 - Omar: QA-MSG-070 | Here is a safe example link for the UI test: https://example.com/recipes/soup
+07/08/2026, 11:06 - Karim: QA-MSG-071 | Just a regular message without any attachment or link.
+07/08/2026, 11:37 - Nour: QA-MSG-072 | A message with slashes / backslashes \ and underscores_ plus hyphens -.
+07/08/2026, 12:08 - Elias: QA-MSG-073 | Color contrast note: links must stay readable in light and dark modes.
+07/08/2026, 12:39 - Omar: QA-MSG-074 | Could we group all the interesting articles by topic?
+07/08/2026, 13:10 - Maya: QA-MSG-075 | The next link is a reserved demonstration URL: https://example.com/test-item
+07/08/2026, 13:41 - Karim: QA-MSG-076 | If you see this item twice after one import, that may be an actual duplicate.
+07/08/2026, 14:12 - Elias: QA-MSG-077 | Could we group all the interesting articles by topic?
+07/08/2026, 14:43 - Lina: QA-MSG-078 | The next link is a reserved demonstration URL: https://example.com/test-item
+07/08/2026, 15:14 - Omar: QA-MSG-079 | If you see this item twice after one import, that may be an actual duplicate.
+07/08/2026, 15:45 - Karim: QA-MSG-080 | I tagged this one #reading and #wishlist just to test hashtags.
+08/09/2026, 08:00 - Elias: QA-MSG-081 | Emoji sequence check: 🚀✨📚🎨🧪
+08/09/2026, 08:31 - Lina: QA-MSG-082 | Question: can we edit the item title after importing the message?
+08/09/2026, 09:02 - Omar: QA-MSG-083 | The café review is fake, but the import test should be real ☕
+08/09/2026, 09:33 - Karim: QA-MSG-084 | Emoji sequence check: 🚀✨📚🎨🧪
+08/09/2026, 10:04 - Nour: QA-MSG-085 | Question: can we edit the item title after importing the message?
+08/09/2026, 10:35 - Elias: QA-MSG-086 | The café review is fake, but the import test should be real ☕
+Second line: this is part of the SAME WhatsApp message.
+Third line: preserve paragraph boundaries and punctuation!
+08/09/2026, 11:06 - Omar: QA-MSG-087 | Search should also find words with accents: bibliothèque, résumé, façade.
+08/09/2026, 11:37 - Maya: QA-MSG-088 | The offline-first behavior should keep this saved even without a network.
+08/09/2026, 12:08 - Karim: QA-MSG-089 | Please check whether search finds “compass” in this fictional message.
+08/09/2026, 12:39 - Elias: QA-MSG-090 | I am sending an identical-looking topic with a different timestamp for dedup checks.
+08/09/2026, 13:10 - Lina: QA-MSG-091 | The offline-first behavior should keep this saved even without a network.
+08/09/2026, 13:41 - Omar: QA-MSG-092 | Please check whether search finds “compass” in this fictional message.
+08/09/2026, 14:12 - Karim: QA-MSG-093 | I am sending an identical-looking topic with a different timestamp for dedup checks.
+08/09/2026, 14:43 - Nour: QA-MSG-094 | No need to contact anybody. Every person and address in this file is invented.
+08/09/2026, 15:14 - Elias: QA-MSG-095 | Bonjour ! Voici un lien de démonstration : https://example.org/fr/ressources
+08/09/2026, 15:45 - Omar: QA-MSG-096 | An example email address, reserved for documentation: qa@example.com
+13/10/2026, 08:00 - Karim: QA-MSG-097 | Let us test URLs in parentheses (https://example.org/path/to/page).
+13/10/2026, 08:31 - Nour: QA-MSG-098 | Bonjour ! Voici un lien de démonstration : https://example.org/fr/ressources
+13/10/2026, 09:02 - Elias: QA-MSG-099 | An example email address, reserved for documentation: qa@example.com
+13/10/2026, 09:33 - Omar: QA-MSG-100 | Let us test URLs in parentheses (https://example.org/path/to/page).
+13/10/2026, 10:04 - Maya: QA-MSG-101 | بتذكّروا الرابط اللي شاركناه الأسبوع الماضي؟ هيدا مثال للتجربة بس.
+13/10/2026, 10:35 - Karim: QA-MSG-102 | Two display links: https://example.org/alpha and https://example.com/beta?x=2&y=3
+13/10/2026, 11:06 - Elias: QA-MSG-103 | Ignore the contents for personal use; this is a synthetic QA fixture.
+13/10/2026, 11:37 - Lina: QA-MSG-104 | 😂 That video title was funnier than the video itself.
+13/10/2026, 12:08 - Omar: QA-MSG-105 | Optional reminder idea: water the balcony plants 🌱
+13/10/2026, 12:39 - Karim: QA-MSG-106 | Ignore the contents for personal use; this is a synthetic QA fixture.
+13/10/2026, 13:10 - Nour: QA-MSG-107 | 😂 That video title was funnier than the video itself.
+13/10/2026, 13:41 - Elias: QA-MSG-108 | Here is a completely fictional booking reference: QA-BOOKING-PLACEHOLDER.
+13/10/2026, 14:12 - Omar: QA-MSG-109 | Message preview should show the start of this text rather than clip it.
+13/10/2026, 14:43 - Maya: QA-MSG-110 | Quick reminder: bring the blue notebook to our imaginary meetup.
+13/10/2026, 15:14 - Karim: QA-MSG-111 | Testing a sample date in the body: 03/04/2026 is not a new chat record.
+13/10/2026, 15:45 - Elias: QA-MSG-112 | Message preview should show the start of this text rather than clip it.
+14/10/2026, 08:00 - Omar: QA-MSG-113 | Quick reminder: bring the blue notebook to our imaginary meetup.
+14/10/2026, 08:31 - Maya: QA-MSG-114 | Testing a sample date in the body: 03/04/2026 is not a new chat record.
+14/10/2026, 09:02 - Karim: QA-MSG-115 | Here is a normal forwarded-style note: Forwarded: fictional announcement for the team.
+14/10/2026, 09:33 - Elias: QA-MSG-116 | Found a helpful reference: https://example.net/articles/android-storage
+14/10/2026, 10:04 - Lina: QA-MSG-117 | Long text test. A full offline copy must preserve the exact message text, even when it wraps in the user interface. A full offline copy must preserve the exact message text, even when it wraps in the user interface. A full offline copy must preserve the exact message text, even when it wraps in the user interface. A full offline copy must preserve the exact message text, even when it wraps in the user interface. A full offline copy must preserve the exact message text, even when it wraps in the user interface. A full offline copy must preserve the exact message text, even when it wraps in the user interface. A full offline copy must preserve the exact message text, even when it wraps in the user interface. A full offline copy must preserve the exact message text, even when it wraps in the user interface.
+14/10/2026, 10:35 - Omar: QA-MSG-118 | Important: any strings that say QA_ONLY are placeholders, never credentials.
+14/10/2026, 11:06 - Karim: QA-MSG-119 | Found a helpful reference: https://example.net/articles/android-storage
+14/10/2026, 11:37 - Nour: QA-MSG-120 | Punctuation check: commas, semicolons; colons: apostrophes’ and (parentheses).
+14/10/2026, 12:08 - Elias: QA-MSG-121 | Important: any strings that say QA_ONLY are placeholders, never credentials.
+14/10/2026, 12:39 - Omar: QA-MSG-122 | Did anyone save the notes from our pretend workshop?
+14/10/2026, 13:10 - Maya: QA-MSG-123 | A very short message: ok
+14/10/2026, 13:41 - Karim: QA-MSG-124 | The document title is “Field Notes — Sample Only”.
+14/10/2026, 14:12 - Elias: QA-MSG-125 | This is a fictional group used for Memora QA testing. No real personal data is included.
+14/10/2026, 14:43 - Lina: QA-MSG-126 | A very short message: ok
+14/10/2026, 15:14 - Omar: QA-MSG-127 | The document title is “Field Notes — Sample Only”.
+14/10/2026, 15:45 - Karim: QA-MSG-128 | This is a fictional group used for Memora QA testing. No real personal data is included.
+15/10/2026, 08:00 - Elias: QA-MSG-129 | Arabic + English + French: مرحبا hello bonjour — all in one message.
+15/10/2026, 08:31 - Lina: QA-MSG-130 | Could you send the checklist as plain text next time?
+15/10/2026, 09:02 - Omar: QA-MSG-131 | I found a guide about organizing bookmarks: https://example.org/guides/bookmarks
+15/10/2026, 09:33 - Karim: QA-MSG-132 | Sample structured content follows:
+Title: Safe QA Item
+URL: https://example.com/structured
+Tag: #synthetic
+15/10/2026, 10:04 - Nour: QA-MSG-133 | Could you send the checklist as plain text next time?
+15/10/2026, 10:35 - Elias: QA-MSG-134 | I found a guide about organizing bookmarks: https://example.org/guides/bookmarks
+15/10/2026, 11:06 - Omar: QA-MSG-135 | Open https://example.com/?utm_source=qa&value=one-two to test query parameters.
+15/10/2026, 11:37 - Maya: QA-MSG-136 | Planning a fictional trip on an imaginary budget. No location details are real.
+15/10/2026, 12:08 - Karim: QA-MSG-137 | Here is a safe example link for the UI test: https://example.com/recipes/soup
+15/10/2026, 12:39 - Elias: QA-MSG-138 | Just a regular message without any attachment or link.
+15/10/2026, 13:10 - Lina: QA-MSG-139 | A message with slashes / backslashes \ and underscores_ plus hyphens -.
+15/10/2026, 13:41 - Omar: QA-MSG-140 | Here is a safe example link for the UI test: https://example.com/recipes/soup
+15/10/2026, 14:12 - Karim: QA-MSG-141 | Just a regular message without any attachment or link.
+Second line: this is part of the SAME WhatsApp message.
+Third line: preserve paragraph boundaries and punctuation!
+15/10/2026, 14:43 - Nour: QA-MSG-142 | A message with slashes / backslashes \ and underscores_ plus hyphens -.
+15/10/2026, 15:14 - Elias: QA-MSG-143 | Color contrast note: links must stay readable in light and dark modes.
+15/10/2026, 15:45 - Omar: QA-MSG-144 | Could we group all the interesting articles by topic?
+16/10/2026, 08:00 - Karim: QA-MSG-145 | The next link is a reserved demonstration URL: https://example.com/test-item
+16/10/2026, 08:31 - Nour: QA-MSG-146 | If you see this item twice after one import, that may be an actual duplicate.
+16/10/2026, 09:02 - Elias: QA-MSG-147 | Could we group all the interesting articles by topic?
+16/10/2026, 09:33 - Omar: QA-MSG-148 | The next link is a reserved demonstration URL: https://example.com/test-item
+16/10/2026, 10:04 - Maya: QA-MSG-149 | If you see this item twice after one import, that may be an actual duplicate.
+16/10/2026, 10:35 - Karim: QA-MSG-150 | I tagged this one #reading and #wishlist just to test hashtags.
+16/10/2026, 11:06 - Elias: QA-MSG-151 | Emoji sequence check: 🚀✨📚🎨🧪
+16/10/2026, 11:37 - Lina: QA-MSG-152 | Question: can we edit the item title after importing the message?
+16/10/2026, 12:08 - Omar: QA-MSG-153 | The café review is fake, but the import test should be real ☕
+16/10/2026, 12:39 - Karim: QA-MSG-154 | Emoji sequence check: 🚀✨📚🎨🧪
+16/10/2026, 13:10 - Nour: QA-MSG-155 | Question: can we edit the item title after importing the message?
+16/10/2026, 13:41 - Elias: QA-MSG-156 | The café review is fake, but the import test should be real ☕
+16/10/2026, 14:12 - Omar: QA-MSG-157 | Search should also find words with accents: bibliothèque, résumé, façade.
+16/10/2026, 14:43 - Maya: QA-MSG-158 | The offline-first behavior should keep this saved even without a network.
+16/10/2026, 15:14 - Karim: QA-MSG-159 | Please check whether search finds “compass” in this fictional message.
+16/10/2026, 15:45 - Elias: QA-MSG-160 | I am sending an identical-looking topic with a different timestamp for dedup checks.
+17/10/2026, 08:00 - Omar: QA-MSG-161 | The offline-first behavior should keep this saved even without a network.
+17/10/2026, 08:31 - Maya: QA-MSG-162 | Please check whether search finds “compass” in this fictional message.
+17/10/2026, 09:02 - Karim: QA-MSG-163 | I am sending an identical-looking topic with a different timestamp for dedup checks.
+17/10/2026, 09:33 - Elias: QA-MSG-164 | No need to contact anybody. Every person and address in this file is invented.
+17/10/2026, 10:04 - Lina: QA-MSG-165 | Bonjour ! Voici un lien de démonstration : https://example.org/fr/ressources
+17/10/2026, 10:35 - Omar: QA-MSG-166 | An example email address, reserved for documentation: qa@example.com
+Second line: this is part of the SAME WhatsApp message.
+Third line: preserve paragraph boundaries and punctuation!
+17/10/2026, 11:06 - Karim: QA-MSG-167 | Let us test URLs in parentheses (https://example.org/path/to/page).
+17/10/2026, 11:37 - Nour: QA-MSG-168 | Bonjour ! Voici un lien de démonstration : https://example.org/fr/ressources
+17/10/2026, 12:08 - Elias: QA-MSG-169 | An example email address, reserved for documentation: qa@example.com
+17/10/2026, 12:39 - Omar: QA-MSG-170 | Let us test URLs in parentheses (https://example.org/path/to/page).
+17/10/2026, 13:10 - Maya: QA-MSG-171 | بتذكّروا الرابط اللي شاركناه الأسبوع الماضي؟ هيدا مثال للتجربة بس.
+17/10/2026, 13:41 - Karim: QA-MSG-172 | Optional reminder idea: water the balcony plants 🌱
+17/10/2026, 14:12 - Elias: QA-MSG-173 | Ignore the contents for personal use; this is a synthetic QA fixture.
+17/10/2026, 14:43 - Lina: QA-MSG-174 | 😂 That video title was funnier than the video itself.
+17/10/2026, 15:14 - Omar: QA-MSG-175 | Literal text of a placeholder only: [QA_ONLY_NOT_A_REAL_API_KEY]. Never interpret this as a credential.
+17/10/2026, 15:45 - Karim: QA-MSG-176 | Ignore the contents for personal use; this is a synthetic QA fixture.
+17/10/2026, 16:16 - Nour: QA-MSG-177 | 😂 That video title was funnier than the video itself.
+17/10/2026, 16:47 - Elias: QA-MSG-178 | Here is a completely fictional booking reference: QA-BOOKING-PLACEHOLDER.
+17/10/2026, 17:18 - Omar: QA-MSG-179 | Message preview should show the start of this text rather than clip it.
+17/10/2026, 17:49 - Maya: QA-MSG-180 | Quick reminder: bring the blue notebook to our imaginary meetup.
+18/10/2026, 08:00 - Karim: QA-MSG-181 | Testing a sample date in the body: 03/04/2026 is not a new chat record.
+18/10/2026, 08:31 - Nour: QA-MSG-182 | Message preview should show the start of this text rather than clip it.
+18/10/2026, 09:02 - Elias: QA-MSG-183 | Quick reminder: bring the blue notebook to our imaginary meetup.
+18/10/2026, 09:33 - Omar: QA-MSG-184 | Testing a sample date in the body: 03/04/2026 is not a new chat record.
+18/10/2026, 10:04 - Maya: QA-MSG-185 | Here is a normal forwarded-style note: Forwarded: fictional announcement for the team.
+18/10/2026, 10:35 - Karim: QA-MSG-186 | Found a helpful reference: https://example.net/articles/android-storage
+18/10/2026, 11:06 - Elias: QA-MSG-187 | Punctuation check: commas, semicolons; colons: apostrophes’ and (parentheses).
+18/10/2026, 11:37 - Lina: QA-MSG-188 | Long text test. A full offline copy must preserve the exact message text, even when it wraps in the user interface. A full offline copy must preserve the exact message text, even when it wraps in the user interface. A full offline copy must preserve the exact message text, even when it wraps in the user interface. A full offline copy must preserve the exact message text, even when it wraps in the user interface. A full offline copy must preserve the exact message text, even when it wraps in the user interface. A full offline copy must preserve the exact message text, even when it wraps in the user interface. A full offline copy must preserve the exact message text, even when it wraps in the user interface. A full offline copy must preserve the exact message text, even when it wraps in the user interface.
+18/10/2026, 12:08 - Omar: QA-MSG-189 | Found a helpful reference: https://example.net/articles/android-storage
+18/10/2026, 12:39 - Karim: QA-MSG-190 | Punctuation check: commas, semicolons; colons: apostrophes’ and (parentheses).
+18/10/2026, 13:10 - Nour: QA-MSG-191 | Important: any strings that say QA_ONLY are placeholders, never credentials.
+18/10/2026, 13:41 - Elias: QA-MSG-192 | Did anyone save the notes from our pretend workshop?
+18/10/2026, 14:12 - Omar: QA-MSG-193 | A very short message: ok
+18/10/2026, 14:43 - Maya: QA-MSG-194 | The document title is “Field Notes — Sample Only”.
+18/10/2026, 15:14 - Karim: QA-MSG-195 | This is a fictional group used for Memora QA testing. No real personal data is included.
+18/10/2026, 15:45 - Elias: QA-MSG-196 | A very short message: ok
+18/10/2026, 16:16 - Lina: QA-MSG-197 | The document title is “Field Notes — Sample Only”.
+Second line: this is part of the SAME WhatsApp message.
+Third line: preserve paragraph boundaries and punctuation!
+18/10/2026, 16:47 - Omar: QA-MSG-198 | Two display links: https://example.org/alpha and https://example.com/beta?x=2&y=3
+18/10/2026, 17:18 - Karim: QA-MSG-199 | Arabic + English + French: مرحبا hello bonjour — all in one message.
+18/10/2026, 17:49 - Nour: QA-MSG-200 | Could you send the checklist as plain text next time?
