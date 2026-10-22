@@ -23,4 +23,5 @@ rootProject.name = "Personal Library"
 include(":core")
 if (providers.gradleProperty("coreOnly").orNull != "true") {
     include(":app")
+    include(":qa-harness")
 }
