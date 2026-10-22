@@ -135,6 +135,7 @@ class OfficialLockTest {
             enterCredential(pin)
             awaitAuthenticated()
             verifyLibrary("native-credential-success")
+            captureSyntheticRecentsForVisualReview()
 
             ui.shell("input keyevent KEYCODE_HOME")
             privateAwait("Home must background Memora") { foreground() != PRODUCT }
@@ -150,10 +151,14 @@ class OfficialLockTest {
             verifyLibrary("cold-restart-unlocked")
             File(evidenceDir, "coverage.txt").writeText(
                 "Native credential cancel, one rejection, successful PIN, settled locked accessibility, Home/resume and cold restart verified.\n" +
-                    "Biometric enrollment/sensor, notification redaction, recents masking and first-frame visual privacy are untested.\n"
+                    "Synthetic Recents screenshot captured for visual review; no masking pass implied.\n" +
+                    "Biometric enrollment/sensor, notification redaction and first-frame visual privacy are untested.\n"
             )
         } catch (error: Throwable) {
             primaryFailure = error
+            if (!credentialUiActive && foreground() == PRODUCT && nativePinPad() == null && credentialField() == null) {
+                runCatching { ui.checkpoint("FAILED-product-before-credential-cleanup") }
+            }
             throw error
         } finally {
             if (setupAttempted) {
@@ -162,6 +167,31 @@ class OfficialLockTest {
                 }
             }
         }
+    }
+
+    private fun captureSyntheticRecentsForVisualReview() {
+        check(guarded && !credentialUiActive && libraryVisible()) { "Recents capture requires authenticated synthetic product, never a credential prompt" }
+        ui.edit(SEARCH, marker)
+        ui.await("Only the known synthetic marker may precede Overview capture") { libraryCount() == 1 && ui.exact(marker) != null }
+        ui.shell("input keyevent KEYCODE_APP_SWITCH")
+        val launchers = setOf("com.android.launcher3", "com.google.android.apps.nexuslauncher", "com.android.systemui")
+        privateAwait("Native Overview must be foreground before synthetic snapshot review") { foreground() in launchers }
+        SystemClock.sleep(700)
+        check(!credentialUiActive && foreground() in launchers && nativePinPad() == null && credentialField() == null) {
+            "Unexpected foreground or credential surface; refusing Recents capture"
+        }
+        val overviewPackage = foreground()
+        val bitmap = checkNotNull(instrumentation.uiAutomation.takeScreenshot())
+        try {
+            File(evidenceDir, "T37-native-recents-await-visual-review.png").outputStream().use {
+                check(bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it))
+            }
+        } finally { bitmap.recycle() }
+        File(evidenceDir, "T37-native-recents-capture-provenance.txt").writeText(
+            "Known synthetic PDF marker visible before native Overview; capture only after credential UI closed.\n" +
+                "Native foreground=$overviewPackage. Root must verify Overview/task thumbnail actually appeared.\n" +
+                "OS task thumbnail requires rendered visual review. No Recents privacy PASS is implied.\n"
+        )
     }
 
     private fun cleanupSyntheticCredential(pin: String) {

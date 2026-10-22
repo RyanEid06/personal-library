@@ -694,7 +694,7 @@ fun SettingsScreen(
                         Column {
                             Text("Biometric App Lock", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                             Text(
-                                text = if (isLockEnabled) "App locks on background and requires authentication" else "No lock enabled",
+                                text = if (isLockEnabled) "Locks in background; hides screenshots and app previews" else "No lock enabled",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.outline
                             )

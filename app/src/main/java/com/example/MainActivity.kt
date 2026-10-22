@@ -2,9 +2,12 @@ package com.example
 
 import android.Manifest
 import android.content.Intent
+import android.content.Context
+import android.content.SharedPreferences
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
@@ -52,10 +55,16 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
 
     private val viewModel: MainViewModel by viewModels()
     private var notificationTargetItemId by mutableStateOf<String?>(null)
+    private val appLockPreferences by lazy { getSharedPreferences("app_lock_prefs", Context.MODE_PRIVATE) }
+    private val appLockPreferenceListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+        if (key == null || key == "lock_enabled") applyAppLockTaskPrivacy()
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         com.example.ui.theme.ThemePreferences.applyActivityTheme(this)
         super.onCreate(savedInstanceState)
+        applyAppLockTaskPrivacy()
+        appLockPreferences.registerOnSharedPreferenceChangeListener(appLockPreferenceListener)
         enableEdgeToEdge()
         notificationTargetItemId = intent?.getStringExtra(ReminderReceiver.EXTRA_ITEM_ID)
 
@@ -136,6 +145,23 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
     }
 
 
+
+    private fun applyAppLockTaskPrivacy() {
+        // Protect authenticated sessions too: a task snapshot can precede onStop's lock UI.
+        val enabled = appLockPreferences.getBoolean("lock_enabled", false)
+        // Some launchers still show a live Overview preview with only the Recents policy.
+        if (enabled) {
+            window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        } else {
+            window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        }
+        if (Build.VERSION.SDK_INT >= 33) setRecentsScreenshotEnabled(!enabled)
+    }
+
+    override fun onDestroy() {
+        appLockPreferences.unregisterOnSharedPreferenceChangeListener(appLockPreferenceListener)
+        super.onDestroy()
+    }
 
     override fun onStop() {
         super.onStop()

@@ -108,13 +108,17 @@ class OfficialEnvironmentTest {
             ui.checkpoint("T44-$mode-$state")
             captures += "$mode\t$state"
         }
+        fun clickLibraryControl(labels: List<String>) {
+            ui.await("Library control must appear after menu dismissal: $labels") { labels.any { ui.exact(it) != null } }
+            ui.click(labels.first { ui.exact(it) != null })
+        }
         fun count(): Int? = ui.nodes().filter { it.isVisibleToUser }.firstNotNullOfOrNull {
             Regex("^(\\d+) items • (Saved|Source) Date$").matchEntire(it.text?.toString().orEmpty())?.groupValues?.get(1)?.toInt()
         }
         fun cancel(title: String) {
-            ui.waitText(title)
+            ui.scrollTo("Cancel", 24) // Some dialog actions follow the synthetic collection list.
             ui.click("Cancel")
-            ui.await("Visual-only dialog must close: $title") { ui.exact(title) == null }
+            ui.await("Visual-only dialog must close: $title") { ui.exact(title) == null && ui.exact("Cancel") == null }
         }
         fun collectionMenu(action: String) {
             library()
@@ -193,15 +197,15 @@ class OfficialEnvironmentTest {
                     ui.await("Library empty-search state must settle") { count() == 0 && ui.exact("Searching your library…") == null }
                     capture(mode, "library-empty-search")
                     library()
-                    ui.click(listOf("Newest Saved", "Oldest Saved", "Newest Source Date", "Oldest Source Date", "Title (A-Z)").first { ui.exact(it) != null })
+                    clickLibraryControl(listOf("Newest Saved", "Oldest Saved", "Newest Source Date", "Oldest Source Date", "Title (A-Z)"))
                     ui.waitText("Title (A-Z)")
                     capture(mode, "library-sort-menu")
                     ui.back()
-                    ui.click(listOf("Group", "Day", "Month", "Year").first { ui.exact(it) != null })
+                    clickLibraryControl(listOf("Group", "Day", "Month", "Year"))
                     ui.waitText("Date Grouping")
                     capture(mode, "library-grouping-menu")
                     ui.back()
-                    ui.click(listOf("All Time", "This Month", "This Year", "Custom Range").first { ui.exact(it) != null })
+                    clickLibraryControl(listOf("All Time", "This Month", "This Year", "Custom Range"))
                     ui.waitText("Date Basis")
                     capture(mode, "library-date-filter-and-basis")
                     ui.click("Custom Range")
@@ -244,6 +248,8 @@ class OfficialEnvironmentTest {
                     capture(mode, "note-edit-dialog-no-changes")
                     ui.click("Cancel")
                     ui.await("Read-only note edit form must close") { ui.exact("Title") == null && ui.exact("Body") == null }
+                    // Editing intentionally closes the detail sheet; Cancel returns to Library.
+                    searchAndOpen(title, body)
                     ui.scrollTo("Remind Me")
                     ui.click("Remind Me")
                     ui.waitText("Reminder type")
@@ -267,6 +273,8 @@ class OfficialEnvironmentTest {
                     ui.click("Import Files")
                     ui.waitText("Choose Files from Device")
                     capture(mode, "add-file-tab")
+                    ui.scrollTo("Cancel", 24)
+                    capture(mode, "add-file-tab-scrolled-actions")
                     cancel("Add to Library")
 
                     library()
@@ -374,7 +382,7 @@ class OfficialEnvironmentTest {
         val rootBounds = Rect().also(root::getBoundsInScreen)
         if (rootBounds.width() <= 0) return null
         // Observe real item cards, not the toggle's identical description or private preferences.
-        val cards = ui.nodes().filter { it.isVisibleToUser && it.isLongClickable }
+        val cards = ui.nodes().filter { it.isVisibleToUser && it.isLongClickable && !it.isEditable }
         if (cards.isEmpty()) return null
         val layouts = cards.map { card ->
             val ratio = Rect().also(card::getBoundsInScreen).width().toFloat() / rootBounds.width()
