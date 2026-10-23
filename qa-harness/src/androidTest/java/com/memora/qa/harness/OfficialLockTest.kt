@@ -53,15 +53,26 @@ class OfficialLockTest {
 
     @Before fun requireCredentialFreeOfficialSyntheticEmulator() {
         val arguments = InstrumentationRegistry.getArguments()
+        val candidate = arguments.getString("candidateApkSha256")
         check(arguments.getString("class") == "${javaClass.name}#$METHOD" &&
             arguments.getString("allowSyntheticCredentialSetup") == "true") { "Explicit single-method synthetic credential setup required" }
         check(arguments.getString("rollbackSnapshot").orEmpty().matches(Regex("memora-official-before-auth-[0-9-]+"))) {
             "Host must first save and independently verify a unique pre-auth rollback snapshot"
         }
         marker = arguments.getString("expectedLibraryMarker") ?: "QA-BK-3626615.pdf"
-        check(marker.matches(Regex("QA-BK-[0-9]+\\.pdf"))) { "Known synthetic PDF marker required" }
-        expectedCount = arguments.getString("expectedLibraryCount")?.toIntOrNull() ?: 278
-        check(expectedCount in 211..500) { "Known bounded synthetic library count required" }
+        val requestedCount = arguments.getString("expectedLibraryCount")?.toIntOrNull()
+        expectedCount = if (candidate == null) requestedCount ?: 278 else checkNotNull(requestedCount) {
+            "Candidate requires an explicit integer synthetic library count"
+        }
+        if (candidate == null) {
+            check(marker.matches(Regex("QA-BK-[0-9]+\\.pdf"))) { "Known synthetic PDF marker required" }
+            check(expectedCount in 211..500) { "Known bounded synthetic library count required" }
+        } else {
+            check(arguments.containsKey("expectedLibraryMarker") && arguments.containsKey("expectedLibraryCount") &&
+                marker.matches(Regex("QA-FP-[0-9]+-document\\.pdf")) && expectedCount in 3..500) {
+                "Candidate requires the prior guarded T17 synthetic PDF and an explicit bounded count"
+            }
+        }
         evidenceDir = File(context.filesDir, "qa-evidence/$METHOD-${SystemClock.elapsedRealtime()}").apply { mkdirs() }
         ui = ReleaseUi(instrumentation.uiAutomation, evidenceDir)
         check(ui.shell("getprop ro.kernel.qemu").trim() == "1") { "Only the disposable emulator is allowed" }
@@ -69,10 +80,14 @@ class OfficialLockTest {
             .map { ui.shell("getprop $it").trim() }.filter { it.isNotEmpty() }
         check(avds.isNotEmpty() && avds.all { it == "Memora-QA-API37" }) { "Wrong or unidentified AVD" }
         val info = context.packageManager.getPackageInfo(PRODUCT, PackageManager.GET_SIGNING_CERTIFICATES)
-        check(info.versionName == "1.0.1" && info.longVersionCode == 3L) { "Expected official 1.0.1/code3" }
+        if (candidate == null) check(info.versionName == "1.0.1" && info.longVersionCode == 3L) { "Expected official 1.0.1/code3" }
         fun hex(bytes: ByteArray) = bytes.joinToString("") { "%02x".format(it) }
-        check(hex(MessageDigest.getInstance("SHA-256").digest(checkNotNull(info.signingInfo).apkContentsSigners.single().toByteArray())) == CERTIFICATE) {
-            "Expected permanent release signer"
+        if (candidate == null) {
+            check(hex(MessageDigest.getInstance("SHA-256").digest(checkNotNull(info.signingInfo).apkContentsSigners.single().toByteArray())) == CERTIFICATE) {
+                "Expected permanent release signer"
+            }
+        } else {
+            requireOfficialOrPinnedCandidate(context, "Native credential")
         }
         val application = checkNotNull(info.applicationInfo)
         check(application.splitSourceDirs.isNullOrEmpty()) { "Expected published universal APK" }
@@ -85,7 +100,7 @@ class OfficialLockTest {
                 digest.update(buffer, 0, count)
             }
         }
-        check(hex(digest.digest()) == APK_SHA256) { "Expected exact published 1.0.1 APK" }
+        check(hex(digest.digest()) == (candidate?.lowercase() ?: APK_SHA256)) { "Expected exact published or explicitly pinned candidate APK" }
         check(!keyguard.isDeviceSecure) { "Refusing an AVD with an existing device credential" }
         instrumentation.uiAutomation.serviceInfo = instrumentation.uiAutomation.serviceInfo.apply {
             flags = flags or AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS or AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS
@@ -135,11 +150,26 @@ class OfficialLockTest {
             enterCredential(pin)
             awaitAuthenticated()
             verifyLibrary("native-credential-success")
+            val beforeOverview = mainActivityIdentity()
             captureSyntheticRecentsForVisualReview()
 
+            // Resume the existing task: APP_SWITCH can toggle to another recent
+            // task, and CLEAR_TASK would replace the lifecycle being checked.
+            resumeProduct()
+            privateAwait("Overview must return to Memora before its lock is checked") { foreground() == PRODUCT }
+            check(mainActivityIdentity() == beforeOverview) { "Overview return must resume the same MainActivity and task" }
+            File(evidenceDir, "existing-task-resumed.txt").writeText("MainActivity/task identity unchanged across Overview return.\n")
+            assertLocked("recents-return")
+            authenticate(pin)
+            verifyLibrary("recents-return-unlocked")
             ui.shell("input keyevent KEYCODE_HOME")
-            privateAwait("Home must background Memora") { foreground() != PRODUCT }
-            launchProduct()
+            privateAwait("Actual launcher Home must settle before relaunch") {
+                foreground() in setOf("com.android.launcher3", "com.google.android.apps.nexuslauncher") &&
+                    ui.exact("Home") != null && ui.exact("Screenshot") == null && ui.exact("Select") == null
+            }
+            resumeProduct()
+            privateAwait("Home return must resume Memora") { foreground() == PRODUCT }
+            check(mainActivityIdentity() == beforeOverview) { "Home return must resume the same MainActivity and task" }
             assertLocked("home-resume")
             authenticate(pin)
             verifyLibrary("home-resume-unlocked")
@@ -156,6 +186,12 @@ class OfficialLockTest {
             )
         } catch (error: Throwable) {
             primaryFailure = error
+            val packageAtFailure = foreground()
+            val safePackage = if (packageAtFailure in (NATIVE_AUTH + setOf(PRODUCT,
+                    "com.android.launcher3", "com.google.android.apps.nexuslauncher"))) packageAtFailure else "other"
+            File(evidenceDir, "failure-surface-without-input.txt").writeText(
+                "foreground=$safePackage; credentialUiActive=$credentialUiActive; libraryVisible=${libraryVisible()}; lockedVisible=${lockedVisible()}\n"
+            )
             if (!credentialUiActive && foreground() == PRODUCT && nativePinPad() == null && credentialField() == null) {
                 runCatching { ui.checkpoint("FAILED-product-before-credential-cleanup") }
             }
@@ -291,7 +327,7 @@ class OfficialLockTest {
     }
 
     private fun assertLocked(label: String) {
-        ui.await("Memora must show its settled lock screen") { lockedVisible() }
+        privateAwait("Memora must show its settled lock screen") { lockedVisible() }
         check(ui.nodes().none { it.isVisibleToUser && (it.text?.toString() in setOf("Library", "Settings", marker, SEARCH) || it.hintText?.toString() == SEARCH) }) {
             "Library content or navigation is accessible while locked"
         }
@@ -333,6 +369,12 @@ class OfficialLockTest {
     }
     private fun launchProduct() = context.startActivity(Intent.makeMainActivity(ComponentName(PRODUCT, "com.example.MainActivity"))
         .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK))
+    private fun resumeProduct() = context.startActivity(Intent.makeMainActivity(ComponentName(PRODUCT, "com.example.MainActivity"))
+        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+    private fun mainActivityIdentity(): String = Regex(
+        "ActivityRecord\\{([0-9a-f]+) u\\d+ com\\.personallibrary\\.app/com\\.example\\.MainActivity t(\\d+)\\b"
+    ).findAll(ui.shell("dumpsys activity activities")).map { "${it.groupValues[1]}:${it.groupValues[2]}" }
+        .distinct().toList().single()
     private fun foreground() = instrumentation.uiAutomation.rootInActiveWindow?.packageName?.toString()
     private fun libraryVisible() = foreground() == PRODUCT && ui.exact("Library") != null && ui.exact("Memora is Locked") == null
     private fun lockedVisible() = foreground() == PRODUCT && ui.exact("Memora is Locked") != null && ui.exact("Unlock Library") != null

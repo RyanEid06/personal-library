@@ -147,7 +147,7 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
 
 
     private fun applyAppLockTaskPrivacy() {
-        // Protect authenticated sessions too: a task snapshot can precede onStop's lock UI.
+        // Protect authenticated sessions too: a task snapshot can precede the lock UI.
         val enabled = appLockPreferences.getBoolean("lock_enabled", false)
         // Some launchers still show a live Overview preview with only the Recents policy.
         if (enabled) {
@@ -163,9 +163,18 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
         super.onDestroy()
     }
 
-    override fun onStop() {
-        super.onStop()
+    override fun onPause() {
+        super.onPause()
+        // Some transitions skip the top-resumed callback.
         if (!isChangingConfigurations) {
+            viewModel.appLockManager.lock()
+        }
+    }
+
+    override fun onTopResumedActivityChanged(isTopResumedActivity: Boolean) {
+        super.onTopResumedActivityChanged(isTopResumedActivity)
+        // Overview can remove the top position while keeping this activity resumed.
+        if (!isTopResumedActivity && !isChangingConfigurations) {
             viewModel.appLockManager.lock()
         }
     }

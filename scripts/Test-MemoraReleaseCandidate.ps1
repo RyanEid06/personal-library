@@ -21,22 +21,34 @@ function New-CiDetails {
     }
 }
 try {
-    Check 'candidate permits only preserved untracked QA files' {
-        Assert-MemoraReleaseCheckout -QaCandidate -Branch 'codex/v1.0.1-hardening' -HeadSha $sha -VerifiedSourceSha $sha -Status @('?? docs/qa/','?? docs/qa/a.md','?? docs/qa/nested/evidence.md')
-        foreach ($status in @(' M app/build.gradle.kts','A  docs/qa/tracked.md',' M docs/qa/tracked.md','?? docs/qa-other/a.md','?? docs/qa/../other.md','?? other.md','?? "docs/qa/quoted.md"','?? docs/qa')) {
-            Reject { Assert-MemoraReleaseCheckout -QaCandidate -Branch 'codex/v1.0.1-hardening' -HeadSha $sha -VerifiedSourceSha $sha -Status @($status) }
-        }
-    }
-    Check 'candidate rejects wrong branch and changed source' {
-        foreach ($branch in @('main','codex/another','')) {
+    Check 'candidate accepts only the exact final QA branch' {
+        Assert-MemoraReleaseCheckout -QaCandidate -Branch 'codex/v1.0.1-final-qa' -HeadSha $sha -VerifiedSourceSha $sha -Status @()
+        foreach ($branch in @('main','codex/v1.0.1-hardening','codex/another','codex/v1.0.1-final-qa-extra','Codex/v1.0.1-final-qa','')) {
             Reject { Assert-MemoraReleaseCheckout -QaCandidate -Branch $branch -HeadSha $sha -VerifiedSourceSha $sha -Status @() }
         }
-        Reject { Assert-MemoraReleaseCheckout -QaCandidate -Branch 'codex/v1.0.1-hardening' -HeadSha ('b' * 40) -VerifiedSourceSha $sha -Status @() }
+    }
+    Check 'candidate permits only preserved untracked QA files' {
+        Assert-MemoraReleaseCheckout -QaCandidate -Branch 'codex/v1.0.1-final-qa' -HeadSha $sha -VerifiedSourceSha $sha -Status @('?? docs/qa/','?? docs/qa/a.md','?? docs/qa/nested/evidence.md')
+        foreach ($status in @(' M app/build.gradle.kts','A  docs/qa/tracked.md',' M docs/qa/tracked.md','?? docs/qa-other/a.md','?? docs/qa/../other.md','?? other.md','?? "docs/qa/quoted.md"','?? docs/qa')) {
+            Reject { Assert-MemoraReleaseCheckout -QaCandidate -Branch 'codex/v1.0.1-final-qa' -HeadSha $sha -VerifiedSourceSha $sha -Status @($status) }
+        }
+    }
+    Check 'candidate permits only exact root untracked classes.jar' {
+        Assert-MemoraReleaseCheckout -QaCandidate -Branch 'codex/v1.0.1-final-qa' -HeadSha $sha -VerifiedSourceSha $sha -Status @('?? classes.jar','?? docs/qa/nested/evidence.md')
+        foreach ($status in @(' M classes.jar','M  classes.jar','A  classes.jar','AM classes.jar','?? Classes.jar','?? classes.jar/','?? classes.jar.extra','?? nested/classes.jar','?? "classes.jar"','?? ./classes.jar','?? classes.jar/../other.md')) {
+            Reject { Assert-MemoraReleaseCheckout -QaCandidate -Branch 'codex/v1.0.1-final-qa' -HeadSha $sha -VerifiedSourceSha $sha -Status @($status) }
+        }
+        Reject { Assert-MemoraReleaseCheckout -QaCandidate -Branch 'codex/v1.0.1-final-qa' -HeadSha $sha -VerifiedSourceSha $sha -Status @('?? classes.jar',' M app/build.gradle.kts') }
+    }
+    Check 'candidate rejects changed source' {
+        Reject { Assert-MemoraReleaseCheckout -QaCandidate -Branch 'codex/v1.0.1-final-qa' -HeadSha ('b' * 40) -VerifiedSourceSha $sha -Status @() }
     }
     Check 'official checkout still requires clean main' {
         Assert-MemoraReleaseCheckout -Branch main -HeadSha $sha -VerifiedSourceSha $sha -Status @()
-        Reject { Assert-MemoraReleaseCheckout -Branch main -HeadSha $sha -VerifiedSourceSha $sha -Status @('?? docs/qa/a.md') }
-        Reject { Assert-MemoraReleaseCheckout -Branch 'codex/v1.0.1-hardening' -HeadSha $sha -VerifiedSourceSha $sha -Status @() }
+        foreach ($status in @('?? docs/qa/a.md','?? classes.jar',' M app/build.gradle.kts')) {
+            Reject { Assert-MemoraReleaseCheckout -Branch main -HeadSha $sha -VerifiedSourceSha $sha -Status @($status) }
+        }
+        Reject { Assert-MemoraReleaseCheckout -Branch 'codex/v1.0.1-final-qa' -HeadSha $sha -VerifiedSourceSha $sha -Status @() }
     }
     Check 'CI guard requires exact SHA and five terminal-success jobs' {
         Assert-MemoraReleaseCi -Details (New-CiDetails) -VerifiedSourceSha $sha
@@ -69,18 +81,18 @@ try {
     $officialReports = Join-Path $directory 'repo/artifacts/release-v1'
     New-Item -ItemType Directory -Path (Split-Path $officialLedger -Parent),$officialReports -Force | Out-Null
     $identity=Get-MemoraSigningIdentity
-    $previous=@{ schemaVersion=1; sourceSha=('b' * 40); versionCode=2; versionName='1.0.0'; applicationId='com.personallibrary.app'; certificateSha256=$identity.CertificateSha256; apkSha256=('B' * 64); apkBytes=1 }
+    $previous=@{ schemaVersion=1; sourceSha=('b' * 40); versionCode=3; versionName='1.0.1'; applicationId='com.personallibrary.app'; certificateSha256=$identity.CertificateSha256; apkSha256=('B' * 64); apkBytes=1 }
     $previous | ConvertTo-Json | Set-Content -LiteralPath $officialLedger
     'official report sentinel' | Set-Content (Join-Path $officialReports 'official-release.json')
     'official size sentinel' | Set-Content (Join-Path $officialReports 'official-size-analysis.json')
     $officialSnapshot=@{}
     foreach ($path in @($officialLedger,(Join-Path $officialReports 'official-release.json'),(Join-Path $officialReports 'official-size-analysis.json'))) { $officialSnapshot[$path]=(Get-FileHash $path).Hash }
     $repo=Join-Path $directory 'repo'
-    $plan=Get-MemoraReleaseDestination -QaCandidate -RepositoryPath $repo -OfficialLedgerPath $officialLedger -VersionName '1.0.1' -OutputDirectory (Join-Path $directory 'Desktop')
+    $plan=Get-MemoraReleaseDestination -QaCandidate -RepositoryPath $repo -OfficialLedgerPath $officialLedger -VersionName '1.0.2' -OutputDirectory (Join-Path $directory 'Desktop')
     Check 'candidate paths and names are isolated while official destinations stay stable' {
-        Require ($plan.Directory -eq (Join-Path $repo 'artifacts/release-v1.0.1-candidate'))
+        Require ($plan.Directory -eq (Join-Path $repo 'artifacts/release-v1.0.2-candidate'))
         Require ($plan.LedgerPath -ne $officialLedger -and (Split-Path $plan.ReportPath -Parent) -ne $officialReports)
-        Require ($plan.Arm64Name -eq 'Memora-v1.0.1-arm64-candidate.apk' -and $plan.UniversalName -eq 'Memora-v1.0.1-universal-candidate.apk')
+        Require ($plan.Arm64Name -eq 'Memora-v1.0.2-arm64-candidate.apk' -and $plan.UniversalName -eq 'Memora-v1.0.2-universal-candidate.apk')
         $official=Get-MemoraReleaseDestination -RepositoryPath $repo -OfficialLedgerPath $officialLedger -VersionName '1.0.1' -OutputDirectory (Join-Path $directory 'Desktop')
         Require ($official.LedgerPath -eq $officialLedger -and $official.ReportPath -eq (Join-Path $officialReports 'official-release.json'))
         Require ($official.Arm64Name -eq 'Memora-v1.0.1-arm64-official.apk' -and $official.UniversalName -eq 'Memora-v1.0.1-universal.apk')
@@ -89,7 +101,9 @@ try {
     Check 'candidate still enforces official rollback and reuse guard' {
         Reject { Assert-MemoraReleaseVersionAvailable -LedgerPath $officialLedger -VersionCode 2 -SourceSha $sha }
         Reject { Assert-MemoraReleaseVersionAvailable -LedgerPath $officialLedger -VersionCode 1 -SourceSha $sha }
-        Assert-MemoraReleaseVersionAvailable -LedgerPath $officialLedger -VersionCode 3 -SourceSha $sha
+        Reject { Assert-MemoraReleaseVersionAvailable -LedgerPath $officialLedger -VersionCode 3 -SourceSha $sha }
+        Assert-MemoraReleaseVersionAvailable -LedgerPath $officialLedger -VersionCode 3 -SourceSha $previous.sourceSha
+        Assert-MemoraReleaseVersionAvailable -LedgerPath $officialLedger -VersionCode 4 -SourceSha $sha
     }
     Check 'actual candidate publication leaves every official ledger/report byte unchanged' {
         New-Item -ItemType Directory -Path $plan.Directory -Force | Out-Null
@@ -98,7 +112,7 @@ try {
             $apk=Join-Path $directory "$variant.apk"
             "synthetic $variant artifact; no signing" | Set-Content -LiteralPath $apk
             $name=if ($variant -eq 'arm64') { $plan.Arm64Name } else { $plan.UniversalName }
-            $record=$previous.Clone(); $record.sourceSha=$sha; $record.versionCode=3; $record.versionName='1.0.1'; $record.abiVariant=$variant; $record.releaseChannel='qa-candidate'
+            $record=$previous.Clone(); $record.sourceSha=$sha; $record.versionCode=4; $record.versionName='1.0.2'; $record.abiVariant=$variant; $record.releaseChannel='qa-candidate'
             $record.apkSha256=(Get-FileHash $apk).Hash; $record.apkBytes=(Get-Item $apk).Length
             $pair+=@{ ApkPath=$apk; OutputPath=(Join-Path $plan.Directory $name); Record=$record }
         }
@@ -107,8 +121,10 @@ try {
         foreach ($artifact in $pair) { Require ((Get-FileHash $artifact.OutputPath).Hash -eq $artifact.Record.apkSha256) }
         $report=Get-Content $plan.ReportPath -Raw | ConvertFrom-Json
         Require ($report.releaseChannel -eq 'qa-candidate' -and $report.artifacts.Count -eq 2)
-        Assert-MemoraReleaseVersionAvailable -LedgerPath $plan.LedgerPath -VersionCode 3 -SourceSha $sha
-        Reject { Assert-MemoraReleaseVersionAvailable -LedgerPath $plan.LedgerPath -VersionCode 3 -SourceSha ('c' * 40) }
+        Assert-MemoraReleaseVersionAvailable -LedgerPath $plan.LedgerPath -VersionCode 4 -SourceSha $sha
+        Reject { Assert-MemoraReleaseVersionAvailable -LedgerPath $plan.LedgerPath -VersionCode 4 -SourceSha ('c' * 40) }
+        Reject { Assert-MemoraReleaseVersionAvailable -LedgerPath $plan.LedgerPath -VersionCode 3 -SourceSha $sha }
+        Assert-MemoraReleaseVersionAvailable -LedgerPath $plan.LedgerPath -VersionCode 5 -SourceSha ('c' * 40)
         foreach ($path in $officialSnapshot.Keys) { Require ((Get-FileHash $path).Hash -eq $officialSnapshot[$path]) }
     }
     if ($failures.Count) { throw "$($failures.Count) candidate release regressions failed." }

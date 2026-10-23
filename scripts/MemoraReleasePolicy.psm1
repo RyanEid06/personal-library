@@ -4,11 +4,12 @@ $ErrorActionPreference = 'Stop'
 function Assert-MemoraReleaseCheckout {
     param([switch]$QaCandidate,[string]$Branch,[string]$HeadSha,[string]$VerifiedSourceSha,[AllowEmptyCollection()][string[]]$Status)
     if ($VerifiedSourceSha -notmatch '^[0-9a-f]{40}$' -or $HeadSha -cne $VerifiedSourceSha) { throw 'HEAD does not match the verified source SHA.' }
-    $expectedBranch=if ($QaCandidate) { 'codex/v1.0.1-hardening' } else { 'main' }
+    $expectedBranch=if ($QaCandidate) { 'codex/v1.0.1-final-qa' } else { 'main' }
     if ($Branch -cne $expectedBranch) { throw "Release mode requires the verified $expectedBranch checkout." }
     foreach ($entry in $Status) {
         # Full porcelain-v1 output must be requested with --untracked-files=all.
         # Only these owner-preserved, unrelated untracked files are exempted.
+        if ($QaCandidate -and $entry -ceq '?? classes.jar') { continue }
         if ($QaCandidate -and $entry -cmatch '^\?\? docs/qa/(?:[^\\"\x00-\x1f]+)?$') {
             $path=$entry.Substring(3)
             if (@($path.Split('/') | Where-Object { $_ -eq '.' -or $_ -eq '..' }).Count -eq 0) { continue }

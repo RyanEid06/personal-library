@@ -1,5 +1,14 @@
 # Memora V1.0.1 QA findings — in progress
 
+<!-- c23-checkpoint -->
+## QA-011 — P1: App Lock does not relock after Overview loses top-resumed status
+
+Confirmed on the fixed debug candidate, separately from the historical official APK failures. After actual native PIN cancel/rejection/success, enter actual Overview and resume the same MainActivity/task. The existing task/instance assertion passed, but Library remained accessible with App Lock enabled; expected a locked screen requiring authentication. Native FAIL41.069s, `c23-candidate-native-auth-evidence.tar`, SHA1d4c1d496779e732b1d647e967af8f8a4efddfcb6d214cf30835efcbd5b67af. Sanitized foreground/accessibility evidence reviewed independently; no credential input was captured.
+
+Cause: this Overview transition retains the activity RESUMED while losing top-resumed status. First onPause-only fix passed10focusedtests but real native recheck failed42.566s (SHA d26fac2546eb583474a59d50c05a0882abd14dfd8f4be4fbd03c7503f425f1f5; archive c23-candidate-native-auth-v102-evidence.tar, SHAbab905935a4fa94955df8721b889acc968538ee6fd9dcc70932ca9d7956095e7). Sanitized native lifecycle events positively show top-resumed loss/gain with no pause/stop on the same MainActivity instance. Final fix locks on guarded top-resumed loss (minSdk29), retaining onPause fallback and configuration-change handling, disabled-lock behavior and native authentication success. Focused API29/34 top-resumed regression observed RED then14/14PASS; native same-task Overview return, Home/coldrestart and real credential cancel/reject/success now PASS61.114s. Eleven confirmed bugs have local fixes; no first-frame, notification-redaction or physical sensor acceptance is inferred. Full artifact provenance and historical results are in CASE_RESULTS.md and the candidate matrix columns.
+
+<!-- /c23-checkpoint -->
+
 Latest official universal SHA256 `B53D05B83E45DFB667EFFAB1D1117AAC9025701723E4F13B843D044D1FE2143D`, version1.0.1/code3. Local fixes are not in that APK. Final severity/count/verdict await the complete audit.
 
 ## QA-001 — P1: supplied WhatsApp GIF silently excluded from attachment matching

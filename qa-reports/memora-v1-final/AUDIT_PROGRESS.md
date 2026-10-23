@@ -1,5 +1,12 @@
 # Memora original 48-case audit progress
 
+<!-- c23-checkpoint -->
+## Current checkpoint —23October2026
+
+Official ledger stays30PASS/11FAIL/7incomplete. Eight historical failed cases have focused candidate PASS: T10–15,T17,T45. T08/T37/T48 retain partial broader acceptance. Eleven product bugs now have local fixes, including newly reproduced/fixed QA011 same-task Overview relocking. Candidate1.0.2/code4 preparation and owner handoff continue; exact-source CI/signing remain separate gates. CASE_RESULTS.md and candidate columns hold current results; old operation paragraphs below are historical. Both candidate emulator lanes have independently verified original-baseline rollback. No48/48 or public-launch claim.
+
+<!-- /c23-checkpoint -->
+
 **IN PROGRESS - 30/48 original cases PASS.** T01-07,T09,T16,T18-27,T31,T33-34,T38-43,T46-47 pass with recorded evidence. Official FAIL: T08 (QA001),T10-15(QA006),T17/T48(QA007),T45(QA009),T37(QA010). Current30PASS/11FAIL/7incomplete;10 confirmed bugs, all ten with verified focused local fixes; QA010 checkpoint committed f4789b3. The first T41 comparator failure was a documented derived-field oracle issue; the corrected full reconstruction now passes. Method totals remain separate.
 
 ## Current checkpoint

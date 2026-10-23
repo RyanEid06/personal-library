@@ -101,11 +101,11 @@ class ReleaseUi(private val automation: UiAutomation, private val evidence: File
         if (label == "Search notes, photos, links...") {
             // Library search is a scrollable header on short displays; reveal it without changing its query.
             for (attempt in 0 until 24) {
-                if (nodes().any { it.isEditable && it.isVisibleToUser &&
-                    (it.hintText?.toString() == label || it.text?.toString() == label) }) break
+                if (librarySearchVisible(label)) break
                 if (!scroll(forward = false)) break
                 SystemClock.sleep(150)
             }
+            revealLibrarySearchWithLiveTouch(label)
         }
         await("Editable field missing: $label") {
             val labelled = nodes().firstOrNull { it.text?.toString() == label || it.hintText?.toString() == label || it.contentDescription?.toString() == label }
@@ -122,6 +122,57 @@ class ReleaseUi(private val automation: UiAutomation, private val evidence: File
             }) == true
         }
         await("Field value was not accepted") { nodes().any { it.isEditable && it.text?.toString() == value } }
+    }
+
+    private fun revealLibrarySearchWithLiveTouch(label: String) {
+        fun visibleSearch() = librarySearchVisible(label)
+        if (visibleSearch()) return
+        // Rotation can leave the lazy grid between its headers and cards. Use a
+        // normal gesture only inside the live Library content, never a dialog.
+        repeat(12) { attempt ->
+            if (visibleSearch()) {
+                checkpoint("library-search-recovered-after-$attempt-live-scrolls")
+                return
+            }
+            val root = automation.rootInActiveWindow ?: return
+            if (root.packageName?.toString() != "com.personallibrary.app" ||
+                nodes().any { it.contentDescription?.toString() == "Drag handle" }) return
+            val screen = Rect().also(root::getBoundsInScreen)
+            fun bar(labelled: AccessibilityNodeInfo?): Rect? {
+                var ancestor = labelled
+                repeat(8) {
+                    val current = ancestor ?: return null
+                    val bounds = Rect().also(current::getBoundsInScreen)
+                    if (bounds.width() >= screen.width() * 0.8 && bounds.height() in 1..(screen.height() / 2)) return bounds
+                    ancestor = current.parent
+                }
+                return null
+            }
+            val toolbar = bar(exact("Settings")) ?: return
+            val navigation = bar(exact("Library")) ?: return
+            val height = navigation.top - toolbar.bottom
+            if (height < 48) return
+            evidence.mkdirs()
+            File(evidence, "library-search-scroll-nodes-$attempt.txt").writeText(nodes().filter { it.isVisibleToUser && it.isScrollable }.joinToString("\n") {
+                "class=${it.className} id=${it.viewIdResourceName} bounds=${Rect().also(it::getBoundsInScreen)} actions=${it.actionList.map { action -> action.id }}"
+            })
+            val x = screen.left + screen.width() / 3
+            shell("input touchscreen swipe $x ${toolbar.bottom + height / 4} $x ${toolbar.bottom + height * 3 / 4} 350")
+            SystemClock.sleep(200)
+        }
+        if (visibleSearch()) checkpoint("library-search-recovered-after-12-live-scrolls")
+    }
+
+    private fun librarySearchVisible(label: String): Boolean {
+        val visible = nodes().filter { it.isVisibleToUser }
+        val fields = visible.filter { it.isEditable }
+        if (fields.any { it.hintText?.toString() == label || it.text?.toString() == label }) return true
+        // Compose can omit the hint once a query is nonempty. The existing edit
+        // fallback already uses the unique editor; don't scroll a visible one away.
+        return automation.rootInActiveWindow?.packageName?.toString() == "com.personallibrary.app" &&
+            fields.size == 1 && visible.any { it.contentDescription?.toString() == "Settings" } &&
+            visible.any { it.text?.toString() == "Library" } &&
+            visible.none { it.contentDescription?.toString() == "Drag handle" }
     }
 
     private fun editableWithin(node: AccessibilityNodeInfo, depth: Int = 0): AccessibilityNodeInfo? {

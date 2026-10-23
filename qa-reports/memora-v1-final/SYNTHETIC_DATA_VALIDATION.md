@@ -1,5 +1,12 @@
 # Synthetic QA fixture validation
 
+<!-- c23-checkpoint -->
+## Current synthetic lane —23October2026
+
+Only the preserved Memora-QA-API37 emulator was used, explicitly pinned to the installed APK SHA. The approved8-message `_chat.txt` SHA remains DE058D71E85E98C5D34064BA8CEE0A11947EBD85A5F601899C2BD5D35676EAC5; original JPEG/PNG/GIF bytes unchanged. Two prior T08 attempts positively observed8newmessages+export/all8rows and JPG original bytes/MIME/grants. Final candidate T08 failed102.72s after observed toast without accepted closure; PNG/GIF/export/missing-file/restart are not accepted. Preimport snapshot resets avoided duplicate imports; all attempts and exact artifact pins remain recorded. Synthetic runtime-only PIN never enters runner arguments, logs or credential screenshots and is removed by finally cleanup. Both candidate journals now independently confirm exact official APK/278records/Paired/PauseON/AppLockOFF/nativecredential-free restoration. Earlier SystemUI ANR and test-oracle failures are retained, not product failures or accepted imports. Full archives/hashes and current source identity are in CASE_RESULTS.md.
+
+<!-- /c23-checkpoint -->
+
 Validation executed by `scripts/memora_qa.py fixtures` using only the explicitly approved Downloads ZIP. Original files remain unchanged; safe extraction is under ignored `artifacts/qa-v101/fixtures/`.
 
 | Input | SHA256 | Result |

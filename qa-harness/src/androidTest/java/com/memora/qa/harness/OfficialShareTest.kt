@@ -312,14 +312,22 @@ class OfficialShareTest {
     }
 
     private fun library() {
-        repeat(5) {
-            if (ui.exact("Edit Item") != null || ui.exact("Save from WhatsApp / Share") != null) {
-                ui.back()
-                ui.await("Item/share dialog must close") { ui.exact("Edit Item") == null && ui.exact("Save from WhatsApp / Share") == null }
-            } else if (ui.exact("Library") == null) {
+        if (instrumentation.uiAutomation.rootInActiveWindow?.packageName?.toString() != PRODUCT) launchProduct()
+        // The long membership list can scroll the sheet title out of view. Wait
+        // for its actual handle to disappear before another Back can leave the app.
+        repeat(2) {
+            if (ui.nodes().any { it.contentDescription?.toString() == "Drag handle" }) {
                 ui.back(); SystemClock.sleep(200)
             }
         }
+        ui.await("Owned item sheet must close before Library navigation") {
+            ui.nodes().none { it.contentDescription?.toString() == "Drag handle" }
+        }
+        if (ui.exact("Edit Item") != null || ui.exact("Save from WhatsApp / Share") != null) {
+            ui.back()
+            ui.await("Item/share dialog must close") { ui.exact("Edit Item") == null && ui.exact("Save from WhatsApp / Share") == null }
+        }
+        ui.waitText("Library")
         ui.click("Library")
         ui.edit(SEARCH, "")
         if (ui.exact("Clear Filters") != null) ui.click("Clear Filters")
