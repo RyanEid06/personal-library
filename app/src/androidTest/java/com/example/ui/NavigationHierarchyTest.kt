@@ -132,22 +132,22 @@ class NavigationHierarchyTest {
             compose.runOnUiThread { vm.setLibraryLayout(layout); vm.selectKind(ItemKind.TEXT) }
             compose.waitUntil(10_000) { vm.resultsReady.value && vm.localSearchResults.value.singleOrNull()?.item?.id == id }
             val container = if (layout == LibraryLayout.LIST) "library_list" else "library_grid"
-            compose.onNodeWithTag(container).performScrollToNode(hasText(title))
+            scrollLibraryTo(container, hasText(title))
             compose.onNodeWithText(title).assertIsDisplayed().performClick()
             compose.onNodeWithTag("edit_item_button").assertIsDisplayed()
             Espresso.pressBack()
-            scrollLibraryTo(container, "active_type_chip")
+            scrollLibraryTo(container, hasTestTag("active_type_chip"))
             compose.onNodeWithTag("active_type_chip").assertIsDisplayed().performClick()
             compose.runOnIdle { org.junit.Assert.assertNull(vm.selectedKind.value) }
             compose.runOnUiThread { vm.selectKind(ItemKind.TEXT) }
-            scrollLibraryTo(container, "clear_filters_button")
+            scrollLibraryTo(container, hasTestTag("clear_filters_button"))
             compose.onNodeWithTag("clear_filters_button").assertIsDisplayed().performClick()
             compose.runOnIdle { org.junit.Assert.assertNull(vm.selectedKind.value) }
-            compose.onNodeWithTag(container).performScrollToNode(hasTestTag("type_filter_strip"))
+            scrollLibraryTo(container, hasTestTag("filter_chip_all"))
             compose.onNodeWithTag("filter_chip_all").assertIsDisplayed().assertHasClickAction()
-            compose.onNodeWithTag(container).performScrollToNode(hasTestTag("sort_order_button"))
+            scrollLibraryTo(container, hasTestTag("sort_order_button"))
             compose.onNodeWithTag("sort_order_button").assertIsDisplayed().assertHasClickAction()
-            compose.onNodeWithTag(container).performScrollToNode(hasTestTag("library_search_input"))
+            scrollLibraryTo(container, hasTestTag("library_search_input"))
             compose.onNodeWithTag("library_search_input").assertIsDisplayed()
         }
     }
@@ -190,16 +190,17 @@ class NavigationHierarchyTest {
         }
     }
 
-    private fun scrollLibraryTo(container: String, tag: String) {
+    private fun scrollLibraryTo(container: String, target: SemanticsMatcher) {
         val host = compose.onNodeWithTag(container)
-        host.performScrollToNode(hasTestTag(tag))
-        // Lazy ScrollToIndex aligns the whole header; its nested chip row can still be below this tiny viewport.
-        val childBounds = compose.onNodeWithTag(tag).getUnclippedBoundsInRoot()
-        val hostBounds = host.getUnclippedBoundsInRoot()
-        val delta = (childBounds.top + childBounds.bottom - hostBounds.top - hostBounds.bottom) / 2
-        host.performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.ScrollBy) {
-            it(0f, delta.value * compose.activity.resources.displayMetrics.density)
+        // Touch reaches nested headers without the test action's off-thread descendant traversal.
+        for (towardTop in listOf(false, true)) {
+            repeat(12) {
+                compose.waitForIdle()
+                if (compose.onNode(target).isDisplayed()) return
+                host.performTouchInput { if (towardTop) swipeDown() else swipeUp() }
+            }
         }
+        compose.onNode(target).assertIsDisplayed()
     }
 
     private fun openTrash() {

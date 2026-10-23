@@ -1,5 +1,14 @@
 # Memora original 48-case QA — 23 October 2026
 
+## CI continuation — 23 October 2026
+
+Source7189c27 run39927169008 passed core/android/server/signing-workflow, but emulator failed twice in the same260dp/font150 list/grid test. First failure: Compose1.7 performScrollToNode descendant semantics traversal hit SnapshotStateObserver thread-affinity exception at line135. One bounded diagnostic rerun preserved unchanged source; its failure instead reached the nested-filter visibility assertion at line147. No third unchanged-source rerun. Exact logs and downloaded69-test report (1failure/1explicitopt-in skip) retained in `artifacts/qa-v101/ci-39927169008-*`.
+
+Targeted test-only correction: existing short-viewport scroll helper now uses bounded real vertical touch swipes in both directions, waits for Compose idle, and checks the actual target. It avoids recursive off-thread semantics traversal and the former single header-centering assumption. All list/grid,260dp/font1.5,result opening,filter clearing,click and focus/control visibility assertions remain; no exception swallowing, retrying failed assertions or new skips. Read-only Luna review found no blocker. Production code/version/signing unchanged. Local Android test APK assembly and app lint PASS1m55s (`artifacts/qa-v102-c23-ci-scroll-harness-build.log`); runtime acceptance is PENDING the new exact-source CI. Original emulator baseline stays restored; no new local emulator lane.
+
+Commit/push this narrow test correction plus these checkpoints, update current source/run in linked delivery record, and wait for allfive required exact-source CI jobs. Private signing remains blocked until success. Heartbeat now resolves currentSHA/run from the linked record, so superseded7189c27 cannot be signed accidentally.
+
+
 ## Objective and authority
 Continue original T01–T48, fix/recheck confirmed bugs, record only observed evidence. Owner authorizes separate QA-branch push, exact-source five-job CI, permanent-signed private1.0.2/code4 pair, then owner physical/manual acceptance before public launch. Inaccessible checks may remain explicitly incomplete for private delivery. No main merge/tag/public release/deploy. Stay quiet except owner questions, major events or after push. Preserve owner untracked `classes.jar` and `docs/qa/` unstaged; ignored evidence stays local.
 
