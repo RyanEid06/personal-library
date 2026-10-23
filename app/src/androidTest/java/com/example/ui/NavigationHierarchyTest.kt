@@ -9,6 +9,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
@@ -193,15 +194,15 @@ class NavigationHierarchyTest {
     private fun scrollLibraryTo(container: String, target: SemanticsMatcher) {
         val host = compose.onNodeWithTag(container)
         val trace = StringBuilder()
-        // A 12dp viewport needs a drag beyond its edge to cross touch slop and move content.
+        // Scan half a viewport on the UI thread: tiny hosts defeat touch slop and skip targets on flings.
         for (towardTop in listOf(false, true)) {
-            repeat(12) {
+            repeat(160) {
                 compose.waitForIdle()
                 if (compose.onNode(target).isDisplayed()) return
                 trace.appendLine("towardTop=$towardTop step=$it host=${host.getUnclippedBoundsInRoot()}")
-                host.performTouchInput {
-                    val distance = maxOf(96.dp.toPx(), height * 0.8f)
-                    swipe(center, center.copy(y = center.y + if (towardTop) distance else -distance))
+                val distance = maxOf(1f, host.fetchSemanticsNode().boundsInRoot.height / 2)
+                host.performSemanticsAction(SemanticsActions.ScrollBy) { scroll ->
+                    scroll(0f, if (towardTop) -distance else distance)
                 }
             }
         }
