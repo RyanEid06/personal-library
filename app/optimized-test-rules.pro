@@ -52,6 +52,8 @@
   androidx.compose.foundation.layout.RowScopeInstance INSTANCE;
 }
 -keep class androidx.compose.foundation.layout.SizeKt {
+  public static androidx.compose.ui.Modifier fillMaxWidth$default(androidx.compose.ui.Modifier, float, int, java.lang.Object);
+  public static androidx.compose.ui.Modifier height-3ABfNKs(androidx.compose.ui.Modifier, float);
   public static androidx.compose.ui.Modifier width-3ABfNKs(androidx.compose.ui.Modifier, float);
 }
 -keep class androidx.compose.material.icons.Icons$Filled {
@@ -443,6 +445,7 @@
 }
 -keep class androidx.compose.ui.semantics.SemanticsActions {
   public androidx.compose.ui.semantics.SemanticsPropertyKey getCustomActions();
+  public androidx.compose.ui.semantics.SemanticsPropertyKey getExpand();
   public androidx.compose.ui.semantics.SemanticsPropertyKey getInsertTextAtCursor();
   public androidx.compose.ui.semantics.SemanticsPropertyKey getOnClick();
   public androidx.compose.ui.semantics.SemanticsPropertyKey getOnImeAction();
@@ -635,14 +638,6 @@
 -keep interface androidx.compose.ui.window.DialogWindowProvider {
   public android.view.Window getWindow();
 }
--keep class androidx.concurrent.futures.AbstractResolvableFuture {
-  public void addListener(java.lang.Runnable, java.util.concurrent.Executor);
-  public boolean cancel(boolean);
-  public java.lang.Object get();
-  public java.lang.Object get(long, java.util.concurrent.TimeUnit);
-  public boolean isCancelled();
-  public boolean isDone();
-}
 -keep class androidx.concurrent.futures.CallbackToFutureAdapter$Completer {
   public boolean set(java.lang.Object);
   public boolean setException(java.lang.Throwable);
@@ -653,11 +648,6 @@
 -keep class androidx.concurrent.futures.CallbackToFutureAdapter {
   public static com.google.common.util.concurrent.ListenableFuture getFuture(androidx.concurrent.futures.CallbackToFutureAdapter$Resolver);
 }
--keep class androidx.concurrent.futures.ResolvableFuture {
-  public static androidx.concurrent.futures.ResolvableFuture create();
-  public boolean set(java.lang.Object);
-  public boolean setException(java.lang.Throwable);
-}
 -keep class androidx.core.content.FileProvider {
   public static android.net.Uri getUriForFile(android.content.Context, java.lang.String, java.io.File);
 }
@@ -667,9 +657,18 @@
 -keep class androidx.core.os.LocaleListCompat {
   public static androidx.core.os.LocaleListCompat forLanguageTags(java.lang.String);
 }
+-keep class androidx.core.view.ViewCompat {
+  public static androidx.core.view.WindowInsetsCompat getRootWindowInsets(android.view.View);
+}
 -keep class androidx.core.view.ViewConfigurationCompat {
   public static float getScaledHorizontalScrollFactor(android.view.ViewConfiguration, android.content.Context);
   public static float getScaledVerticalScrollFactor(android.view.ViewConfiguration, android.content.Context);
+}
+-keep class androidx.core.view.WindowInsetsCompat$Type {
+  public static int ime();
+}
+-keep class androidx.core.view.WindowInsetsCompat {
+  public boolean isVisible(int);
 }
 -keep enum androidx.lifecycle.Lifecycle$Event {
   androidx.lifecycle.Lifecycle$Event ON_RESUME;
@@ -900,8 +899,12 @@
   public <init>(java.lang.String, java.util.List, java.lang.String);
   com.example.ai.SearchPlanRequest$Companion Companion;
 }
+-keep class com.example.data.AssetEntity {
+  public int getRefCount();
+}
 -keep class com.example.data.CollectionEntity {
   public <init>(java.lang.String, java.lang.String, java.lang.String, java.lang.String, long, java.lang.String, int, kotlin.jvm.internal.DefaultConstructorMarker);
+  public java.lang.String getAppRole();
   public java.lang.String getId();
   public java.lang.String getName();
   int $stable;
@@ -911,11 +914,19 @@
 }
 -keep class com.example.data.ItemEntity {
   public <init>(java.lang.String, java.lang.String, java.lang.String, java.lang.String, boolean, boolean, java.lang.Long, long, java.lang.Long, java.lang.Long, boolean, boolean, boolean, java.lang.String, java.lang.String, java.lang.String, java.lang.String, long, java.lang.String, java.lang.String, int, java.lang.String, java.lang.String, java.lang.String, int, kotlin.jvm.internal.DefaultConstructorMarker);
+  public static com.example.data.ItemEntity copy$default(com.example.data.ItemEntity, java.lang.String, java.lang.String, java.lang.String, java.lang.String, boolean, boolean, java.lang.Long, long, java.lang.Long, java.lang.Long, boolean, boolean, boolean, java.lang.String, java.lang.String, java.lang.String, java.lang.String, long, java.lang.String, java.lang.String, int, java.lang.String, java.lang.String, java.lang.String, int, java.lang.Object);
+  public java.lang.String getAiConcepts();
+  public java.lang.String getAiDescription();
   public java.lang.String getAiStatus();
   public java.lang.String getContent();
   public java.lang.String getContentHash();
+  public java.lang.String getExtractedText();
+  public long getFileSizeBytes();
   public java.lang.String getId();
+  public java.lang.String getLocalIndexCoverage();
   public int getLocalIndexVersion();
+  public java.lang.String getOriginalFileName();
+  public java.lang.Long getSourceDate();
   public java.lang.String getTitle();
   public boolean isTrash();
   int $stable;
@@ -927,9 +938,15 @@
 }
 -keep interface com.example.data.LibraryDao {
   public java.lang.Object deleteSearchDocumentsForItem(java.lang.String, kotlin.coroutines.Continuation);
+  public java.lang.Object getAllActiveItems(kotlin.coroutines.Continuation);
+  public java.lang.Object getAllAssets(kotlin.coroutines.Continuation);
+  public java.lang.Object getAllCollections(kotlin.coroutines.Continuation);
   public java.lang.Object getAllItemsIncludingTrash(kotlin.coroutines.Continuation);
+  public java.lang.Object getAssetByHash(java.lang.String, kotlin.coroutines.Continuation);
   public java.lang.Object getCollectionIdsForItem(java.lang.String, kotlin.coroutines.Continuation);
   public java.lang.Object getItemById(java.lang.String, kotlin.coroutines.Continuation);
+  public java.lang.Object getItemIdsForCollection(java.lang.String, kotlin.coroutines.Continuation);
+  public java.lang.Object getItemWithCollections(java.lang.String, kotlin.coroutines.Continuation);
   public java.lang.Object getSearchDocumentsForItem(java.lang.String, kotlin.coroutines.Continuation);
   public java.lang.Object insertCollection(com.example.data.CollectionEntity, kotlin.coroutines.Continuation);
   public java.lang.Object insertItem(com.example.data.ItemEntity, kotlin.coroutines.Continuation);
@@ -944,10 +961,22 @@
   public static java.lang.Object commitRestore$default(com.example.data.LibraryRepository, com.personallibrary.core.backup.RestorePreview, boolean, kotlin.coroutines.Continuation, int, java.lang.Object);
   public java.lang.Object deleteCollection(java.lang.String, kotlin.coroutines.Continuation);
   public static java.lang.Object deletePermanently$default(com.example.data.LibraryRepository, java.lang.String, boolean, kotlin.coroutines.Continuation, int, java.lang.Object);
+  public java.lang.Object editCollection(java.lang.String, java.lang.String, java.lang.String, java.lang.String, kotlin.coroutines.Continuation);
   public java.lang.Object exportEncryptedBackup(android.net.Uri, char[], kotlin.coroutines.Continuation);
+  public com.personallibrary.core.storage.ManagedAssetStore getAssetStore();
   public java.lang.Object getBlobFile(java.lang.String, kotlin.coroutines.Continuation);
   public com.example.data.LibraryDao getDao();
+  public java.lang.Object getOrCreateRandomLinksCollection(kotlin.coroutines.Continuation);
+  public static java.lang.Object importWhatsAppMigration$default(com.example.data.LibraryRepository, java.lang.String, com.personallibrary.core.migration.DateOrder, java.util.Map, java.io.InputStream, kotlin.coroutines.Continuation, int, java.lang.Object);
   public java.lang.Object inspectBackup(android.net.Uri, char[], kotlin.coroutines.Continuation);
+  public java.lang.Object moveToTrash(java.lang.String, kotlin.coroutines.Continuation);
+  public kotlinx.coroutines.flow.Flow observeActiveItemsWithCollections();
+  public kotlinx.coroutines.flow.Flow observeTrashItems();
+  public java.lang.Object publishAiResult(java.lang.String, int, java.lang.String, java.lang.String, java.lang.String, java.util.List, int, kotlin.coroutines.Continuation);
+  public java.lang.Object publishLocalIndex(java.lang.String, int, java.lang.String, java.lang.String, java.util.List, kotlin.coroutines.Continuation);
+  public java.lang.Object restoreFromTrash(java.lang.String, kotlin.coroutines.Continuation);
+  public java.lang.Object searchWithCollections(java.lang.String, kotlin.coroutines.Continuation);
+  public java.lang.Object updateItem(com.example.data.ItemEntity, kotlin.coroutines.Continuation);
 }
 -keep class com.example.data.LibraryRoomDatabase {
 }
@@ -955,6 +984,7 @@
   public static androidx.room.RoomDatabase$Callback getDATABASE_CALLBACK();
 }
 -keep class com.example.data.SearchDocumentEntity {
+  public <init>(java.lang.String, java.lang.String, int, java.lang.Integer, java.lang.String, java.lang.String, int, java.lang.String, java.lang.String, int, kotlin.jvm.internal.DefaultConstructorMarker);
   public java.lang.Integer getPageNumber();
   public java.lang.String getTextContent();
 }
@@ -995,6 +1025,10 @@
   public <init>(java.lang.String, java.util.List, java.lang.String, int, int, kotlin.jvm.internal.DefaultConstructorMarker);
   int $stable;
 }
+-keep enum com.example.model.SortOrder {
+  com.example.model.SortOrder SOURCE_NEWEST;
+  com.example.model.SortOrder SOURCE_OLDEST;
+}
 -keep class com.example.reminder.ReminderScheduler {
   public <init>(android.content.Context);
   public void cancel(java.lang.String);
@@ -1004,6 +1038,8 @@
   public <init>(android.content.Context);
   public boolean canAuthenticate();
   public boolean isLockEnabled();
+  public void setLockEnabled(boolean);
+  public void unlock();
 }
 -keep class com.example.ui.AiAnswerSource {
   public <init>(java.lang.String, com.example.data.ItemWithCollections, java.lang.Integer);
@@ -1013,15 +1049,26 @@
   public com.example.ai.AnswerResponse getResponse();
   int $stable;
 }
+-keep class com.example.ui.LatestLocalSearchKt {
+  public static com.example.ui.LocalSearchResult projectLocalSearch(java.util.List, com.example.ui.LocalSearchContext);
+}
+-keep class com.example.ui.LocalSearchContext {
+  public <init>(java.lang.String, java.util.List, com.personallibrary.core.model.ItemKind, java.lang.String, com.example.model.DateFilter, com.example.model.DateBasis, com.example.model.SortOrder, java.lang.Long, java.lang.Long, com.example.model.DateGrouping, int, kotlin.jvm.internal.DefaultConstructorMarker);
+}
+-keep class com.example.ui.LocalSearchResult {
+  public java.util.List getItems();
+}
 -keep class com.example.ui.MainViewModel {
   public void beginSelection();
   public java.lang.String buildMatchSnippet(com.example.data.ItemEntity, java.lang.String);
   public void clearFilters();
   public void clearSelection();
+  public com.example.security.AppLockManager getAppLockManager();
   public kotlinx.coroutines.flow.StateFlow getCustomDateEnd();
   public kotlinx.coroutines.flow.StateFlow getCustomDateStart();
   public kotlinx.coroutines.flow.StateFlow getDateFilter();
   public kotlinx.coroutines.flow.StateFlow getItems();
+  public kotlinx.coroutines.flow.StateFlow getLibraryLayout();
   public kotlinx.coroutines.flow.StateFlow getLocalSearchResults();
   public com.example.data.LibraryRepository getRepository();
   public kotlinx.coroutines.flow.StateFlow getResultsReady();
@@ -1059,6 +1106,7 @@
 }
 -keep class com.example.ui.components.DialogComponentsKt {
   public static void EncryptedBackupPassphraseDialog(java.lang.String, java.lang.String, com.personallibrary.core.backup.BackupMode, kotlin.jvm.functions.Function0, kotlin.jvm.functions.Function1, androidx.compose.runtime.Composer, int);
+  public static void ItemDetailsDialog(com.example.data.ItemWithCollections, kotlin.jvm.functions.Function1, java.util.List, kotlin.jvm.functions.Function0, kotlin.jvm.functions.Function0, kotlin.jvm.functions.Function0, kotlin.jvm.functions.Function1, kotlin.jvm.functions.Function4, boolean, kotlin.jvm.functions.Function1, kotlin.jvm.functions.Function0, kotlin.jvm.functions.Function0, androidx.compose.runtime.Composer, int, int, int);
   public static void SharePreviewDialog(com.example.model.SharePayload, java.util.List, kotlin.jvm.functions.Function0, kotlin.jvm.functions.Function1, kotlin.jvm.functions.Function1, androidx.compose.runtime.Composer, int, int);
 }
 -keep class com.example.ui.components.EditItemDialogKt {
@@ -1115,9 +1163,51 @@
 -keep class com.personallibrary.core.backup.RestorePreview {
   public com.personallibrary.core.backup.BackupManifest getManifest();
 }
+-keep enum com.personallibrary.core.migration.DateOrder {
+  com.personallibrary.core.migration.DateOrder DAY_FIRST;
+  com.personallibrary.core.migration.DateOrder MONTH_FIRST;
+}
+-keep class com.personallibrary.core.migration.ParsedMessage {
+  public java.lang.String getAttachmentFileName();
+  public java.lang.String getImportKey();
+  public java.lang.String getRawText();
+}
+-keep class com.personallibrary.core.migration.WhatsAppExportParser {
+  public static com.personallibrary.core.migration.WhatsAppParseResult parse$default(com.personallibrary.core.migration.WhatsAppExportParser, java.lang.String, com.personallibrary.core.migration.DateOrder, java.util.TimeZone, int, java.lang.Object);
+  public com.personallibrary.core.migration.WhatsAppParseResult parse(java.lang.String, com.personallibrary.core.migration.DateOrder, java.util.TimeZone);
+  com.personallibrary.core.migration.WhatsAppExportParser INSTANCE;
+}
+-keep class com.personallibrary.core.migration.WhatsAppParseResult {
+  public int getAmbiguousDateCount();
+  public int getMediaReferencesCount();
+  public java.util.List getMessages();
+  public int getSystemMessageCount();
+  public int getTotalMessages();
+  public int getUnparseableDateCount();
+}
 -keep enum com.personallibrary.core.model.ItemKind {
   public java.lang.String getDisplayName();
+  com.personallibrary.core.model.ItemKind AUDIO;
+  com.personallibrary.core.model.ItemKind PHOTO;
   com.personallibrary.core.model.ItemKind TEXT;
+  com.personallibrary.core.model.ItemKind VIDEO;
+}
+-keep class com.personallibrary.core.model.SearchQuery {
+  public java.lang.String fts(java.lang.String);
+  com.personallibrary.core.model.SearchQuery INSTANCE;
+}
+-keep class com.personallibrary.core.model.StoredAsset {
+  public java.lang.String getHash();
+  public com.personallibrary.core.model.ItemKind getKind();
+  public java.lang.String getMimeType();
+}
+-keep class com.personallibrary.core.storage.ContentClassifier {
+  public static com.personallibrary.core.model.ItemKind classify$default(com.personallibrary.core.storage.ContentClassifier, java.lang.String, java.lang.String, boolean, int, java.lang.Object);
+  com.personallibrary.core.storage.ContentClassifier INSTANCE;
+}
+-keep class com.personallibrary.core.storage.ManagedAssetStore {
+  public java.io.File getBlobFile(java.lang.String);
+  public static com.personallibrary.core.model.StoredAsset import$default(com.personallibrary.core.storage.ManagedAssetStore, java.io.InputStream, java.lang.String, java.lang.String, boolean, long, java.lang.Long, int, java.lang.Object);
 }
 -keep @interface javax.annotation.CheckReturnValue {
 }
@@ -1195,6 +1285,9 @@
 }
 -keep class kotlin.Triple {
   public <init>(java.lang.Object, java.lang.Object, java.lang.Object);
+  public java.lang.Object component1();
+  public java.lang.Object component2();
+  public java.lang.Object component3();
 }
 -keep class kotlin.TuplesKt {
   public static kotlin.Pair to(java.lang.Object, java.lang.Object);
@@ -1227,6 +1320,7 @@
   public static void fill$default(char[], char, int, int, int, java.lang.Object);
 }
 -keep class kotlin.collections.ArraysKt___ArraysKt {
+  public static java.lang.String joinToString$default(byte[], java.lang.CharSequence, java.lang.CharSequence, java.lang.CharSequence, int, java.lang.CharSequence, kotlin.jvm.functions.Function1, int, java.lang.Object);
   public static java.lang.String joinToString$default(java.lang.Object[], java.lang.CharSequence, java.lang.CharSequence, java.lang.CharSequence, int, java.lang.CharSequence, kotlin.jvm.functions.Function1, int, java.lang.Object);
   public static java.util.List toList(java.lang.Object[]);
 }
@@ -1239,6 +1333,7 @@
   public static java.util.List emptyList();
   public static java.util.List listOf(java.lang.Object[]);
   public static java.util.List listOfNotNull(java.lang.Object);
+  public static void throwCountOverflow();
   public static void throwIndexOverflow();
 }
 -keep,allowaccessmodification class kotlin.collections.CollectionsKt__IterablesKt {
@@ -1249,16 +1344,23 @@
 }
 -keep class kotlin.collections.CollectionsKt___CollectionsKt {
   public static kotlin.sequences.Sequence asSequence(java.lang.Iterable);
+  public static boolean contains(java.lang.Iterable, java.lang.Object);
   public static int count(java.lang.Iterable);
+  public static java.util.List distinct(java.lang.Iterable);
   public static java.util.List drop(java.lang.Iterable, int);
   public static java.lang.Object first(java.lang.Iterable);
   public static java.lang.Object first(java.util.List);
   public static java.lang.Object firstOrNull(java.util.List);
+  public static java.lang.Object getOrNull(java.util.List, int);
   public static java.lang.String joinToString$default(java.lang.Iterable, java.lang.CharSequence, java.lang.CharSequence, java.lang.CharSequence, int, java.lang.CharSequence, kotlin.jvm.functions.Function1, int, java.lang.Object);
+  public static java.lang.Object last(java.util.List);
   public static java.util.List plus(java.util.Collection, java.lang.Iterable);
+  public static java.util.List reversed(java.lang.Iterable);
   public static java.lang.Object single(java.util.List);
+  public static java.lang.Object singleOrNull(java.util.List);
   public static java.util.List sorted(java.lang.Iterable);
   public static java.util.List sortedWith(java.lang.Iterable, java.util.Comparator);
+  public static java.util.List take(java.lang.Iterable, int);
   public static java.util.List takeLast(java.util.List, int);
   public static java.util.List toList(java.lang.Iterable);
   public static java.util.Set toSet(java.lang.Iterable);
@@ -1268,8 +1370,13 @@
 }
 -keep class kotlin.collections.MapsKt {
 }
+-keep class kotlin.collections.MapsKt__MapsJVMKt {
+  public static int mapCapacity(int);
+  public static java.util.Map mapOf(kotlin.Pair);
+}
 -keep class kotlin.collections.MapsKt__MapsKt {
   public static java.util.Map emptyMap();
+  public static java.lang.Object getValue(java.util.Map, java.lang.Object);
   public static java.util.Map mutableMapOf(kotlin.Pair[]);
 }
 -keep class kotlin.collections.SetsKt {
@@ -1283,6 +1390,7 @@
 }
 -keep class kotlin.collections.SetsKt___SetsKt {
   public static java.util.Set minus(java.util.Set, java.lang.Iterable);
+  public static java.util.Set plus(java.util.Set, java.lang.Object);
 }
 -keep class kotlin.comparisons.ComparisonsKt {
 }
@@ -1320,9 +1428,6 @@
   public kotlin.coroutines.CoroutineContext minusKey(kotlin.coroutines.CoroutineContext$Key);
   public void releaseInterceptedContinuation(kotlin.coroutines.Continuation);
   kotlin.coroutines.ContinuationInterceptor$Key Key;
-}
--keep class kotlin.coroutines.ContinuationKt {
-  public static kotlin.coroutines.Continuation createCoroutine(kotlin.jvm.functions.Function1, kotlin.coroutines.Continuation);
 }
 -keep class kotlin.coroutines.CoroutineContext$Element$DefaultImpls {
   public static java.lang.Object fold(kotlin.coroutines.CoroutineContext$Element, java.lang.Object, kotlin.jvm.functions.Function2);
@@ -1378,13 +1483,14 @@
 -keep class kotlin.coroutines.jvm.internal.SpillingKt {
   public static java.lang.Object nullOutSpilledVariable(java.lang.Object);
 }
--keep interface kotlin.coroutines.jvm.internal.SuspendFunction {
-}
 -keep class kotlin.coroutines.jvm.internal.SuspendLambda {
   public <init>(int, kotlin.coroutines.Continuation);
   public kotlin.coroutines.Continuation create(java.lang.Object, kotlin.coroutines.Continuation);
   public kotlin.coroutines.Continuation create(kotlin.coroutines.Continuation);
   protected java.lang.Object invokeSuspend(java.lang.Object);
+}
+-keep class kotlin.io.ByteStreamsKt {
+  public static byte[] readBytes(java.io.InputStream);
 }
 -keep class kotlin.io.CloseableKt {
   public static void closeFinally(java.io.Closeable, java.lang.Throwable);
@@ -1395,6 +1501,9 @@
   public static byte[] readBytes(java.io.File);
   public static void writeBytes(java.io.File, byte[]);
   public static void writeText$default(java.io.File, java.lang.String, java.nio.charset.Charset, int, java.lang.Object);
+}
+-keep class kotlin.io.FilesKt__UtilsKt {
+  public static boolean deleteRecursively(java.io.File);
 }
 -keep class kotlin.io.TextStreamsKt {
   public static java.lang.String readText(java.io.Reader);
@@ -1419,6 +1528,9 @@
 }
 -keep interface kotlin.jvm.functions.Function3 {
   public java.lang.Object invoke(java.lang.Object, java.lang.Object, java.lang.Object);
+}
+-keep interface kotlin.jvm.functions.Function4 {
+  public java.lang.Object invoke(java.lang.Object, java.lang.Object, java.lang.Object, java.lang.Object);
 }
 -keep interface kotlin.jvm.functions.Function6 {
   public java.lang.Object invoke(java.lang.Object, java.lang.Object, java.lang.Object, java.lang.Object, java.lang.Object, java.lang.Object);
@@ -1480,6 +1592,10 @@
   public static int roundToInt(float);
   public static long roundToLong(float);
 }
+-keep class kotlin.ranges.IntProgression {
+  public int getFirst();
+  public int getLast();
+}
 -keep class kotlin.ranges.IntRange {
   public <init>(int, int);
 }
@@ -1489,6 +1605,11 @@
 }
 -keep class kotlin.ranges.LongRange {
   public <init>(long, long);
+}
+-keep class kotlin.ranges.RangesKt {
+}
+-keep class kotlin.ranges.RangesKt___RangesKt {
+  public static int coerceAtLeast(int, int);
 }
 -keep interface kotlin.reflect.KClass {
   public java.lang.String getSimpleName();
@@ -1509,8 +1630,13 @@
 -keep class kotlin.text.Charsets {
   java.nio.charset.Charset UTF_8;
 }
+-keep interface kotlin.text.MatchResult {
+  public java.util.List getGroupValues();
+  public kotlin.ranges.IntRange getRange();
+}
 -keep class kotlin.text.Regex {
   public <init>(java.lang.String);
+  public static kotlin.sequences.Sequence findAll$default(kotlin.text.Regex, java.lang.CharSequence, int, int, java.lang.Object);
   public java.lang.String replace(java.lang.CharSequence, java.lang.String);
 }
 -keep class kotlin.text.StringsKt {
@@ -1518,15 +1644,21 @@
 -keep class kotlin.text.StringsKt__StringsJVMKt {
   public static java.lang.String concatToString(char[]);
   public static boolean equals(java.lang.String, java.lang.String, boolean);
+  public static java.lang.String repeat(java.lang.CharSequence, int);
   public static java.lang.String replace$default(java.lang.String, java.lang.String, java.lang.String, boolean, int, java.lang.Object);
   public static boolean startsWith$default(java.lang.String, java.lang.String, boolean, int, java.lang.Object);
 }
 -keep class kotlin.text.StringsKt__StringsKt {
+  public static boolean contains$default(java.lang.CharSequence, char, boolean, int, java.lang.Object);
   public static boolean contains$default(java.lang.CharSequence, java.lang.CharSequence, boolean, int, java.lang.Object);
   public static boolean contains(java.lang.CharSequence, java.lang.CharSequence, boolean);
+  public static java.lang.String substringBefore$default(java.lang.String, java.lang.String, java.lang.String, int, java.lang.Object);
   public static java.lang.CharSequence trim(java.lang.CharSequence);
+  public static java.lang.CharSequence trimEnd(java.lang.CharSequence);
 }
 -keep class kotlin.text.StringsKt___StringsKt {
+  public static java.lang.String drop(java.lang.String, int);
+  public static java.lang.String take(java.lang.String, int);
   public static java.lang.String takeLast(java.lang.String, int);
 }
 -keep class kotlin.time.AbstractLongTimeSource {
@@ -1563,7 +1695,6 @@
 }
 -keep class kotlinx.coroutines.BuildersKt {
   public static kotlinx.coroutines.Deferred async$default(kotlinx.coroutines.CoroutineScope, kotlin.coroutines.CoroutineContext, kotlinx.coroutines.CoroutineStart, kotlin.jvm.functions.Function2, int, java.lang.Object);
-  public static kotlinx.coroutines.Deferred async(kotlinx.coroutines.CoroutineScope, kotlin.coroutines.CoroutineContext, kotlinx.coroutines.CoroutineStart, kotlin.jvm.functions.Function2);
   public static kotlinx.coroutines.Job launch$default(kotlinx.coroutines.CoroutineScope, kotlin.coroutines.CoroutineContext, kotlinx.coroutines.CoroutineStart, kotlin.jvm.functions.Function2, int, java.lang.Object);
   public static java.lang.Object runBlocking$default(kotlin.coroutines.CoroutineContext, kotlin.jvm.functions.Function2, int, java.lang.Object);
   public static java.lang.Object runBlocking(kotlin.coroutines.CoroutineContext, kotlin.jvm.functions.Function2);
@@ -1628,7 +1759,6 @@
   public static boolean isActive(kotlinx.coroutines.CoroutineScope);
 }
 -keep enum kotlinx.coroutines.CoroutineStart {
-  kotlinx.coroutines.CoroutineStart DEFAULT;
   kotlinx.coroutines.CoroutineStart UNDISPATCHED;
 }
 -keep class kotlinx.coroutines.DebugKt {
@@ -1638,7 +1768,6 @@
   public static kotlinx.coroutines.Delay getDefaultDelay();
 }
 -keep interface kotlinx.coroutines.Deferred {
-  public java.lang.Object await(kotlin.coroutines.Continuation);
   public java.lang.Throwable getCompletionExceptionOrNull();
 }
 -keep class kotlinx.coroutines.Delay$DefaultImpls {
@@ -1662,7 +1791,6 @@
   public static kotlinx.coroutines.CoroutineDispatcher getDefault();
   public static kotlinx.coroutines.CoroutineDispatcher getIO();
   public static kotlinx.coroutines.MainCoroutineDispatcher getMain();
-  public static kotlinx.coroutines.CoroutineDispatcher getUnconfined();
 }
 -keep interface kotlinx.coroutines.DisposableHandle {
   public void dispose();
@@ -1671,7 +1799,6 @@
   public static kotlinx.coroutines.CoroutineDispatcher from(java.util.concurrent.Executor);
 }
 -keep class kotlinx.coroutines.Job$DefaultImpls {
-  public static void cancel$default(kotlinx.coroutines.Job, java.util.concurrent.CancellationException, int, java.lang.Object);
   public static kotlinx.coroutines.DisposableHandle invokeOnCompletion$default(kotlinx.coroutines.Job, boolean, boolean, kotlin.jvm.functions.Function1, int, java.lang.Object);
 }
 -keep class kotlinx.coroutines.Job$Key {
@@ -1715,6 +1842,7 @@
 }
 -keep class kotlinx.coroutines.TimeoutKt {
   public static java.lang.Object withTimeout-KLykuaI(long, kotlin.jvm.functions.Function2, kotlin.coroutines.Continuation);
+  public static java.lang.Object withTimeoutOrNull(long, kotlin.jvm.functions.Function2, kotlin.coroutines.Continuation);
 }
 -keep class kotlinx.coroutines.YieldContext$Key {
 }
@@ -1737,6 +1865,7 @@
   public java.lang.Object receive(kotlin.coroutines.Continuation);
 }
 -keep interface kotlinx.coroutines.channels.SendChannel {
+  public java.lang.Object send(java.lang.Object, kotlin.coroutines.Continuation);
   public java.lang.Object trySend-JP2dKIU(java.lang.Object);
 }
 -keep class kotlinx.coroutines.debug.internal.DebugProbesImpl {
@@ -1745,6 +1874,12 @@
   public boolean isInstalled$kotlinx_coroutines_debug();
   public void uninstall$kotlinx_coroutines_core();
   kotlinx.coroutines.debug.internal.DebugProbesImpl INSTANCE;
+}
+-keep interface kotlinx.coroutines.flow.Flow {
+  public java.lang.Object collect(kotlinx.coroutines.flow.FlowCollector, kotlin.coroutines.Continuation);
+}
+-keep interface kotlinx.coroutines.flow.FlowCollector {
+  public java.lang.Object emit(java.lang.Object, kotlin.coroutines.Continuation);
 }
 -keep interface kotlinx.coroutines.flow.StateFlow {
   public java.lang.Object getValue();
