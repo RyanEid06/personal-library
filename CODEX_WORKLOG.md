@@ -1,5 +1,10 @@
 # Memora original 48-case QA — 23 October 2026
 
+## Active CI diagnosis — 23 October 2026
+
+Resumed from prior chat on existing branch efac4ca. Live run39932568068 is terminal FAILURE: core/android/server/signing-workflow PASS; emulator fails NavigationHierarchyTest.shortViewportAtLargeTextKeepsListAndGridResultsAndFiltersReachable at line135/result reachability after bounded touch gestures. Downloaded exact log and report to artifacts/qa-v101/ci-39932568068-*. Previous chat left an uncommitted diagnostic-only change to the same test, already assembled; preserve and finish that evidence collection before another behavioral correction. No production defect established yet. Local emulator is stopped; preserved official snapshot remains untouched. Owner classes.jar/docs/qa remain untracked and excluded.
+
+Next: verify diagnostic test APK assembly, commit diagnostic plus this checkpoint, normal push same QA branch, inspect new exact-source CI layout trace before deciding fix. No repeated unchanged-source reruns or weakened assertions. Private signing still requires all five exact-source jobs success; no main/public integration.
 ## CI continuation — 23 October 2026
 
 Source7189c27 run39927169008 passed core/android/server/signing-workflow, but emulator failed twice in the same260dp/font150 list/grid test. First failure: Compose1.7 performScrollToNode descendant semantics traversal hit SnapshotStateObserver thread-affinity exception at line135. One bounded diagnostic rerun preserved unchanged source; its failure instead reached the nested-filter visibility assertion at line147. No third unchanged-source rerun. Exact logs and downloaded69-test report (1failure/1explicitopt-in skip) retained in `artifacts/qa-v101/ci-39927169008-*`.

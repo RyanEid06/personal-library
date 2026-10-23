@@ -192,15 +192,31 @@ class NavigationHierarchyTest {
 
     private fun scrollLibraryTo(container: String, target: SemanticsMatcher) {
         val host = compose.onNodeWithTag(container)
+        val trace = StringBuilder()
         // Touch reaches nested headers without the test action's off-thread descendant traversal.
         for (towardTop in listOf(false, true)) {
             repeat(12) {
                 compose.waitForIdle()
                 if (compose.onNode(target).isDisplayed()) return
+                trace.appendLine("towardTop=$towardTop step=$it host=${host.getUnclippedBoundsInRoot()}")
                 host.performTouchInput { if (towardTop) swipeDown() else swipeUp() }
             }
         }
-        compose.onNode(target).assertIsDisplayed()
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val evidence = java.io.File(instrumentation.targetContext.filesDir, "qa-ci-viewport").apply { mkdirs() }
+        val bitmap = instrumentation.uiAutomation.takeScreenshot()
+        if (bitmap != null) {
+            java.io.File(evidence, "failed.png").outputStream().use {
+                bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it)
+            }
+            bitmap.recycle()
+        }
+        val tree = compose.onRoot(useUnmergedTree = true).printToString()
+        java.io.File(evidence, "failed.txt").writeText("$trace\n$tree")
+        org.junit.Assert.assertTrue(
+            "Target $target unreachable in $container; layout=${vm.libraryLayout.value}; ready=${vm.resultsReady.value}; results=${vm.localSearchResults.value.size}\n$trace\n$tree",
+            compose.onNode(target).isDisplayed()
+        )
     }
 
     private fun openTrash() {
