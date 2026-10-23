@@ -259,7 +259,9 @@ class LocalSearchUiTest {
             }
         }
         waitForResults(setOf(local.id))
-        compose.onNodeWithTag("item_card_${local.id}").performTouchInput { longClick() }
+        val localCard = compose.onNodeWithTag("item_card_${local.id}")
+        compose.waitUntil(10_000) { localCard.isDisplayed() }
+        localCard.performTouchInput { longClick() }
         selectAllVisible()
         compose.runOnIdle {
             assertEquals(setOf(local.id, related.id), vm.selectedItemIds.value)
@@ -267,7 +269,8 @@ class LocalSearchUiTest {
             vm.clearSelection()
             fakeAi = emptyList()
         }
-        compose.onNodeWithTag("item_card_${local.id}").performTouchInput { longClick() }
+        compose.waitUntil(10_000) { localCard.isDisplayed() }
+        localCard.performTouchInput { longClick() }
         selectAllVisible()
         compose.runOnIdle { assertEquals(setOf(local.id), vm.selectedItemIds.value) }
     }
