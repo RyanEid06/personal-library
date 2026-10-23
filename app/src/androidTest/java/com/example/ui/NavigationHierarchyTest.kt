@@ -193,13 +193,16 @@ class NavigationHierarchyTest {
     private fun scrollLibraryTo(container: String, target: SemanticsMatcher) {
         val host = compose.onNodeWithTag(container)
         val trace = StringBuilder()
-        // Touch reaches nested headers without the test action's off-thread descendant traversal.
+        // A 12dp viewport needs a drag beyond its edge to cross touch slop and move content.
         for (towardTop in listOf(false, true)) {
             repeat(12) {
                 compose.waitForIdle()
                 if (compose.onNode(target).isDisplayed()) return
                 trace.appendLine("towardTop=$towardTop step=$it host=${host.getUnclippedBoundsInRoot()}")
-                host.performTouchInput { if (towardTop) swipeDown() else swipeUp() }
+                host.performTouchInput {
+                    val distance = maxOf(96.dp.toPx(), height * 0.8f)
+                    swipe(center, center.copy(y = center.y + if (towardTop) distance else -distance))
+                }
             }
         }
         val instrumentation = InstrumentationRegistry.getInstrumentation()
