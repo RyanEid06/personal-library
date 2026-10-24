@@ -33,6 +33,8 @@ Local evidence:
 
 ## Owner acceptance still required
 
+Backend compatibility independently checked on 24 October: live health returned 200/status ok with deployed revision `5ac62b4ccbcdacdf6144827c8f09a3cfdeca5125` and AI/auth/key configured. The entire deployed `server/` tree, Render configuration and Android AI client/answer flow match the candidate source; the direct answer endpoint was already deployed. No merge, redeployment or new APK is needed to test this candidate against that backend. This confirms source compatibility and service configuration, while actual paired Gemini generation remains pending owner testing.
+
 Use the existing [private candidate acceptance checklist](COVERAGE_MAP.md#private-102-candidate-owner-acceptance-checklist) and record outcomes against its original case IDs. Prior official results remain **30 PASS / 11 FAIL / 7 incomplete**, separate from fixed-candidate results. Eleven confirmed bugs have local fixes; this delivery does not claim all 48 original cases passed.
 
 - Complete WhatsApp JPEG/PNG/GIF and missing-original flows; real share applications, audio/video playback and external viewers.
