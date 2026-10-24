@@ -1,6 +1,8 @@
 # Memora V1.0.1 worklog
 
-## Post-release original 48-case QA — active23October2026
+## Post-release original 48-case QA — private candidate 24 October 2026
+
+All five required jobs on exact source `df5f747afb91cc253f7cb438841a189fd9d5f105` passed in CI 39967483519. Signed private 1.0.2/code 4 ARM64/universal APKs were built and independently verified on 24 October. Continue from root `CODEX_WORKLOG.md` and [PRIVATE_CANDIDATE_HANDOFF.md](../qa-reports/memora-v1-final/PRIVATE_CANDIDATE_HANDOFF.md) for exact hashes, CI evidence and remaining owner acceptance. Public release remains gated on owner results and explicit authorization. Original official ledger remains unchanged.
 
 Continue from root `CODEX_WORKLOG.md` and the six canonical reports in `qa-reports/memora-v1-final/`. They contain the current operation, exact Git/source state, original official30PASS/11FAIL/7incomplete ledger, separate candidate rechecks, eleven local bug fixes including QA011 Overview relocking, observed checks and remaining owner acceptance. Private1.0.2/code4 delivery follows exact-source CI; owner physical/manual acceptance precedes any public launch. The historical official release record below is unchanged.
 
