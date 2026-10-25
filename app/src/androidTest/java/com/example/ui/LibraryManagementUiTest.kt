@@ -291,7 +291,12 @@ class LibraryManagementUiTest {
             val results = mutableListOf<androidx.compose.ui.text.TextLayoutResult>()
             assertTrue(get(results))
             assertEquals(1, results.single().lineCount)
-            assertFalse(results.single().hasVisualOverflow)
+            val layout = results.single()
+            // The paragraph canvas can exceed the label; require every actual glyph to fit.
+            assertEquals("Clear".length, layout.getLineEnd(0, visibleEnd = true))
+            assertTrue("Clear's leading glyph is clipped", layout.getLineLeft(0) >= 0f)
+            assertTrue("Clear's trailing glyph is clipped", layout.getLineRight(0) <= layout.size.width)
+            assertFalse("Clear is clipped vertically", layout.didOverflowHeight)
         }
         compose.onNodeWithText("Clear").performClick()
         compose.runOnIdle { assertTrue(cleared) }

@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.SemanticsActions
@@ -225,21 +226,22 @@ class NavigationHierarchyTest {
                 }
             }
         }
+        // A pending transient confirmation can cover this deliberately tiny viewport.
+        compose.waitUntil(15_000) { vm.captureState.value.message == null && !vm.captureState.value.saving }
         for (layout in listOf(LibraryLayout.LIST, LibraryLayout.GRID)) {
             compose.runOnUiThread { vm.setLibraryLayout(layout); vm.selectKind(ItemKind.TEXT) }
             compose.waitUntil(10_000) { vm.resultsReady.value && vm.localSearchResults.value.singleOrNull()?.item?.id == id }
             val container = if (layout == LibraryLayout.LIST) "library_list" else "library_grid"
             scrollLibraryTo(container, hasText(title))
-            compose.onNodeWithText(title).assertIsDisplayed().performClick()
+            clickLibraryTarget(container, hasText(title))
             compose.onNodeWithTag("edit_item_button").assertIsDisplayed()
             Espresso.pressBack()
             scrollLibraryTo(container, hasTestTag("active_type_chip"))
-            compose.onNodeWithTag("active_type_chip").assertIsDisplayed().performClick()
+            clickLibraryTarget(container, hasTestTag("active_type_chip"))
             compose.runOnIdle { org.junit.Assert.assertNull(vm.selectedKind.value) }
             compose.runOnUiThread { vm.selectKind(ItemKind.TEXT) }
             scrollLibraryTo(container, hasTestTag("clear_filters_button"))
-            // Maximize the visible hit area; the host can be shorter than this button.
-            compose.onNodeWithTag("clear_filters_button").performScrollTo().assertIsDisplayed().performClick()
+            clickLibraryTarget(container, hasTestTag("clear_filters_button"))
             compose.runOnIdle { org.junit.Assert.assertNull(vm.selectedKind.value) }
             scrollLibraryTo(container, hasTestTag("filter_chip_all"))
             compose.onNodeWithTag("filter_chip_all").assertIsDisplayed().assertHasClickAction()
@@ -295,7 +297,21 @@ class NavigationHierarchyTest {
         for (towardTop in listOf(false, true)) {
             repeat(160) {
                 compose.waitForIdle()
-                if (compose.onNode(target).isDisplayed()) return
+                val targetNode = compose.onNode(target)
+                if (targetNode.isDisplayed()) {
+                    val viewport = host.fetchSemanticsNode().boundsInRoot
+                    val full = targetNode.getUnclippedBoundsInRoot()
+                    val top = with(compose.density) { full.top.toPx() }
+                    val bottom = with(compose.density) { full.bottom.toPx() }
+                    val delta = if (bottom - top <= viewport.height) {
+                        when { top < viewport.top -> top - viewport.top; bottom > viewport.bottom -> bottom - viewport.bottom; else -> 0f }
+                    } else {
+                        when { top > viewport.top -> top - viewport.top; bottom < viewport.bottom -> bottom - viewport.bottom; else -> 0f }
+                    }
+                    if (kotlin.math.abs(delta) <= 1f) return
+                    host.performSemanticsAction(SemanticsActions.ScrollBy) { scroll -> scroll(0f, delta) }
+                    return@repeat
+                }
                 trace.appendLine("towardTop=$towardTop step=$it host=${host.getUnclippedBoundsInRoot()}")
                 val distance = maxOf(1f, host.fetchSemanticsNode().boundsInRoot.height / 2)
                 host.performSemanticsAction(SemanticsActions.ScrollBy) { scroll ->
@@ -318,6 +334,24 @@ class NavigationHierarchyTest {
             "Target $target unreachable in $container; layout=${vm.libraryLayout.value}; ready=${vm.resultsReady.value}; results=${vm.localSearchResults.value.size}\n$trace\n$tree",
             compose.onNode(target).isDisplayed()
         )
+    }
+
+    private fun clickLibraryTarget(container: String, target: SemanticsMatcher) {
+        val node = compose.onNode(target).assertIsDisplayed().assertHasClickAction()
+        val visible = node.fetchSemanticsNode().boundsInRoot
+            .intersect(compose.onNodeWithTag(container).fetchSemanticsNode().boundsInRoot)
+        val fab = compose.onNodeWithTag("fab_add").fetchSemanticsNode().boundsInRoot
+        val dx = minOf(8f, visible.width / 4)
+        val dy = minOf(8f, visible.height / 4)
+        val point = listOf(visible.center,
+            Offset(visible.left + dx, visible.center.y), Offset(visible.right - dx, visible.center.y),
+            Offset(visible.center.x, visible.top + dy), Offset(visible.center.x, visible.bottom - dy))
+            .firstOrNull { !fab.contains(it) }
+        org.junit.Assert.assertNotNull("No visible touch point outside Add: target=$visible Add=$fab", point)
+        val root = compose.onRoot()
+        val origin = root.fetchSemanticsNode().boundsInRoot.topLeft
+        root.performTouchInput { click(requireNotNull(point) - origin) }
+        compose.waitForIdle()
     }
 
     private fun openTrash() {

@@ -541,8 +541,12 @@
   public java.lang.String getText();
 }
 -keep class androidx.compose.ui.text.TextLayoutResult {
-  public boolean getHasVisualOverflow();
+  public boolean getDidOverflowHeight();
   public int getLineCount();
+  public int getLineEnd(int, boolean);
+  public float getLineLeft(int);
+  public float getLineRight(int);
+  public long getSize-YbymL2g();
 }
 -keep class androidx.compose.ui.text.TextRange {
   public static int getMax-impl(long);
@@ -921,6 +925,10 @@
   public <init>(java.lang.String, java.util.List, java.lang.String);
   com.example.ai.SearchPlanRequest$Companion Companion;
 }
+-keep class com.example.capture.CaptureState {
+  public java.lang.String getMessage();
+  public boolean getSaving();
+}
 -keep class com.example.data.AssetEntity {
   public int getRefCount();
 }
@@ -1094,6 +1102,7 @@
   public void clearFilters();
   public void clearSelection();
   public com.example.security.AppLockManager getAppLockManager();
+  public kotlinx.coroutines.flow.StateFlow getCaptureState();
   public kotlinx.coroutines.flow.StateFlow getCustomDateEnd();
   public kotlinx.coroutines.flow.StateFlow getCustomDateStart();
   public kotlinx.coroutines.flow.StateFlow getDateFilter();

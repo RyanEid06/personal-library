@@ -120,8 +120,7 @@ class LocalSearchUiTest {
             compose.onNodeWithTag("library_search_input").performTextReplacement("$token $prefix")
             Espresso.closeSoftKeyboard()
             waitForResults(expected)
-            compose.onNodeWithTag("library_list").performScrollToNode(hasText("${expected.size} items • Saved Date"))
-            compose.onNodeWithText("${expected.size} items • Saved Date").assertIsDisplayed()
+            compose.onNodeWithText("Library • ${expected.size} items").assertIsDisplayed()
         }
         compose.onNodeWithTag("library_list").performScrollToNode(hasTestTag("item_card_${birthday.id}"))
         compose.onNodeWithTag("item_card_${birthday.id}", useUnmergedTree = true).assert(hasAnyDescendant(hasText("birthday", substring = true)))

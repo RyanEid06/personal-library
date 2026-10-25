@@ -1,6 +1,6 @@
 # Memora owner feedback — 24 October 2026
 
-Status: APPROVED; implementation and core/app/server local checks pass; debug/optimized assembly and DEX linkage pass; exact-source CI/runtime and private code5 delivery remain pending. Current evidence and exact next action live in root `CODEX_WORKLOG.md`. This is the canonical addendum for the owner's 19 reports and decisions. The earlier V1.0.1 master specification remains immutable; this newer owner feedback supersedes conflicting behavior (navigation, collection deletion/cardinality, password minimum, theme and AI setup).
+Status: APPROVED; implementation, local core/app/server checks and the final three targeted native UI regressions pass. Final exact-source CI, optimized runtime and private code5 Desktop delivery remain pending. Current evidence and exact next action live in root `CODEX_WORKLOG.md`. This canonical addendum supersedes conflicting V1.0.1 behavior; the earlier master remains immutable.
 
 ## Original owner request
 
