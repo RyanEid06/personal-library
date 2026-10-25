@@ -395,7 +395,7 @@ fun ItemDetailsDialog(
                             modifier = Modifier.weight(1f)
                         )
                     }
-                    TextButton(onClick = { onSetReminder(null, false, false, null) }, modifier = Modifier.widthIn(min = 64.dp)) {
+                    TextButton(onClick = { onSetReminder(null, false, false, null) }, modifier = Modifier.width(IntrinsicSize.Max).widthIn(min = 64.dp)) {
                         Text("Clear", fontSize = 12.sp, color = MaterialTheme.colorScheme.error, maxLines = 1, softWrap = false)
                     }
                 }

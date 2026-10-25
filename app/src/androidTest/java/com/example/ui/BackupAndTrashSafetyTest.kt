@@ -36,7 +36,7 @@ class BackupAndTrashSafetyTest {
         }
     }
 
-    @Test fun settingsChooseDestinationRequiresTwelveMatchingCharacters() {
+    @Test fun settingsChooseDestinationRequiresEightMatchingCharacters() {
         compose.onNodeWithTag("settings_top_button").performClick()
         compose.onNodeWithTag("export_backup_button").performScrollTo().performClick()
 
@@ -45,14 +45,14 @@ class BackupAndTrashSafetyTest {
         compose.onNodeWithTag("backup_confirm_passphrase_input").assertIsDisplayed()
         compose.onNodeWithTag("submit_passphrase_button").assertIsNotEnabled()
 
-        // Eleven matching characters must remain blocked; twelve is the engine boundary.
-        replacePassphrases("12345678901", "12345678901")
+        // Seven matching characters must remain blocked; eight is the engine boundary.
+        replacePassphrases("1234567", "1234567")
         compose.onNodeWithTag("submit_passphrase_button").assertIsNotEnabled()
-        replacePassphrases("123456789012", "")
+        replacePassphrases("12345678", "")
         compose.onNodeWithTag("submit_passphrase_button").assertIsNotEnabled()
-        replacePassphrases("12345678901a", "12345678901A")
+        replacePassphrases("1234567a", "1234567A")
         compose.onNodeWithTag("submit_passphrase_button").assertIsNotEnabled()
-        replacePassphrases("123456789012", "123456789012")
+        replacePassphrases("12345678", "12345678")
         compose.onNodeWithTag("submit_passphrase_button").assertIsEnabled()
 
         // Do not open a system document picker or write a backup from this UI test.
@@ -88,7 +88,7 @@ class BackupAndTrashSafetyTest {
 
         compose.onNodeWithTag("backup_confirm_passphrase_input").assertDoesNotExist()
         compose.onNodeWithTag("submit_passphrase_button").assertIsNotEnabled()
-        compose.onNodeWithTag("backup_passphrase_input").performTextReplacement("12345678901")
+        compose.onNodeWithTag("backup_passphrase_input").performTextReplacement("1234567")
         compose.onNodeWithTag("submit_passphrase_button").assertIsNotEnabled()
         compose.onNodeWithTag("backup_passphrase_input").performTextReplacement(passphrase)
         Espresso.closeSoftKeyboard()

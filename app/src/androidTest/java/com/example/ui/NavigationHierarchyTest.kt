@@ -238,7 +238,8 @@ class NavigationHierarchyTest {
             compose.runOnIdle { org.junit.Assert.assertNull(vm.selectedKind.value) }
             compose.runOnUiThread { vm.selectKind(ItemKind.TEXT) }
             scrollLibraryTo(container, hasTestTag("clear_filters_button"))
-            compose.onNodeWithTag("clear_filters_button").assertIsDisplayed().performClick()
+            // Maximize the visible hit area; the host can be shorter than this button.
+            compose.onNodeWithTag("clear_filters_button").performScrollTo().assertIsDisplayed().performClick()
             compose.runOnIdle { org.junit.Assert.assertNull(vm.selectedKind.value) }
             scrollLibraryTo(container, hasTestTag("filter_chip_all"))
             compose.onNodeWithTag("filter_chip_all").assertIsDisplayed().assertHasClickAction()

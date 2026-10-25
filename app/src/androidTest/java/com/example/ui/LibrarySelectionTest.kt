@@ -43,7 +43,10 @@ class LibrarySelectionTest {
         compose.runOnUiThread { vm.clearSelection(); vm.setSearchQuery(""); vm.selectKind(null); vm.selectCollection(null); vm.setDateFilter(DateFilter.ALL_TIME) }
         runBlocking {
             itemIds.forEach { vm.repository.deletePermanently(it) }
-            collectionIds.forEach { vm.repository.deleteCollection(it) }
+            collectionIds.forEach {
+                val deletion = vm.repository.deleteCollection(it, undoMillis = 0)
+                check(vm.repository.finalizeCollectionDeletion(deletion.operationId))
+            }
         }
     }
 

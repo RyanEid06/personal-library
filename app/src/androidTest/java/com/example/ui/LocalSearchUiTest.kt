@@ -7,6 +7,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.lifecycle.ViewModelProvider
+import androidx.test.espresso.Espresso
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.example.MainActivity
 import com.example.data.CollectionEntity
@@ -47,7 +48,10 @@ class LocalSearchUiTest {
         compose.runOnUiThread { vm.clearSelection(); vm.clearFilters(); vm.setSearchQuery(""); vm.setLibraryLayout(LibraryLayout.LIST) }
         runBlocking {
             itemIds.forEach { vm.repository.deletePermanently(it) }
-            collectionIds.forEach { vm.repository.deleteCollection(it) }
+            collectionIds.forEach {
+                val deletion = vm.repository.deleteCollection(it, undoMillis = 0)
+                check(vm.repository.finalizeCollectionDeletion(deletion.operationId))
+            }
         }
     }
 
@@ -112,13 +116,18 @@ class LocalSearchUiTest {
             "birthday" to setOf(birthday.id)
         )
         for ((prefix, expected) in cases) {
+            compose.onNodeWithTag("library_list").performScrollToNode(hasTestTag("library_search_input"))
             compose.onNodeWithTag("library_search_input").performTextReplacement("$token $prefix")
+            Espresso.closeSoftKeyboard()
             waitForResults(expected)
+            compose.onNodeWithTag("library_list").performScrollToNode(hasText("${expected.size} items • Saved Date"))
             compose.onNodeWithText("${expected.size} items • Saved Date").assertIsDisplayed()
         }
+        compose.onNodeWithTag("library_list").performScrollToNode(hasTestTag("item_card_${birthday.id}"))
         compose.onNodeWithTag("item_card_${birthday.id}", useUnmergedTree = true).assert(hasAnyDescendant(hasText("birthday", substring = true)))
         compose.onNodeWithTag("toggle_layout_button").performClick()
         compose.onNodeWithTag("library_grid").assertIsDisplayed()
+        compose.onNodeWithTag("library_grid").performScrollToNode(hasTestTag("item_grid_card_${birthday.id}"))
         compose.onNodeWithTag("grid_snippet_${birthday.id}", useUnmergedTree = true).assertIsDisplayed().assertTextContains("birthday", substring = true)
     }
 
