@@ -6,7 +6,11 @@ Memora is the owner's chosen product name. Settings -> Appearance offers saved *
 
 The verified permanent-signed V1.0.1/code3 ARM64 and universal APKs use the [V1.0.1 release channel](https://github.com/RyanEid06/personal-library/releases/tag/v1.0.1) for public downloads after the publication gate below. APK source `5ac62b4ccbcdacdf6144827c8f09a3cfdeca5125` passed all five jobs in [CI 39389151689](https://github.com/RyanEid06/personal-library/actions/runs/39389151689); the later release-tag record changes documentation only and requires its own green workflow. The existing package, certificate and update compatibility are preserved. Its [immutable specification](docs/CODEX_V1_0_1_MASTER_PROMPT.md), [current evidence and limitations](docs/CODEX_V1_0_1_WORKLOG.md), [requirement audit](docs/CODEX_V1_0_1_AUDIT.md), and [physical QA checklist](docs/CODEX_V1_0_1_PHYSICAL_QA.md) track this release and its outstanding device acceptance. See [verification status](docs/STATUS.md), [permanent release procedure](docs/branding/memora/RELEASE.md), and [phone handoff](docs/HANDOFF.md).
 
-## V1 capabilities
+## Owner-feedback candidate
+
+The current QA branch is implementing the [approved 19-item owner plan](docs/CODEX_OWNER_FEEDBACK_2026_10_24.md) for private 1.0.2/code5. It adds one-folder organization with Inbox, persisted collection deletion Undo, GIFs, contextual reminders, Library/Collections/Settings navigation, automatic AI registration, scoped synonym retrieval, named original-file sharing, voice retry and SpendWise dark surfaces. Follow [CODEX_WORKLOG.md](CODEX_WORKLOG.md) for actual checks and remaining gates. These changes are not yet the public V1.0.1 release and the new backend registration route requires an approved deployment.
+
+## Published V1 capabilities
 
 Final release packaging enables R8 and resource shrinking. One source/version produces `Memora-v1.0.1-arm64-official.apk` for ARM64 phones and `Memora-v1.0.1-universal.apk` retaining all four existing ABIs. The [owner release command](docs/branding/memora/RELEASE.md) verifies both permanently signed APKs before publication; only ARM64 is delivered to Desktop for this release. `optimizedCheck` is a nonofficial, nondebuggable, debug-signed verification build; CI tests optimized code as well as debug without production signing credentials.
 

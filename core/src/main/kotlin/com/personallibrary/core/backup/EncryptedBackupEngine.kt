@@ -110,7 +110,7 @@ data class RestorePreview(
 
 /**
  * Hardened backup engine implementing the Codex format principles:
- * - Minimum 12-character passphrase
+ * - Minimum 8-character passphrase
  * - PBKDF2-HMAC-SHA256 with 600,000 iterations for master key derivation
  * - Tink AES-256-GCM key wrapping
  * - Tink AES256_GCM_HKDF_1MB streaming AEAD
@@ -130,7 +130,7 @@ class EncryptedBackupEngine {
         val ARCHIVE_MAGIC = "PLIBAR01".toByteArray(Charsets.US_ASCII)
         val ARCHIVE_END_MARKER = "PLIBAR01_END".toByteArray(Charsets.US_ASCII)
 
-        const val MIN_PASSPHRASE_LENGTH = 12
+        const val MIN_PASSPHRASE_LENGTH = 8
         const val PBKDF2_ITERATIONS = 600_000
         const val SALT_LENGTH = 16
         const val GCM_IV_LENGTH = 12

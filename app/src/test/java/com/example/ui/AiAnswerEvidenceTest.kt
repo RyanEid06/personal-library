@@ -13,6 +13,24 @@ class AiAnswerEvidenceTest {
     private fun snapshot(rows: List<ItemWithCollections>, docs: List<SearchDocumentEntity> = emptyList()) =
         InteractiveAiSnapshot(rows, docs, privacy)
 
+    @Test fun expandedConceptsCanSelectAnswerBearingAliasWithoutSemanticVectors() {
+        val note = row("alias", "Archive", "Ryan bday is November 6")
+        val selected = selectAnswerEvidence("When is the birthday?", snapshot(listOf(note)), emptyList(), listOf("bday"))
+        assertEquals(1, selected.evidence.size)
+        assertTrue(selected.evidence.single().text.contains("November 6"))
+    }
+
+    @Test fun expandedTermsStayBoundedWithoutCrowdingOutQuestionOrFirstAlias() {
+        val question = (0..30).joinToString(" ") { "original$it" }
+        val expanded = listOf("bday") + (0..1000).map { "alias$it" + "x".repeat(500) }
+        val terms = interactiveAiQuestionTerms(question, expanded)
+        assertTrue(terms.size <= 32)
+        assertTrue((0..11).all { "original$it" in terms })
+        assertTrue("bday" in terms)
+        assertTrue(terms.all { it.length <= 100 })
+        assertFalse(terms.any { it.startsWith("alias1000") })
+    }
+
     @Test fun titleMatchIncludesActualNoteBodyAndOpaqueOpeningReference() {
         val note = row("stable-private-item-id", "Sarah birthday", "August 19")
         val selected = selectAnswerEvidence("When is Sarah's birthday?", snapshot(listOf(note)), emptyList())

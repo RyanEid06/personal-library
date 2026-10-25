@@ -14,9 +14,9 @@
     </style>
 
     <style name="Theme.PersonalLibrary.Dark" parent="android:Theme.Material.NoActionBar">
-        <item name="android:windowBackground">#0F172A</item>
-        <item name="android:colorBackground">#0F172A</item>
-        <item name="android:windowSplashScreenBackground" tools:targetApi="s">#0F172A</item>
+        <item name="android:windowBackground">#05080C</item>
+        <item name="android:colorBackground">#05080C</item>
+        <item name="android:windowSplashScreenBackground" tools:targetApi="s">#05080C</item>
         <item name="android:forceDarkAllowed">false</item>
         <item name="android:windowLightStatusBar">false</item>
         <item name="android:windowLightNavigationBar">false</item>

@@ -101,6 +101,7 @@ fun TrashScreen(
 
     Scaffold(
         modifier = modifier.fillMaxSize(),
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         snackbarHost = { SnackbarHost(snackbarHost) },
         topBar = {
             Column {

@@ -38,18 +38,25 @@ internal class InteractiveAiRetrieval(private val dao: LibraryDao, private val p
     }
 
     private fun privacy() = AiPrivacySnapshot(
-        prefs.getBoolean("ai_paused", false), prefs.getBoolean("ai_wifi_only", true),
+        false, prefs.getBoolean("ai_wifi_only", false),
         prefs.getStringSet("excluded_items", emptySet()).orEmpty().toSet(),
         prefs.getStringSet("excluded_collections", emptySet()).orEmpty().toSet()
     )
 
-    suspend fun load(context: LocalSearchContext): InteractiveAiSnapshot {
-        val capturedPrivacy = privacy()
-        if (capturedPrivacy.paused) blocked()
+    fun capturePrivacy(): AiPrivacySnapshot = privacy()
+
+    fun requirePrivacy(expected: AiPrivacySnapshot, isCurrent: () -> Boolean) {
+        if (!isCurrent() || privacy() != expected) blocked()
+    }
+
+    suspend fun load(context: LocalSearchContext, expandedConcepts: List<String> = emptyList(),
+        expectedPrivacy: AiPrivacySnapshot = capturePrivacy()): InteractiveAiSnapshot {
+        val capturedPrivacy = expectedPrivacy
+        requirePrivacy(capturedPrivacy) { true }
         val (eligibility, arguments) = eligibility(context, capturedPrivacy)
         // Questions contain connecting words and possessives that need not occur in a
         // saved note. Reuse FTS prefixes as alternatives, then prefer more matched terms.
-        val terms = interactiveAiQuestionTerms(context.query)
+        val terms = interactiveAiQuestionTerms(context.query, expandedConcepts)
         val fts = terms.mapNotNull { SearchQuery.fts(it) }.joinToString(" OR ").ifBlank { null }
         val candidateText = "lower(i.title || ' ' || i.content || ' ' || COALESCE(i.extractedText, '') || ' ' || " +
             "COALESCE(i.aiDescription, '') || ' ' || COALESCE(i.aiConcepts, '') || ' ' || COALESCE(i.originalFileName, ''))"
@@ -168,9 +175,18 @@ internal class InteractiveAiRetrieval(private val dao: LibraryDao, private val p
     }
 }
 
-internal fun interactiveAiQuestionTerms(question: String): List<String> =
-    SearchQuery.tokens(question.replace(Regex("['’][sS]\\b"), ""))
-        .filter { it.length > 1 }.take(12).map { it.take(100) }.distinct()
+internal fun interactiveAiQuestionTerms(question: String, expandedConcepts: List<String> = emptyList()): List<String> {
+    fun tokens(text: String) = SearchQuery.tokens(text.replace(Regex("['’][sS]\\b"), ""))
+        .asSequence().map { it.replace(aiTermPunctuation, "").lowercase(java.util.Locale.ROOT).take(100) }
+        .filter { it.length > 1 }
+    // Reserve space for the question and aliases independently: neither can crowd the other
+    // out before SQL candidate/chunk limits or evidence selection. All terms stay bind values.
+    val original = tokens(question).take(12)
+    val expanded = expandedConcepts.asSequence().take(20).flatMap { tokens(it.take(60)) }.take(20)
+    return (original + expanded).distinct().toList()
+}
+
+private val aiTermPunctuation = Regex("^[^\\p{L}\\p{N}]+|[^\\p{L}\\p{N}]+$")
 
 // Hex + a non-hex prefix makes each ID an exact, delimiter-safe member even for arbitrary IDs.
 // A single bind per set avoids SQLite's bind-count ceiling for large privacy sets.

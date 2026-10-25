@@ -12,13 +12,14 @@ Configure process environment through host secret settings. Never put actual cre
 | --- | --- |
 | `GEMINI_API_KEY` | Provider credential |
 | `SESSION_SIGNING_SECRET` | Stable auth/challenge signing secret |
-| `DEVICE_ENROLLMENT_SECRET` | Operator-controlled initial phone pairing |
+| `DEVICE_ENROLLMENT_SECRET` | Optional legacy operator pairing/admin secret; preserve existing value for credential compatibility |
 | `GEMINI_MODEL` | `gemini-3.8-flash` |
 | `GEMINI_EMBEDDING_MODEL` | `gemini-embedding-2` |
 | `PORT` | Host port; local default 8081 |
 | `REVOKED_DEVICE_IDS` | Optional comma-separated device IDs denied across restarts |
+| `TRUSTED_PROXY_IPS` | Optional exact socket-peer IP allowlist; only these adjacent proxies may supply the final X-Forwarded-For IP |
 
-Render already has the three required secrets; preserve them. Start does not automatically load `.env`; provide process environment. Temporary development secrets are unsuitable for stable production identity.
+Preserve existing host secrets. New automatic registration needs `SESSION_SIGNING_SECRET` and the provider key; the optional legacy enrollment secret must remain stable when already in use. Start does not automatically load `.env`; provide process environment. Temporary development secrets are unsuitable for stable production identity.
 
 ```powershell
 npm ci
@@ -30,9 +31,15 @@ npm start
 
 ## Auth and bounds
 
-Pair from Android Settings. Enrollment and renewal require nonblank public key and valid P-256 ECDSA proof over a canonical challenge-bound string. Renewal verifies the credential's key fingerprint. Android Keystore fails closed. Stable server secrets preserve signed credentials across restart; challenge replay tracking and the 60 requests/minute/device limiter are in memory. Environment revocations reload on restart. Legacy credentials without a bound fingerprint require re-pairing.
+Android automatically calls public `POST /v1/auth/register` after privacy/network eligibility. Its JSON contains only `deviceId`, `appVersion`, `challengeNonce`, `publicKey` and `signature`; no account or shared secret is required. Proof signs `PLIB-REGISTER-V1\n<deviceId>\n<nonce>\n<appVersion>\n<publicKey>` with the device's P-256 key. Registration returns the existing credential and 30-minute session response. Secret-based `/v1/auth/enroll` remains compatible and signs the separate `PLIB-ENROLL-V1` domain. Renewal verifies the credential's key fingerprint and uses the unchanged `PLIB-SESSION-V1` protocol. Android Keystore fails closed. Stable server secrets preserve signed credentials across restart. Environment revocations reload on restart.
+
+All auth endpoints allow 120 requests/minute/IP. Public registration additionally permits 12/minute/IP, 6/minute/public-key fingerprint and 120/minute/server; its body is at most 8 KiB. Provider requests retain 60/minute/device and additionally share 120 provider calls/minute/server and 1,000/day/server plus four concurrent request slots. An embedding batch reserves one unit per text because it invokes the provider separately for each text. A provider that ignores abort retains its slot until it settles, including after an HTTP timeout. Rate maps admit at most 10,000 live identities; the consumed-nonce ledger and runtime revocations cap at 20,000 and reject new admissions when full. Limits and nonce replay history are process-local and reset on restart; this is bounded abuse protection, not device/app attestation. Multiple instances have independent limits. No new paid service is required.
+
+Forwarded IP headers are ignored by default. Configure only verified adjacent proxy IPs in `TRUSTED_PROXY_IPS` when hosting behind a proxy; an untrusted caller's spoofed header cannot create a new rate bucket. Without this configuration, users behind one proxy share its IP budget. Keep persistent revoked IDs in `REVOKED_DEVICE_IDS`.
 
 Authenticated routes: `/v1/ai/analyze`, `/v1/ai/embed`, `/v1/ai/search-plan`, `/v1/ai/answer`. Defaults: 5 MiB body limit, 30-second response deadline, provider AbortSignal propagation and 60-second SDK HTTP bound. Cancellation settles body parsing and releases buffered bytes/listeners; timeout flushes one 504 response before closing incomplete ingress. Oversized uploads receive 413 before the connection closes. Disconnect/timeout handling avoids duplicate responses; provider-side billing cancellation is not guaranteed. Both sides enforce bounded input and validated output. A legacy `text-embedding-004` environment setting is substituted with `gemini-embedding-2`; Android rejects incompatible returned/stored embedding metadata.
+
+Interactive search planning runs before Android selects its bounded candidates. It sends only the question, an empty collection-name list and current timestamp; names, cached item text and originals remain local until eligible answer evidence is selected. Planning accepts a nonblank question of at most 2,000 UTF-16 units, at most 50 collection names of 200 units for legacy clients, a valid optional timestamp and a 64 KiB body. Gemini gets a 1,024-output-token budget and instructions to retain names and expand abbreviations such as birthday/bday. Returned concepts are capped at 20 of 60 units each; kinds are deduplicated and allowlisted. Android applies bounded expanded terms to candidate, chunk and answer-evidence ranking before their respective caps. Provider availability and generated synonyms still require live acceptance.
 
 ## Bounded question answering
 

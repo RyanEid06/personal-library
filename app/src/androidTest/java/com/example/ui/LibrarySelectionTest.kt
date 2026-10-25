@@ -110,7 +110,7 @@ class LibrarySelectionTest {
         compose.runOnIdle { assertTrue(vm.selectedItemIds.value.isEmpty()); assertFalse(vm.isBatchMode.value) }
     }
 
-    @Test fun bulkAddAndRemovePreserveSavedItemsAndUnchosenMemberships() {
+    @Test fun bulkMoveReplacesPreviousFolderAndRemoveReturnsSavedItemsToInbox() {
         prepare()
         val retained = collection("Retained")
         val added = collection("Added")
@@ -122,11 +122,11 @@ class LibrarySelectionTest {
         selectAllVisible()
         collectionAction("bulk_add_collections", added.name)
         compose.waitUntil(10_000) { runBlocking {
-            vm.repository.dao.getCollectionIdsForItem(first.id).toSet() == setOf(retained.id, added.id) &&
-                vm.repository.dao.getCollectionIdsForItem(second.id).toSet() == setOf(retained.id, added.id)
+            vm.repository.dao.getCollectionIdsForItem(first.id).toSet() == setOf(added.id) &&
+                vm.repository.dao.getCollectionIdsForItem(second.id).toSet() == setOf(added.id)
         } }
         collectionAction("bulk_remove_collections", added.name)
-        compose.waitUntil(10_000) { runBlocking { vm.repository.dao.getCollectionIdsForItem(first.id).toSet() == setOf(retained.id) && vm.repository.dao.getCollectionIdsForItem(second.id).toSet() == setOf(retained.id) } }
+        compose.waitUntil(10_000) { runBlocking { vm.repository.dao.getCollectionIdsForItem(first.id).isEmpty() && vm.repository.dao.getCollectionIdsForItem(second.id).isEmpty() } }
         assertActive(first.id, second.id)
     }
 

@@ -70,6 +70,86 @@ class AiGatewayPolicyTest {
         assertTrue(AiNetworkPolicy(context).isAllowed())
     }
 
+    @Test fun newInstallAllowsMobileButRetainsExplicitWifiOnlyPreference() {
+        val prefs = context.getSharedPreferences("personal_library_settings", 0)
+        prefs.edit().clear().commit()
+        setAiTestNetwork(context, unmetered = false)
+        assertTrue(AiNetworkPolicy(context).isAllowed())
+        prefs.edit().putBoolean("ai_wifi_only", true).commit()
+        assertFalse(AiNetworkPolicy(context).isAllowed())
+    }
+
+    @Test fun unpairedConcurrentRequestsAutomaticallyRegisterOnlyOnce() = runBlocking {
+        gateway.identityManager.clearPairing()
+        answer = { path -> when (path) {
+            "/v1/auth/challenge" -> 200 to """{"deviceId":"synthetic","nonce":"synthetic-nonce"}"""
+            "/v1/auth/register" -> 200 to """{"status":"ENROLLED","deviceId":"synthetic","deviceCredential":"automatic-credential","sessionToken":"automatic-token","expiresInSeconds":1800}"""
+            else -> 200 to analysis
+        } }
+        val workerGateway = AiGateway(context, gateway.identityManager)
+        coroutineScope { (1..8).map { index -> async {
+            (if (index % 2 == 0) workerGateway else gateway).analyze("synthetic", "TEXT", "note", null)
+        } }.awaitAll() }
+        assertEquals(1, paths.count { it == "/v1/auth/challenge" })
+        assertEquals(1, paths.count { it == "/v1/auth/register" })
+        assertEquals(8, paths.count { it == "/v1/ai/analyze" })
+        assertEquals("automatic-credential", gateway.identityManager.deviceCredential)
+    }
+
+    @Test fun privacyGuardBlocksUnpairedRegistrationBeforeAnyDispatch() = runBlocking {
+        gateway.identityManager.clearPairing()
+        try {
+            gateway.analyze("synthetic", "TEXT", "private", null,
+                beforeRequest = { throw AiGatewayException.RequestBlockedException() })
+            fail("Registration requires privacy eligibility")
+        } catch (_: AiGatewayException.RequestBlockedException) { }
+        assertTrue(paths.isEmpty())
+    }
+
+    @Test fun privacyChangeDuringAutomaticChallengeStopsRegistrationAndContent() = runBlocking {
+        gateway.identityManager.clearPairing()
+        var eligible = true
+        answer = { eligible = false; 200 to """{"deviceId":"synthetic","nonce":"synthetic-nonce"}""" }
+        try {
+            gateway.analyze("synthetic", "TEXT", "private", null,
+                beforeRequest = { if (!eligible) throw AiGatewayException.RequestBlockedException() })
+            fail("Changed privacy must stop automatic registration")
+        } catch (_: AiGatewayException.RequestBlockedException) { }
+        assertEquals(listOf("/v1/auth/challenge"), paths.toList())
+        assertFalse(gateway.identityManager.isPaired)
+    }
+
+    @Test fun automaticRegistrationCanRetryAfterTransientFailureWithoutSavingCredentials() = runBlocking {
+        gateway.identityManager.clearPairing()
+        var registrations = 0
+        answer = { path -> when (path) {
+            "/v1/auth/challenge" -> 200 to """{"deviceId":"synthetic","nonce":"synthetic-nonce"}"""
+            "/v1/auth/register" -> if (registrations++ == 0) 503 to "{}" else
+                200 to """{"status":"ENROLLED","deviceId":"synthetic","deviceCredential":"automatic-credential","sessionToken":"automatic-token","expiresInSeconds":1800}"""
+            else -> 200 to analysis
+        } }
+        try { gateway.analyze("synthetic", "TEXT", "note", null); fail("Transient registration must surface") }
+        catch (_: AiGatewayException.BackendUnavailableException) { }
+        assertFalse(gateway.identityManager.isPaired)
+        assertEquals("synthetic", gateway.analyze("synthetic", "TEXT", "note", null).itemId)
+        assertEquals(2, paths.count { it == "/v1/auth/register" })
+        assertEquals(1, paths.count { it == "/v1/ai/analyze" })
+    }
+
+    @Test fun concurrentExpiredSessionsRenewOnceWithoutReregistering() = runBlocking {
+        gateway.identityManager.savePairing("synthetic-credential", "expired-token", -1)
+        answer = { path -> when (path) {
+            "/v1/auth/challenge" -> 200 to """{"deviceId":"synthetic","nonce":"synthetic-nonce"}"""
+            "/v1/auth/session" -> 200 to """{"status":"OK","deviceId":"synthetic","sessionToken":"renewed-token","expiresInSeconds":1800}"""
+            else -> 200 to analysis
+        } }
+        coroutineScope { (1..8).map { async { gateway.analyze("synthetic", "TEXT", "note", null) } }.awaitAll() }
+        assertEquals(1, paths.count { it == "/v1/auth/challenge" })
+        assertEquals(1, paths.count { it == "/v1/auth/session" })
+        assertEquals(0, paths.count { it == "/v1/auth/register" })
+        assertEquals(8, paths.count { it == "/v1/ai/analyze" })
+    }
+
     @Test fun privacyGuardRejectsBeforeInitialContentRequest() = runBlocking {
         try {
             gateway.analyze("synthetic", "TEXT", "private synthetic note", null,

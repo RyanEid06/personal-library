@@ -55,7 +55,7 @@ class RoomDatabaseAndFtsTest {
     }
 
     @Test
-    fun testManyToManyCollectionRelationship() = runBlocking {
+    fun testOneFolderConstraintPreservesOriginalMembership() = runBlocking {
         val item1 = ItemEntity(id = "item_1", title = "Midterm Exam", content = "94/100", kind = ItemKind.TEXT.name)
         val item2 = ItemEntity(id = "item_2", title = "Lab Report", content = "Titration results", kind = ItemKind.DOCUMENT.name)
         dao.insertItem(item1)
@@ -66,7 +66,7 @@ class RoomDatabaseAndFtsTest {
         dao.insertCollection(col1)
         dao.insertCollection(col2)
 
-        // item1 belongs to both collections
+        // The unique item index rejects a second association without deleting the first.
         dao.insertItemCollectionCrossRef(ItemCollectionCrossRef("item_1", "col_chem"))
         dao.insertItemCollectionCrossRef(ItemCollectionCrossRef("item_1", "col_urgent"))
         // item2 belongs only to col_chem
@@ -74,11 +74,11 @@ class RoomDatabaseAndFtsTest {
 
         val item1WithCols = dao.getItemWithCollections("item_1")
         assertNotNull(item1WithCols)
-        assertEquals(2, item1WithCols!!.collections.size)
+        assertEquals(1, item1WithCols!!.collections.size)
         assertTrue(item1WithCols.collections.any { it.id == "col_chem" })
-        assertTrue(item1WithCols.collections.any { it.id == "col_urgent" })
+        assertFalse(item1WithCols.collections.any { it.id == "col_urgent" })
 
-        // Spec Requirement: Deleting a collection retains original items!
+        // Raw DAO cleanup of the unassigned folder leaves the existing item untouched.
         dao.deleteCollection("col_urgent")
         dao.removeAllItemsForCollection("col_urgent")
 

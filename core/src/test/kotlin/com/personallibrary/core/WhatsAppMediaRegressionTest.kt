@@ -19,7 +19,7 @@ class WhatsAppMediaRegressionTest {
     }
 
     @Test fun photosWithoutProviderMimeKeepTheirMediaClassification() {
-        for (name in listOf("photo.jpg", "photo.jpeg", "photo.png", "animation.gif")) {
+        for (name in listOf("photo.jpg", "photo.jpeg", "photo.png")) {
             assertEquals(name, ItemKind.PHOTO, ContentClassifier.classify(null, name))
             assertEquals(name, ItemKind.PHOTO, ContentClassifier.classify("application/octet-stream", name))
         }
@@ -30,7 +30,7 @@ class WhatsAppMediaRegressionTest {
         for ((name, mime) in mapOf("photo.jpg" to "image/jpeg", "photo.png" to "image/png", "animation.gif" to "image/gif")) {
             val stored = store.import("synthetic $name".byteInputStream(), name, null)
             assertEquals(name, mime, stored.mimeType)
-            assertEquals(name, ItemKind.PHOTO, stored.kind)
+            assertEquals(name, if (name.endsWith(".gif")) ItemKind.GIF else ItemKind.PHOTO, stored.kind)
         }
         assertEquals("application/octet-stream", store.import("unknown".byteInputStream(), "unknown.bin", null).mimeType)
         assertEquals("text/plain", store.import("declared".byteInputStream(), "declared.jpg", "text/plain").mimeType)

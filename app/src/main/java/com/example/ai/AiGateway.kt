@@ -8,6 +8,8 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import okhttp3.MediaType.Companion.toMediaType
@@ -46,6 +48,15 @@ data class EnrollRequest(
     val appVersion: String,
     val challengeNonce: String,
     val enrollmentSecret: String? = null,
+    val publicKey: String,
+    val signature: String
+)
+
+@Serializable
+data class RegisterRequest(
+    val deviceId: String,
+    val appVersion: String,
+    val challengeNonce: String,
     val publicKey: String,
     val signature: String
 )
@@ -136,6 +147,10 @@ class AiGateway(
     private val context: Context,
     val identityManager: DeviceIdentityManager = DeviceIdentityManager(context)
 ) {
+    companion object {
+        // Workers and the foreground gateway share one persisted device identity.
+        private val sessionMutex = Mutex()
+    }
     private val prefs = context.getSharedPreferences("ai_gateway_prefs", Context.MODE_PRIVATE)
     private val json = Json { ignoreUnknownKeys = true }
 
@@ -273,7 +288,7 @@ class AiGateway(
             send(request, beforeRequest) { response ->
                 if (response.code == 401) {
                     identityManager.clearPairing()
-                    throw AiGatewayException.AuthenticationException("Session renewal rejected: credential invalid or revoked. Please re-pair device.")
+                    throw AiGatewayException.AuthenticationException("AI access could not be renewed. Try again later.")
                 }
                 if (!response.isSuccessful) {
                     throw AiGatewayException.BackendUnavailableException("Session renewal failed: HTTP ${response.code}")
@@ -291,11 +306,50 @@ class AiGateway(
         }
     }
 
-    suspend fun ensureSessionToken(beforeRequest: suspend () -> Unit = {}): String = withContext(Dispatchers.IO) {
-        if (identityManager.isSessionValid) {
-            return@withContext identityManager.sessionToken!!
+    private suspend fun registerAutomatically(beforeRequest: suspend () -> Unit): String {
+        val nonce = getChallenge(beforeRequest)
+        val deviceId = identityManager.deviceId
+        val publicKey = identityManager.getPublicKeyBase64()
+        val version = BuildConfig.VERSION_NAME
+        val canonical = "PLIB-REGISTER-V1\n$deviceId\n$nonce\n$version\n$publicKey"
+        val signature = android.util.Base64.encodeToString(
+            identityManager.signData(canonical.toByteArray(Charsets.UTF_8)), android.util.Base64.NO_WRAP)
+        val body = RegisterRequest(deviceId, version, nonce, publicKey, signature)
+        val request = Request.Builder().url("$backendBaseUrl/v1/auth/register")
+            .post(json.encodeToString(RegisterRequest.serializer(), body).toRequestBody("application/json".toMediaType()))
+            .build()
+        try {
+            return send(request, beforeRequest) { response ->
+                when (response.code) {
+                    401, 403 -> throw AiGatewayException.AuthenticationException("Automatic AI setup was rejected. Try again later.")
+                    429 -> throw AiGatewayException.RateLimitedException()
+                }
+                if (!response.isSuccessful) throw AiGatewayException.BackendUnavailableException()
+                val result = json.decodeFromString<EnrollResponse>(response.body?.string()
+                    ?: throw AiGatewayException.ValidationException("Empty registration response"))
+                if (result.deviceCredential.isBlank() || result.sessionToken.isBlank() || result.expiresInSeconds !in 1..86400) {
+                    throw AiGatewayException.ValidationException("Invalid registration response")
+                }
+                identityManager.savePairing(result.deviceCredential, result.sessionToken, result.expiresInSeconds)
+                result.sessionToken
+            }
+        } catch (cancelled: CancellationException) { throw cancelled }
+        catch (error: AiGatewayException) { throw error }
+        catch (_: IOException) { throw AiGatewayException.BackendUnavailableException() }
+    }
+
+    suspend fun ensureSessionToken(beforeRequest: suspend () -> Unit = {}): String =
+        ensureSessionToken(beforeRequest, null)
+
+    private suspend fun ensureSessionToken(beforeRequest: suspend () -> Unit, rejectedToken: String?): String = withContext(Dispatchers.IO) {
+        sessionMutex.withLock {
+            currentCoroutineContext().ensureActive()
+            // Another request may already have renewed the rejected session while we waited.
+            if (rejectedToken != null && identityManager.sessionToken == rejectedToken) identityManager.clearSession()
+            if (identityManager.isSessionValid) identityManager.sessionToken!!
+            else if (identityManager.isPaired) renewSession(beforeRequest)
+            else registerAutomatically(beforeRequest)
         }
-        renewSession(beforeRequest)
     }
 
     /**
@@ -322,13 +376,12 @@ class AiGateway(
         try {
             action(token, guard)
         } catch (e: AiGatewayException.AuthenticationException) {
-            identityManager.clearSession()
-            token = renewSession(guard)
+            token = ensureSessionToken(guard, token)
             try {
                 action(token, guard)
             } catch (retryEx: AiGatewayException.AuthenticationException) {
                 identityManager.clearPairing()
-                throw AiGatewayException.AuthenticationException("Authentication failed after renewal. Re-pair required.")
+                throw AiGatewayException.AuthenticationException("AI access is unavailable. Try again later.")
             }
         }
     }
@@ -524,6 +577,7 @@ class AiGateway(
 
         if (lower.contains("photo") || lower.contains("screenshot") || lower.contains("image")) targetKinds.add("PHOTO")
         if (lower.contains("sticker")) targetKinds.add("STICKER")
+        if (lower.contains("gif")) targetKinds.add("GIF")
         if (lower.contains("link") || lower.contains("url")) targetKinds.add("LINK")
         if (lower.contains("audio") || lower.contains("voice")) targetKinds.add("AUDIO")
         if (lower.contains("document") || lower.contains("pdf")) targetKinds.add("DOCUMENT")

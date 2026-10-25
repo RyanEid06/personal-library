@@ -39,13 +39,14 @@ import org.robolectric.annotation.Config
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.CoroutineContext
 
-@OptIn(ExperimentalCoroutinesApi::class)
+@OptIn(ExperimentalCoroutinesApi::class, androidx.room.ExperimentalRoomApi::class)
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34], application = PersonalLibraryApp::class)
 class CollectionAiMembershipTest {
     private lateinit var application: PersonalLibraryApp
     private lateinit var store: ViewModelStore
     private lateinit var viewModel: MainViewModel
+    private lateinit var mainDispatcher: kotlinx.coroutines.test.TestDispatcher
     private val seededDocuments = mutableMapOf<String, List<SearchDocumentEntity>>()
     private val repository get() = viewModel.repository
     private val prefs get() = application.getSharedPreferences("personal_library_settings", 0)
@@ -55,20 +56,43 @@ class CollectionAiMembershipTest {
 
     @Before fun setUp() = runBlocking {
         application = ApplicationProvider.getApplicationContext()
+        val invalidation = org.robolectric.Robolectric.buildService(androidx.room.MultiInstanceInvalidationService::class.java).create()
+        val binding = android.content.Intent(application, androidx.room.MultiInstanceInvalidationService::class.java)
+        org.robolectric.Shadows.shadowOf(application).setComponentNameAndServiceForBindServiceForIntent(
+            binding, checkNotNull(binding.component), checkNotNull(invalidation.get().onBind(binding)))
         prefs.edit().clear().putBoolean("ai_paused", true)
             .putStringSet("excluded_collections", setOf(excluded.id)).commit()
         application.getSharedPreferences("device_identity_prefs", 0).edit().clear().commit()
         setAiTestNetwork(application, unmetered = true)
         WorkManagerTestInitHelper.initializeTestWorkManager(application,
             Configuration.Builder().setExecutor(SynchronousExecutor()).build())
-        Dispatchers.setMain(UnconfinedTestDispatcher())
+        mainDispatcher = UnconfinedTestDispatcher()
+        Dispatchers.setMain(mainDispatcher)
         store = ViewModelStore()
         viewModel = ViewModelProvider(store, ViewModelProvider.AndroidViewModelFactory(application))[MainViewModel::class.java]
+        // Finish startup maintenance before this legacy SQLite fixture introduces concurrent writes.
+        withTimeout(5_000) {
+            while (manager.getWorkInfosForUniqueWork("local_index_pending").get().let {
+                it.isEmpty() || it.any { work -> !work.state.isFinished }
+            }) {
+                mainDispatcher.scheduler.runCurrent()
+                org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+                delay(10)
+            }
+        }
+        repository.dao.getPendingCollectionDeletions().forEach {
+            repository.finalizeCollectionDeletion(it.operationId, Long.MAX_VALUE)
+        }
         repository.dao.insertCollection(excluded)
         repository.dao.insertCollection(ordinary)
     }
 
     @After fun tearDown() {
+        runBlocking {
+            repository.dao.getPendingCollectionDeletions().forEach {
+                repository.finalizeCollectionDeletion(it.operationId, Long.MAX_VALUE)
+            }
+        }
         store.clear()
         manager.cancelAllWork().result.get()
         Dispatchers.resetMain()
@@ -78,29 +102,46 @@ class CollectionAiMembershipTest {
     }
 
     @Test fun singleAddCancelsQueuedAiWithoutRemovingLocalSearch() = runBlocking {
+        val messages = mutableListOf<String>()
+        val observer = launch(Dispatchers.Unconfined) { viewModel.libraryMessages.collect { messages += it } }
         val item = seed("single-add", "QUEUED")
         prefs.edit().putBoolean("ai_paused", false).commit()
         viewModel.localIndexer.enqueueDurableAiJob(item.id)
         assertEquals(1, liveWork(item.id))
+        assertTrue(repository.dao.getAllCollections().any { it.id == excluded.id })
 
-        viewModel.setItemCollections(item.id, listOf(ordinary.id, excluded.id))
+        viewModel.setItemCollections(item.id, listOf(excluded.id))
 
+        withTimeoutOrNull(5_000) { while (repository.dao.getCollectionIdsForItem(item.id) != listOf(excluded.id)) {
+            mainDispatcher.scheduler.runCurrent()
+            org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+            delay(10)
+        } }
+        observer.cancel()
+        assertEquals("Membership transition messages=$messages", listOf(excluded.id), repository.dao.getCollectionIdsForItem(item.id))
         awaitJob(item.id, "EXCLUDED")
-        assertEquals(setOf(ordinary.id, excluded.id), repository.dao.getCollectionIdsForItem(item.id).toSet())
+        assertEquals(listOf(excluded.id), repository.dao.getCollectionIdsForItem(item.id))
         assertEquals(0, liveWork(item.id))
         assertLocalState(item)
     }
 
-    @Test fun singleRemoveQueuesCachedTextWithoutReextractingOrResettingAttempts() = runBlocking {
+    @Test fun movingOutOfPrivateFolderKeepsItemExcludedWithoutChangingLocalEvidence() = runBlocking {
         val item = seed("single-remove", "EXCLUDED", cached = true, inExcluded = true)
         prefs.edit().putBoolean("ai_paused", false).commit()
 
         viewModel.setItemCollections(item.id, listOf(ordinary.id))
 
-        awaitJob(item.id, "QUEUED")
+        withTimeout(5_000) {
+            while (repository.dao.getCollectionIdsForItem(item.id) != listOf(ordinary.id)) {
+                mainDispatcher.scheduler.runCurrent()
+                org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+                delay(10)
+            }
+        }
+        awaitJob(item.id, "EXCLUDED")
         assertEquals(listOf(ordinary.id), repository.dao.getCollectionIdsForItem(item.id))
-        assertTrue(repository.dao.getAnalysisJob(item.id)!!.metadataOnly)
-        awaitLiveWork(item.id, 1)
+        assertTrue(prefs.getStringSet("excluded_items", emptySet())!!.contains(item.id))
+        awaitLiveWork(item.id, 0)
         assertLocalState(item)
     }
 
@@ -118,7 +159,7 @@ class CollectionAiMembershipTest {
         }
     }
 
-    @Test fun bulkRemoveResumesInitialAiButKeepsIndependentExclusions() = runBlocking {
+    @Test fun bulkRemovePreservesEveryInheritedAndIndependentExclusion() = runBlocking {
         val initial = seed("bulk-remove-initial", "EXCLUDED", inExcluded = true)
         val individuallyExcluded = seed("bulk-remove-private", "EXCLUDED", inExcluded = true)
         val otherCollection = seed("bulk-remove-other", "EXCLUDED", inExcluded = true)
@@ -130,9 +171,9 @@ class CollectionAiMembershipTest {
 
         assertNull(viewModel.changeSelectedCollections(items.map { it.id }.toSet(), setOf(excluded.id), add = false))
 
-        assertEquals("QUEUED", repository.dao.getAnalysisJob(initial.id)!!.status)
+        assertEquals("EXCLUDED", repository.dao.getAnalysisJob(initial.id)!!.status)
         assertFalse(repository.dao.getAnalysisJob(initial.id)!!.metadataOnly)
-        assertEquals(1, liveWork(initial.id))
+        assertEquals(0, liveWork(initial.id))
         for (item in listOf(individuallyExcluded, otherCollection)) {
             assertEquals("EXCLUDED", repository.dao.getAnalysisJob(item.id)!!.status)
             assertEquals(0, liveWork(item.id))
@@ -140,7 +181,7 @@ class CollectionAiMembershipTest {
         items.forEach { assertLocalState(it) }
     }
 
-    @Test fun deletingExcludedCollectionReconcilesFormerMembersAndReusesCompleteEmbeddings() = runBlocking {
+    @Test fun deletingExcludedCollectionTrashesMembersWithoutReenablingAi() = runBlocking {
         val missing = seed("delete-missing", "EXCLUDED", cached = true, inExcluded = true)
         val complete = seed("delete-complete", "EXCLUDED", cached = true, inExcluded = true, completeEmbeddings = true)
         val exhausted = seed("delete-exhausted", "EXCLUDED", cached = true, inExcluded = true, attempts = 4)
@@ -148,19 +189,18 @@ class CollectionAiMembershipTest {
 
         viewModel.deleteCollection(excluded.id)
 
-        awaitJob(missing.id, "QUEUED")
-        awaitJob(complete.id, "COMPLETED")
-        awaitJob(exhausted.id, "NEEDS_RETRY")
+        withTimeout(5_000) { while (repository.dao.getAllCollections().any { it.id == excluded.id }) delay(10) }
         assertFalse(repository.dao.getAllCollections().any { it.id == excluded.id })
         assertTrue(repository.dao.getAllCollections().any { it.id == ordinary.id })
-        assertTrue(repository.dao.getAnalysisJob(missing.id)!!.metadataOnly)
-        awaitLiveWork(missing.id, 1)
+        awaitLiveWork(missing.id, 0)
         assertEquals(0, liveWork(complete.id))
         assertEquals(0, liveWork(exhausted.id))
-        assertEquals("READY", repository.dao.getItemById(complete.id)!!.aiStatus)
         for (item in listOf(missing, complete, exhausted)) {
-            assertEquals(listOf(ordinary.id), repository.dao.getCollectionIdsForItem(item.id))
-            assertLocalState(item, expectedAttempts = if (item.id == exhausted.id) 4 else 2)
+            assertTrue(repository.dao.getItemById(item.id)!!.isTrash)
+            assertEquals(listOf(excluded.id), repository.dao.getCollectionIdsForItem(item.id))
+            assertTrue(prefs.getStringSet("excluded_items", emptySet())!!.contains(item.id))
+            assertEquals(seededDocuments.getValue(item.id), repository.dao.getSearchDocumentsForItem(item.id))
+            assertTrue(repository.dao.searchFts("chemistry").none { it.id == item.id })
         }
     }
 
@@ -171,7 +211,7 @@ class CollectionAiMembershipTest {
 
         assertFalse(error.isNullOrBlank())
         assertEquals("EXCLUDED", repository.dao.getAnalysisJob(item.id)!!.status)
-        assertEquals(setOf(ordinary.id, excluded.id), repository.dao.getCollectionIdsForItem(item.id).toSet())
+        assertEquals(listOf(excluded.id), repository.dao.getCollectionIdsForItem(item.id))
         assertLocalState(item)
     }
 
@@ -218,8 +258,7 @@ class CollectionAiMembershipTest {
             localIndexCoverage = "COMPLETE", localIndexVersion = 3,
             aiDescription = if (cached) "cached description" else null, aiStatus = status)
         repository.dao.insertItem(item)
-        repository.dao.insertItemCollectionCrossRef(ItemCollectionCrossRef(id, ordinary.id))
-        if (inExcluded) repository.dao.insertItemCollectionCrossRef(ItemCollectionCrossRef(id, excluded.id))
+        repository.dao.insertItemCollectionCrossRef(ItemCollectionCrossRef(id, if (inExcluded) excluded.id else ordinary.id))
         repository.dao.insertOrUpdateAnalysisJob(AnalysisJobEntity(id, 3, 3, status = status, attempts = attempts,
             lastErrorClass = "SyntheticTransient", lastErrorTime = 123L))
         val texts = if (completeEmbeddings) listOf("Synthetic $id. cached description.", "local chemistry", "cached OCR")
@@ -255,7 +294,50 @@ class CollectionAiMembershipTest {
     }
 
     private suspend fun awaitJob(itemId: String, status: String) {
-        withTimeoutOrNull(5_000) { while (repository.dao.getAnalysisJob(itemId)?.status != status) delay(10) }
+        withTimeoutOrNull(5_000) { while (repository.dao.getAnalysisJob(itemId)?.status != status) {
+            mainDispatcher.scheduler.runCurrent()
+            org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+            delay(10)
+        } }
         assertEquals("AI lifecycle after membership change for $itemId", status, repository.dao.getAnalysisJob(itemId)?.status)
+    }
+
+    @Test fun overlappingSharesWaitForExplicitConsumptionInArrivalOrder() {
+        val first = com.example.model.SharePayload(text = "First synthetic share")
+        val second = com.example.model.SharePayload(uris = listOf("content://synthetic/second"))
+        viewModel.setIncomingShare(first)
+        viewModel.setIncomingShare(second)
+        assertEquals(first, viewModel.incomingShare.value)
+        viewModel.setIncomingShare(null)
+        assertEquals(second, viewModel.incomingShare.value)
+        viewModel.setIncomingShare(null)
+        assertNull(viewModel.incomingShare.value)
+    }
+
+    @Test fun savingAShareAdvancesToTheNextQueuedPreview() {
+        application.captureState.finish("Reset synthetic test")
+        val first = com.example.model.SharePayload(text = "First synthetic saved share")
+        val second = com.example.model.SharePayload(text = "Second synthetic pending share")
+        try {
+            viewModel.setIncomingShare(first)
+            viewModel.setIncomingShare(second)
+            viewModel.confirmShare(emptyList())
+            assertEquals(second, viewModel.incomingShare.value)
+        } finally { application.captureState.finish("Reset synthetic test") }
+    }
+
+    @Test fun secondCollectionDeleteWaitsUntilTheFirstUndoIsResolved() = runBlocking {
+        viewModel.deleteCollection(ordinary.id, 60_000)
+        withTimeout(5_000) { while (viewModel.pendingCollectionDeletion.value == null) delay(10) }
+        val first = viewModel.pendingCollectionDeletion.value!!
+        viewModel.deleteCollection(excluded.id, 60_000)
+        delay(100)
+        assertEquals(first, viewModel.pendingCollectionDeletion.value)
+        assertNotNull(repository.dao.getAllCollections().find { it.id == excluded.id })
+        viewModel.undoCollectionDeletion(first.operationId)
+        withTimeout(5_000) { while (viewModel.pendingCollectionDeletion.value != null) delay(10) }
+        viewModel.deleteCollection(excluded.id, 60_000)
+        withTimeout(5_000) { while (viewModel.pendingCollectionDeletion.value == null) delay(10) }
+        assertEquals(excluded.id, viewModel.pendingCollectionDeletion.value!!.collectionId)
     }
 }

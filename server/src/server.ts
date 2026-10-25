@@ -1,5 +1,6 @@
 import http from 'node:http';
 import crypto from 'node:crypto';
+import net from 'node:net';
 import { GoogleGenAI } from '@google/genai';
 
 export interface ServerConfig {
@@ -56,7 +57,7 @@ export interface GeminiProvider {
   }>;
 }
 
-const ALLOWED_TARGET_KINDS = new Set(['PHOTO', 'DOCUMENT', 'AUDIO', 'VIDEO', 'LINK', 'TEXT', 'STICKER']);
+const ALLOWED_TARGET_KINDS = new Set(['PHOTO', 'DOCUMENT', 'AUDIO', 'VIDEO', 'LINK', 'TEXT', 'STICKER', 'GIF']);
 const ALLOWED_MEDIA_MIMES = new Set([
   'image/jpeg', 'image/png', 'image/webp', 'image/gif',
   'audio/mp3', 'audio/mpeg', 'audio/wav', 'audio/ogg', 'audio/aac', 'audio/mp4', 'audio/m4a'
@@ -203,6 +204,8 @@ export class DeviceRegistry {
     try {
       const match = crypto.timingSafeEqual(Buffer.from(hmac, 'hex'), Buffer.from(expected, 'hex'));
       if (match) {
+        // Keep live replay protection; refuse admission rather than evict a live nonce.
+        if (this.consumedNonces.size >= 20000) return false;
         this.consumedNonces.set(nonce, now);
         return true;
       }
@@ -280,6 +283,15 @@ export class DeviceRegistry {
       (err as any).statusCode = 401;
       throw err;
     }
+    return this.issueRegistration(deviceId, appVersion, challengeNonce, publicKey, signature, 'PLIB-ENROLL-V1');
+  }
+
+  register(deviceId: string, appVersion: string, challengeNonce: string, publicKey: string, signature: string) {
+    return this.issueRegistration(deviceId, appVersion, challengeNonce, publicKey, signature, 'PLIB-REGISTER-V1');
+  }
+
+  private issueRegistration(deviceId: string, appVersion: string, challengeNonce: string,
+    publicKey: string | undefined, signature: string | undefined, protocol: string) {
     if (this.revokedDevices.has(deviceId)) {
       const err = new Error('DEVICE_REVOKED');
       (err as any).statusCode = 401;
@@ -304,7 +316,7 @@ export class DeviceRegistry {
       throw err;
     }
     {
-      const canonicalString = `PLIB-ENROLL-V1\n${deviceId}\n${challengeNonce}\n${appVersion || '1.0.0'}\n${publicKey}`;
+      const canonicalString = `${protocol}\n${deviceId}\n${challengeNonce}\n${appVersion || '1.0.0'}\n${publicKey}`;
       const validSig = verifyDeviceSignature(publicKey, canonicalString, signature);
       if (!validSig) {
         const err = new Error('INVALID_DEVICE_SIGNATURE');
@@ -377,6 +389,9 @@ export class DeviceRegistry {
   }
 
   revoke(deviceId: string): void {
+    if (!this.revokedDevices.has(deviceId) && this.revokedDevices.size >= 20000) {
+      throw Object.assign(new Error('REGISTRY_CAPACITY'), { statusCode: 503 });
+    }
     this.revokedDevices.add(deviceId);
   }
 
@@ -545,13 +560,13 @@ Text Content: ${textContent?.slice(0, 32000) || 'None provided'}
   async searchPlan(query: string, knownCollections: string[], nowIso: string, signal?: AbortSignal) {
     signal?.throwIfAborted();
     const prompt = `Convert this search query into a structured retrieval plan.
-Query: "${query.slice(0, 500)}"
+Query: ${JSON.stringify(query.slice(0, 2000))}
 Known collections: ${JSON.stringify(knownCollections.slice(0, 50))}
 Current timestamp: ${nowIso}
 
 Return JSON with:
-- "concepts": list of key search concepts and synonyms (strings)
-- "targetKinds": list of targeted item kinds (only from: "PHOTO", "DOCUMENT", "AUDIO", "VIDEO", "LINK", "TEXT", "STICKER") or empty list if any
+- "concepts": at most 20 key search concepts and synonyms, each at most 60 characters. Expand common abbreviations in both directions (birthday and bday), while retaining names and specific terms from the query.
+- "targetKinds": list of targeted item kinds (only from: "PHOTO", "DOCUMENT", "AUDIO", "VIDEO", "LINK", "TEXT", "STICKER", "GIF") or empty list if any
 - "dateRange": { "startIso": string or null, "endIso": string or null }
 `;
 
@@ -562,6 +577,7 @@ Return JSON with:
         config: {
           abortSignal: signal,
           responseMimeType: 'application/json',
+          maxOutputTokens: 1024,
           temperature: 0.1
         }
       });
@@ -569,11 +585,11 @@ Return JSON with:
       const parsed = JSON.parse(text);
 
       const concepts = Array.isArray(parsed.concepts)
-        ? parsed.concepts.filter((c: any) => typeof c === 'string').map((c: string) => c.slice(0, 60)).slice(0, 20)
+        ? parsed.concepts.slice(0, 20).filter((c: any) => typeof c === 'string').map((c: string) => c.slice(0, 60))
         : [query];
 
       const targetKinds = Array.isArray(parsed.targetKinds)
-        ? parsed.targetKinds.filter((k: any) => typeof k === 'string' && ALLOWED_TARGET_KINDS.has(k.toUpperCase())).map((k: string) => k.toUpperCase())
+        ? [...new Set<string>(parsed.targetKinds.slice(0, 20).filter((k: any) => typeof k === 'string' && ALLOWED_TARGET_KINDS.has(k.toUpperCase())).map((k: string) => k.toUpperCase()))]
         : [];
 
       let startIso: string | null = null;
@@ -658,6 +674,7 @@ function parseLocalSearchPlan(query: string) {
 
   if (lower.includes('photo') || lower.includes('screenshot')) targetKinds.push('PHOTO');
   if (lower.includes('sticker')) targetKinds.push('STICKER');
+  if (lower.includes('gif')) targetKinds.push('GIF');
   if (lower.includes('link') || lower.includes('url')) targetKinds.push('LINK');
   if (lower.includes('audio') || lower.includes('voice')) targetKinds.push('AUDIO');
   if (lower.includes('document') || lower.includes('pdf')) targetKinds.push('DOCUMENT');
@@ -752,26 +769,37 @@ function logSanitized(reqId: string, method: string, path: string, statusCode: n
 }
 
 // Simple in-memory rate limiter per deviceId
-class RateLimiter {
+export class RateLimiter {
   private requests = new Map<string, number[]>();
   private maxRequestsPerMinute: number;
 
-  constructor(maxRequestsPerMinute: number = 60) {
+  constructor(maxRequestsPerMinute: number = 60, private windowMs = 60000) {
     this.maxRequestsPerMinute = maxRequestsPerMinute;
   }
 
-  checkRateLimit(key: string): boolean {
+  checkRateLimit(key: string, cost = 1): boolean {
     const now = Date.now();
-    const windowStart = now - 60 * 1000;
+    const windowStart = now - this.windowMs;
+    for (const [id, times] of this.requests) {
+      if (times[times.length - 1] <= windowStart) this.requests.delete(id);
+    }
+    if (!this.requests.has(key) && this.requests.size >= 10000) return false;
     let timestamps = this.requests.get(key) || [];
     timestamps = timestamps.filter(t => t > windowStart);
-    if (timestamps.length >= this.maxRequestsPerMinute) {
+    if (!Number.isSafeInteger(cost) || cost < 1 || timestamps.length + cost > this.maxRequestsPerMinute) {
       return false; // limited
     }
-    timestamps.push(now);
+    timestamps.push(...Array(cost).fill(now));
     this.requests.set(key, timestamps);
     return true;
   }
+}
+
+/** Forwarding headers are accepted only from explicitly configured adjacent proxies. */
+export function clientAddress(peer: string, forwarded: string | string[] | undefined, trustedProxies: Set<string>): string {
+  if (!trustedProxies.has(peer) || typeof forwarded !== 'string') return peer;
+  const address = forwarded.split(',').at(-1)?.trim() || '';
+  return net.isIP(address) ? address : peer;
 }
 
 export function createServer(config?: Partial<ServerConfig>) {
@@ -787,7 +815,7 @@ export function createServer(config?: Partial<ServerConfig>) {
   const sessionSigningSecret = config?.sessionSigningSecret ?? (process.env.SESSION_SIGNING_SECRET || '');
   const deviceEnrollmentSecret = config?.deviceEnrollmentSecret ?? (process.env.DEVICE_ENROLLMENT_SECRET || '');
 
-  const isAuthConfigured = Boolean(sessionSigningSecret && deviceEnrollmentSecret);
+  const isAuthConfigured = Boolean(sessionSigningSecret);
 
   // If secret not configured in test/dev, generate random temporary secret
   const activeSessionSecret = sessionSigningSecret || crypto.randomBytes(32).toString('hex');
@@ -795,6 +823,14 @@ export function createServer(config?: Partial<ServerConfig>) {
 
   const registry = new DeviceRegistry(activeSessionSecret, activeEnrollmentSecret);
   const rateLimiter = new RateLimiter(60);
+  const authIpLimiter = new RateLimiter(120);
+  const registerIpLimiter = new RateLimiter(12);
+  const registerKeyLimiter = new RateLimiter(6);
+  const registerGlobalLimiter = new RateLimiter(120);
+  const providerGlobalLimiter = new RateLimiter(120);
+  const providerDailyLimiter = new RateLimiter(1000, 24 * 60 * 60 * 1000);
+  const trustedProxies = new Set((process.env.TRUSTED_PROXY_IPS || '').split(',').map(value => value.trim()).filter(value => net.isIP(value)));
+  let activeProviderRequests = 0;
 
   let provider: GeminiProvider | null = config?.customProvider || null;
   if (!provider && geminiApiKey) {
@@ -858,21 +894,47 @@ export function createServer(config?: Partial<ServerConfig>) {
     }
 
     // Fail closed if auth is not configured for non-health endpoints
-    if (!isAuthConfigured && !config?.sessionSigningSecret) {
+    if (!isAuthConfigured) {
       return sendResponse(503, {
         error: 'BACKEND_UNCONFIGURED',
         message: 'Auth secrets are not configured on this server.'
       });
     }
 
+    const ip = clientAddress(req.socket.remoteAddress || 'unknown', req.headers['x-forwarded-for'], trustedProxies);
+    if (pathname.startsWith('/v1/auth/') && !authIpLimiter.checkRateLimit(ip)) {
+      return sendResponse(429, { error: 'RATE_LIMITED' });
+    }
+
     // Challenge flow: GET /v1/auth/challenge?deviceId=xxx
     if (pathname === '/v1/auth/challenge' && req.method === 'GET') {
       const deviceId = url.searchParams.get('deviceId');
-      if (!deviceId) {
+      if (!deviceId || !/^[A-Za-z0-9_-]{1,128}$/.test(deviceId)) {
         return sendResponse(400, { error: 'INVALID_REQUEST', message: 'deviceId parameter required' });
       }
       const nonce = registry.createChallenge(deviceId);
       return sendResponse(200, { deviceId, nonce, expiresSec: 300 });
+    }
+
+    if (pathname === '/v1/auth/register' && req.method === 'POST') {
+      if (!registerIpLimiter.checkRateLimit(ip) || !registerGlobalLimiter.checkRateLimit('global')) {
+        return sendResponse(429, { error: 'RATE_LIMITED' });
+      }
+      try {
+        const body = await parseJsonBody(req, Math.min(maxBodyBytes, 8192), controller.signal);
+        if (!isRecord(body) || !hasOnlyKeys(body, ['deviceId', 'appVersion', 'challengeNonce', 'publicKey', 'signature']) ||
+            typeof body.deviceId !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(body.deviceId) ||
+            !boundedNonblank(body.appVersion, 64) || !boundedNonblank(body.challengeNonce, 256) ||
+            !boundedNonblank(body.publicKey, 512) || !boundedNonblank(body.signature, 256)) {
+          return sendResponse(400, { error: 'INVALID_REQUEST' });
+        }
+        const fingerprint = registry.computePublicKeyFingerprint(body.publicKey);
+        if (!registerKeyLimiter.checkRateLimit(fingerprint)) return sendResponse(429, { error: 'RATE_LIMITED' });
+        const credentials = registry.register(body.deviceId, body.appVersion, body.challengeNonce, body.publicKey, body.signature);
+        return sendResponse(200, { status: 'ENROLLED', deviceId: body.deviceId, ...credentials });
+      } catch (err: any) {
+        return sendResponse(err.statusCode || 500, { error: err.message || 'REGISTRATION_FAILED' });
+      }
     }
 
     // Enrollment: POST /v1/auth/enroll
@@ -988,6 +1050,27 @@ export function createServer(config?: Partial<ServerConfig>) {
       });
     }
 
+    if (activeProviderRequests >= 4) {
+      return sendResponse(429, { error: 'RATE_LIMITED' });
+    }
+    activeProviderRequests++;
+    // Hold capacity until completion, including timed-out providers still winding down.
+    let released = false;
+    let providerPending = false;
+    const release = () => { if (!released) { released = true; activeProviderRequests--; } };
+    res.once('close', () => { if (!providerPending) release(); });
+    async function invokeProvider<T>(action: () => Promise<T>, cost = 1): Promise<T> {
+      if (!providerGlobalLimiter.checkRateLimit('global', cost) || !providerDailyLimiter.checkRateLimit('global', cost)) {
+        throw Object.assign(new Error('RATE_LIMITED'), { statusCode: 429 });
+      }
+      providerPending = true;
+      try { return await action(); }
+      finally {
+        providerPending = false;
+        if (res.writableEnded || res.destroyed) release();
+      }
+    }
+
     // Protected Route: POST /v1/ai/answer. No stable library IDs or original media.
     if (pathname === '/v1/ai/answer' && req.method === 'POST') {
       let body: unknown;
@@ -1016,7 +1099,7 @@ export function createServer(config?: Partial<ServerConfig>) {
       });
       try {
         controller.signal.throwIfAborted();
-        const result = await provider.answer(body.question, providerEvidence, controller.signal);
+        const result = await invokeProvider(() => provider!.answer(body.question, providerEvidence, controller.signal));
         controller.signal.throwIfAborted();
         if (!isAnswerResult(result, providerEvidence)) throw new Error('INVALID_ANSWER');
         return sendResponse(200, {
@@ -1024,8 +1107,9 @@ export function createServer(config?: Partial<ServerConfig>) {
           answer: result.answer,
           sourceIds: result.sourceIds.map(sourceId => sourceReferences.get(sourceId)!)
         });
-      } catch {
+      } catch (err: any) {
         if (controller.signal.aborted) return;
+        if (err.statusCode === 429) return sendResponse(429, { error: 'RATE_LIMITED' });
         return sendResponse(502, { error: 'ANSWER_PROVIDER_UNAVAILABLE' });
       }
     }
@@ -1055,7 +1139,7 @@ export function createServer(config?: Partial<ServerConfig>) {
         }
 
         controller.signal.throwIfAborted();
-        const result = await provider.analyze(itemId, kind, textContent, originalFileName, mediaParts, controller.signal);
+        const result = await invokeProvider(() => provider!.analyze(itemId, kind, textContent, originalFileName, mediaParts, controller.signal));
         return sendResponse(200, result);
       } catch (err: any) {
         return sendResponse(err.statusCode || 500, { error: err.message || 'ANALYSIS_FAILED' });
@@ -1079,7 +1163,7 @@ export function createServer(config?: Partial<ServerConfig>) {
           }
         }
         controller.signal.throwIfAborted();
-        const result = await provider.embed(texts, controller.signal);
+        const result = await invokeProvider(() => provider!.embed(texts, controller.signal), texts.length);
         return sendResponse(200, result);
       } catch (err: any) {
         return sendResponse(err.statusCode || 500, { error: err.message || 'EMBED_FAILED' });
@@ -1089,17 +1173,20 @@ export function createServer(config?: Partial<ServerConfig>) {
     // Protected Route: POST /v1/ai/search-plan
     if (pathname === '/v1/ai/search-plan' && req.method === 'POST') {
       try {
-        const body = await parseJsonBody(req, maxBodyBytes, controller.signal);
-        const { query, knownCollections, nowIso } = body;
-        if (!query || typeof query !== 'string') {
-          return sendResponse(400, { error: 'INVALID_REQUEST', message: 'query string required' });
+        const body = await parseJsonBody(req, Math.min(maxBodyBytes, 65536), controller.signal);
+        if (!isRecord(body) || !boundedNonblank(body.query, 2000) ||
+            (body.knownCollections !== undefined && (!Array.isArray(body.knownCollections) ||
+              body.knownCollections.length > 50 || !body.knownCollections.every(value => boundedNonblank(value, 200)))) ||
+            (body.nowIso !== undefined && (!boundedNonblank(body.nowIso, 64) || isNaN(Date.parse(body.nowIso))))) {
+          return sendResponse(400, { error: 'INVALID_REQUEST' });
         }
-        const result = await provider.searchPlan(
-          query,
-          Array.isArray(knownCollections) ? knownCollections : [],
-          nowIso || new Date().toISOString(),
+        const { query, knownCollections, nowIso } = body;
+        const result = await invokeProvider(() => provider!.searchPlan(
+          query as string,
+          (knownCollections as string[] | undefined) || [],
+          (nowIso as string | undefined) || new Date().toISOString(),
           controller.signal
-        );
+        ));
         return sendResponse(200, result);
       } catch (err: any) {
         return sendResponse(err.statusCode || 500, { error: err.message || 'SEARCH_PLAN_FAILED' });

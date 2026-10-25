@@ -52,8 +52,13 @@ class CaptureService : Service() {
             var message = "Saving could not finish. Items already committed are kept; share unfinished files again."
             try {
                 val repository = LibraryRepository(this@CaptureService)
+                repository.completeOwnerFeedbackMigration()
+                val reminder = if (intent.hasExtra("capture_reminder_time")) com.example.data.CaptureReminder(
+                    intent.getLongExtra("capture_reminder_time", 0), intent.getBooleanExtra("capture_reminder_exact", false),
+                    intent.getBooleanExtra("capture_reminder_date_only", false), intent.getStringExtra("capture_reminder_date")) else null
                 val result = CaptureBatchProcessor.android(this@CaptureService, repository).save(payload,
-                    intent.getStringArrayListExtra(COLLECTIONS).orEmpty(), intent.getBooleanExtra(STICKER, false)) { saved, failed -> store.progress(saved, failed, batchId) }
+                    intent.getStringArrayListExtra(COLLECTIONS).orEmpty(), intent.getBooleanExtra(STICKER, false),
+                    intent.getBooleanExtra("capture_favorite", false), reminder) { saved, failed -> store.progress(saved, failed, batchId) }
                 message = if (result.failed == 0) "Saved ${result.saved} item(s) to your library."
                     else "Saved ${result.saved} item(s). ${result.failed} file(s) could not be saved; share them again."
             } catch (cancelled: CancellationException) {
@@ -84,7 +89,8 @@ class CaptureService : Service() {
         private const val BATCH_ID = "capture_batch_id"
         private const val COLLECTIONS = "capture_collections"
         private const val STICKER = "capture_sticker"
-        fun start(context: Context, payload: SharePayload, collections: List<String>, sticker: Boolean = false): Boolean {
+        fun start(context: Context, payload: SharePayload, collections: List<String>, sticker: Boolean = false,
+            favorite: Boolean = false, reminder: com.example.data.CaptureReminder? = null): Boolean {
             if (payload.uris.isEmpty() && payload.text.isNullOrBlank() && payload.rejectedCount == 0) return false
             val store = (context.applicationContext as PersonalLibraryApp).captureState
             val batch = UUID.randomUUID().toString()
@@ -95,6 +101,11 @@ class CaptureService : Service() {
                 putExtra(Intent.EXTRA_TEXT, payload.text)
                 putExtra(BATCH_ID, batch)
                 putExtra(STICKER, sticker)
+                putExtra("capture_favorite", favorite)
+                reminder?.let {
+                    putExtra("capture_reminder_time", it.time); putExtra("capture_reminder_exact", it.exact)
+                    putExtra("capture_reminder_date_only", it.dateOnly); putExtra("capture_reminder_date", it.localDate)
+                }
                 putStringArrayListExtra(COLLECTIONS, ArrayList(collections))
                 val uris = payload.uris.map(Uri::parse)
                 putParcelableArrayListExtra(Intent.EXTRA_STREAM, ArrayList(uris))

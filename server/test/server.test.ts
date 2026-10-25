@@ -2,7 +2,88 @@ import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert';
 import http from 'node:http';
 import crypto from 'node:crypto';
-import { createServer, DeviceRegistry, FakeGeminiProvider, SdkGeminiProvider, verifyDeviceSignature } from '../src/server.js';
+import { createServer, DeviceRegistry, FakeGeminiProvider, SdkGeminiProvider, verifyDeviceSignature, clientAddress, RateLimiter } from '../src/server.js';
+
+describe('Automatic signed registration', () => {
+  test('embedding batches reserve one budget unit per underlying provider call', () => {
+    const limiter = new RateLimiter(3);
+    assert.ok(limiter.checkRateLimit('global', 3));
+    assert.strictEqual(limiter.checkRateLimit('global'), false);
+  });
+  test('timed out providers retain bounded capacity until they actually settle', async () => {
+    const provider = new FakeGeminiProvider();
+    const completions: (() => void)[] = [];
+    let calls = 0;
+    provider.answer = async () => { calls++; await new Promise<void>(resolve => completions.push(resolve)); return { status: 'INSUFFICIENT', answer: '', sourceIds: [] }; };
+    const instance = createServer({ sessionSigningSecret: 'synthetic', customProvider: provider, requestTimeoutMs: 25 });
+    await new Promise<void>(resolve => instance.server.listen(0, '127.0.0.1', resolve));
+    const url = `http://127.0.0.1:${(instance.server.address() as any).port}/v1/ai/answer`;
+    const send = () => fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Device-Id': 'capacity', Authorization: `Bearer ${instance.registry.createSessionToken('capacity')}` }, body: JSON.stringify({ question: 'synthetic', evidence: [{ sourceId: 's1', itemRef: 'i1', title: 'title', text: 'synthetic' }] }) });
+    try {
+      const first = await Promise.all(Array.from({ length: 4 }, send));
+      assert.ok(first.every(response => response.status === 504));
+      assert.strictEqual((await send()).status, 429);
+      assert.strictEqual(calls, 4);
+    } finally {
+      completions.forEach(resolve => resolve());
+      await new Promise<void>(resolve => instance.server.close(() => resolve()));
+    }
+  });
+  test('forwarding headers require explicit adjacent proxy trust and a valid final IP', () => {
+    assert.strictEqual(clientAddress('127.0.0.1', '198.51.100.2', new Set()), '127.0.0.1');
+    assert.strictEqual(clientAddress('127.0.0.1', 'spoof, 198.51.100.2', new Set(['127.0.0.1'])), '198.51.100.2');
+    assert.strictEqual(clientAddress('127.0.0.1', 'invalid', new Set(['127.0.0.1'])), '127.0.0.1');
+  });
+  test('rate limiter refuses new identities at capacity without dropping active budgets', () => {
+    const limiter = new RateLimiter(1);
+    for (let i = 0; i < 10000; i++) assert.ok(limiter.checkRateLimit(`ip-${i}`));
+    assert.strictEqual(limiter.checkRateLimit('overflow'), false);
+    assert.strictEqual(limiter.checkRateLimit('ip-0'), false);
+  });
+  const { publicKey, privateKey } = crypto.generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
+  const key = publicKey.export({ type: 'spki', format: 'der' }).toString('base64');
+  let app: ReturnType<typeof createServer>;
+  let base: string;
+  before(async () => {
+    app = createServer({ sessionSigningSecret: 'synthetic-session-only', customProvider: new FakeGeminiProvider() });
+    await new Promise<void>(resolve => app.server.listen(0, '127.0.0.1', resolve));
+    base = `http://127.0.0.1:${(app.server.address() as any).port}`;
+  });
+  after(done => app.server.close(done));
+  async function signed(deviceId: string) {
+    const challenge = await (await fetch(`${base}/v1/auth/challenge?deviceId=${deviceId}`)).json() as any;
+    const canonical = `PLIB-REGISTER-V1\n${deviceId}\n${challenge.nonce}\n1.0.2\n${key}`;
+    return { deviceId, appVersion: '1.0.2', challengeNonce: challenge.nonce, publicKey: key,
+      signature: crypto.sign('sha256', Buffer.from(canonical), privateKey).toString('base64') };
+  }
+  async function register(body: any, headers = {}) {
+    return fetch(`${base}/v1/auth/register`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body) });
+  }
+  test('registers without secret and renews using the existing signed session protocol', async () => {
+    const body = await signed('automatic-device');
+    const response = await register(body);
+    assert.strictEqual(response.status, 200);
+    const paired = await response.json() as any;
+    assert.ok(app.registry.validateSession(body.deviceId, paired.sessionToken));
+    const nonce = app.registry.createChallenge(body.deviceId);
+    const signature = crypto.sign('sha256', Buffer.from(`PLIB-SESSION-V1\n${body.deviceId}\n${nonce}\n${paired.deviceCredential}`), privateKey).toString('base64');
+    assert.ok(app.registry.renewSession(body.deviceId, paired.deviceCredential, nonce, key, signature).sessionToken);
+    assert.strictEqual((await register(body)).status, 401);
+  });
+  test('rejects forged signatures, expired challenge and revoked registration', async () => {
+    const forged = await signed('forged-device');
+    assert.strictEqual((await register({ ...forged, signature: 'invalid' })).status, 401);
+    assert.strictEqual((await register({ ...forged, challengeNonce: '1000000000000.' + '0'.repeat(32) + '.' + '0'.repeat(64) })).status, 401);
+    const revoked = await signed('revoked-auto-device');
+    app.registry.revoke(revoked.deviceId);
+    assert.strictEqual((await register(revoked)).status, 401);
+  });
+  test('public key budget cannot be bypassed with fresh device IDs or spoofed forwarding headers', async () => {
+    const statuses: number[] = [];
+    for (let i = 0; i < 9; i++) statuses.push((await register(await signed(`key-budget-${i}`), { 'X-Forwarded-For': `198.51.100.${i}` })).status);
+    assert.ok(statuses.includes(429));
+  });
+});
 
 describe('Personal Library Authenticated Backend (TypeScript)', () => {
   let server: http.Server;
@@ -422,11 +503,11 @@ describe('Production Server without Gemini Key or Secrets', () => {
 
   after(done => server.close(done));
 
-  test('Health endpoint reports authConfigured false if enrollment secret missing', async () => {
+  test('Health reports automatic auth configured with only session secret', async () => {
     const res = await fetch(`${baseUrl}/health`);
     const body = await res.json() as any;
     assert.strictEqual(res.status, 200);
-    assert.strictEqual(body.authConfigured, false);
+    assert.strictEqual(body.authConfigured, true);
   });
 });
 
@@ -510,6 +591,50 @@ describe('Request cancellation', () => {
 });
 
 describe('Search plan provenance', () => {
+  test('search plan rejects unbounded or malformed metadata before invoking provider', async () => {
+    let calls = 0;
+    class PlanningProvider extends FakeGeminiProvider {
+      async searchPlan(query: string, collections: string[], now: string) {
+        calls++;
+        return super.searchPlan(query, collections, now);
+      }
+    }
+    const app = createServer({ customProvider: new PlanningProvider(), sessionSigningSecret: 'synthetic-plan-secret' });
+    await new Promise<void>(resolve => app.server.listen(0, '127.0.0.1', resolve));
+    const url = `http://127.0.0.1:${(app.server.address() as any).port}/v1/ai/search-plan`;
+    const headers = { 'Content-Type': 'application/json', 'X-Device-Id': 'plan-device', Authorization: `Bearer ${app.registry.createSessionToken('plan-device')}` };
+    try {
+      for (const body of [{ query: 'x'.repeat(2001) }, { query: 'birthday', knownCollections: [{}] },
+        { query: 'birthday', knownCollections: Array(51).fill('collection') }, { query: 'birthday', nowIso: {} }]) {
+        assert.strictEqual((await fetch(url, { method: 'POST', headers, body: JSON.stringify(body) })).status, 400);
+      }
+      assert.strictEqual(calls, 0);
+      assert.strictEqual((await fetch(url, { method: 'POST', headers, body: JSON.stringify({
+        query: 'x'.repeat(2000), knownCollections: Array(50).fill('c'.repeat(200)), nowIso: '2026-10-24T00:00:00Z'
+      }) })).status, 200);
+      assert.strictEqual(calls, 1);
+    } finally { await new Promise<void>(resolve => app.server.close(() => resolve())); }
+  });
+
+  test('synonym planning has a bounded output budget and bounded concepts and kinds', async () => {
+    const provider = new SdkGeminiProvider('synthetic-key', 'test-generation', 'test-embedding');
+    let request: any;
+    (provider as any).ai = { models: { generateContent: async (input: any) => {
+      request = input;
+      return { text: JSON.stringify({ concepts: Array(80).fill('bday'.repeat(30)), targetKinds: Array(80).fill('TEXT') }) };
+    } } };
+    const plan = await provider.searchPlan('When is Ryan birthday?', [], '2026-10-24T00:00:00Z');
+    assert.ok(request.config.maxOutputTokens <= 1024);
+    assert.ok(request.contents.includes('bday'));
+    assert.ok(plan.concepts.length <= 20 && plan.concepts.every(concept => concept.length <= 60));
+    assert.deepStrictEqual(plan.targetKinds, ['TEXT']);
+  });
+
+  test('Gemini plan accepts GIF as its own kind', async () => {
+    const provider = new SdkGeminiProvider('synthetic-key', 'test-generation', 'test-embedding');
+    (provider as any).ai = { models: { generateContent: async () => ({ text: JSON.stringify({ concepts: ['animated'], targetKinds: ['GIF'] }) }) } };
+    assert.deepStrictEqual((await provider.searchPlan('animated GIF', [], '2026-10-24T00:00:00Z')).targetKinds, ['GIF']);
+  });
   test('SDK analysis keeps PDF text bounded and forwards bounded audio with its MIME', async () => {
     const provider = new SdkGeminiProvider('synthetic-key', 'test-generation', 'test-embedding');
     let contents: any[] = [];

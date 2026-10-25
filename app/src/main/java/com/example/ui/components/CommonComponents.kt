@@ -1,5 +1,6 @@
 package com.example.ui.components
 
+import android.content.ClipData
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -39,9 +40,14 @@ import com.example.data.ItemEntity
 import com.example.data.ItemWithCollections
 import com.example.ui.theme.LocalAppDarkTheme
 import com.personallibrary.core.model.ItemKind
+import com.personallibrary.core.storage.ContentClassifier
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.*
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @Composable
 fun TypeFilterChipStrip(
@@ -85,6 +91,7 @@ fun getKindIcon(kindStr: String): ImageVector {
     return when (kindStr) {
         "PHOTO" -> Icons.Filled.Photo
         "STICKER" -> Icons.Filled.Face
+        "GIF" -> Icons.Filled.Gif
         "VIDEO" -> Icons.Filled.PlayArrow
         "AUDIO" -> Icons.Filled.Headphones
         "TEXT" -> Icons.Filled.Edit
@@ -102,6 +109,7 @@ internal fun kindColorForTheme(kindStr: String, darkTheme: Boolean): Color {
     if (darkTheme) return when (kindStr) {
         "PHOTO" -> Color(0xFF93C5FD)
         "STICKER" -> Color(0xFFF9A8D4)
+        "GIF" -> Color(0xFFF9A8D4)
         "VIDEO" -> Color(0xFFFCA5A5)
         "AUDIO" -> Color(0xFFC4B5FD)
         "TEXT" -> Color(0xFF6EE7B7)
@@ -112,6 +120,7 @@ internal fun kindColorForTheme(kindStr: String, darkTheme: Boolean): Color {
     return when (kindStr) {
         "PHOTO" -> Color(0xFF1D4ED8)
         "STICKER" -> Color(0xFF9D174D)
+        "GIF" -> Color(0xFF9D174D)
         "VIDEO" -> Color(0xFFB91C1C)
         "AUDIO" -> Color(0xFF6D28D9)
         "TEXT" -> Color(0xFF065F46)
@@ -136,6 +145,7 @@ fun ItemCard(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val shareScope = rememberCoroutineScope()
     val item = itemWithCols.item
     val kindColor = getKindColor(item.kind)
     val dateFormatter = remember { SimpleDateFormat("MMM d, yyyy", Locale.getDefault()) }
@@ -249,7 +259,7 @@ fun ItemCard(
             Spacer(modifier = Modifier.height(8.dp))
 
             // Visual Thumbnail
-            if (blobFile != null && (item.kind == "PHOTO" || item.kind == "STICKER")) {
+            if (blobFile != null && (item.kind == "PHOTO" || item.kind == "STICKER" || item.kind == "GIF")) {
                 AsyncImage(
                     model = blobFile,
                     contentDescription = item.title,
@@ -354,7 +364,7 @@ fun ItemCard(
 
                 Row {
                     IconButton(
-                        onClick = { shareItemEntity(context, item, blobFile) },
+                        onClick = { shareItemEntity(context, item, blobFile, shareScope) },
                         enabled = !isSelectMode,
                         modifier = Modifier.size(48.dp).testTag("share_btn_${item.id}")
                     ) {
@@ -398,6 +408,7 @@ fun ItemGridCard(
     matchingSnippet: String? = null
 ) {
     val context = LocalContext.current
+    val shareScope = rememberCoroutineScope()
     val item = itemWithCols.item
     val kindColor = getKindColor(item.kind)
     val blobFile = remember(item.contentHash) {
@@ -423,7 +434,7 @@ fun ItemGridCard(
                 Checkbox(checked = isSelected, onCheckedChange = { onSelectToggle() }, modifier = Modifier.size(48.dp))
             }
             // Visual header or icon
-            if (blobFile != null && (item.kind == "PHOTO" || item.kind == "STICKER")) {
+            if (blobFile != null && (item.kind == "PHOTO" || item.kind == "STICKER" || item.kind == "GIF")) {
                 AsyncImage(
                     model = blobFile,
                     contentDescription = item.title,
@@ -437,7 +448,7 @@ fun ItemGridCard(
                 Surface(
                     color = kindColor.copy(alpha = 0.15f),
                     shape = RoundedCornerShape(8.dp),
-                    modifier = Modifier.fillMaxWidth().height(70.dp)
+                    modifier = Modifier.fillMaxWidth().height(110.dp)
                 ) {
                     Box(contentAlignment = Alignment.Center) {
                         Icon(getKindIcon(item.kind), contentDescription = null, tint = kindColor, modifier = Modifier.size(28.dp))
@@ -451,23 +462,21 @@ fun ItemGridCard(
                 text = item.title,
                 style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.Bold,
+                minLines = 2,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis
             )
 
-            if (!matchingSnippet.isNullOrBlank()) {
-                Text(matchingSnippet, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.testTag("grid_snippet_${item.id}"))
-            } else if (item.content.isNotBlank() && item.kind != "PHOTO" && item.kind != "STICKER") {
-                Spacer(modifier = Modifier.height(2.dp))
-                Text(
-                    text = item.content,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
+            Text(
+                text = matchingSnippet?.takeIf { it.isNotBlank() }
+                    ?: item.content.takeUnless { item.kind in setOf("PHOTO", "STICKER", "GIF") }.orEmpty(),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                minLines = 2,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.testTag("grid_snippet_${item.id}")
+            )
 
             Spacer(modifier = Modifier.height(6.dp))
 
@@ -504,7 +513,7 @@ fun ItemGridCard(
             }
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                 IconButton(
-                    onClick = { shareItemEntity(context, item, blobFile) },
+                    onClick = { shareItemEntity(context, item, blobFile, shareScope) },
                     enabled = !isSelectMode,
                     modifier = Modifier.size(48.dp).testTag("share_btn_${item.id}")
                 ) {
@@ -518,40 +527,70 @@ fun ItemGridCard(
     }
 }
 
-fun shareItemEntity(context: Context, item: ItemEntity, file: File?) {
-    try {
-        if (file != null && file.exists()) {
-            val uri = FileProvider.getUriForFile(
-                context,
-                "${context.packageName}.fileprovider",
-                file
-            )
-            val intent = Intent(Intent.ACTION_SEND).apply {
-                type = item.mimeType ?: "*/*"
-                putExtra(Intent.EXTRA_STREAM, uri)
-                putExtra(Intent.EXTRA_SUBJECT, item.title)
-                if (item.content.isNotBlank()) {
-                    putExtra(Intent.EXTRA_TEXT, item.content)
-                }
-                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            }
-            context.startActivity(Intent.createChooser(intent, "Share ${item.title}"))
-            return
-        }
+/** Keep exports after the chooser pauses Memora; receivers may read them asynchronously. */
+internal fun prepareOriginalForExport(context: Context, item: ItemEntity, original: File): File {
+    val root = File(context.cacheDir, "shared_originals").apply { mkdirs() }
+    val expiry = System.currentTimeMillis() - 48L * 60 * 60 * 1000
+    root.listFiles()?.filter { it.isDirectory && it.lastModified() < expiry && it.canonicalFile.parentFile == root.canonicalFile }
+        ?.forEach { it.deleteRecursively() }
+    val mimeExtension = item.mimeType?.substringBefore(';')?.let { android.webkit.MimeTypeMap.getSingleton().getExtensionFromMimeType(it.lowercase(Locale.ROOT)) }
+    var name = (item.originalFileName?.takeIf { it.isNotBlank() } ?: item.title)
+        .replace('\\', '/').substringAfterLast('/')
+        .replace(Regex("[\\p{Cntrl}<>:\"/\\\\|?*]"), "_")
+        .trim().trim('.').ifBlank { "original" }
+    if (name.length > 180) {
+        val suffix = name.substringAfterLast('.', "").takeIf { it.length in 1..12 }?.let { ".$it" }.orEmpty()
+        name = name.take(180 - suffix.length) + suffix
+    }
+    if (name.substringAfterLast('.', "").isEmpty() && mimeExtension != null) name += ".$mimeExtension"
+    val directory = File(root, UUID.randomUUID().toString()).apply { check(mkdirs()) }
+    val target = File(directory, name)
+    try { original.copyTo(target) } catch (error: Exception) { directory.deleteRecursively(); throw error }
+    return target
+}
 
-        val shareText = if (item.kind == "LINK") item.content else "${item.title}\n\n${item.content}"
-        val intent = Intent(Intent.ACTION_SEND).apply {
-            type = "text/plain"
-            putExtra(Intent.EXTRA_SUBJECT, item.title)
-            putExtra(Intent.EXTRA_TEXT, shareText)
-        }
-        context.startActivity(Intent.createChooser(intent, "Share via"))
-    } catch (e: Exception) {
-        Toast.makeText(context, "Cannot share: ${e.message}", Toast.LENGTH_SHORT).show()
+private fun exportedOriginalUri(context: Context, item: ItemEntity, file: File): Uri =
+    FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", prepareOriginalForExport(context, item, file))
+
+internal fun originalMimeType(item: ItemEntity, providerMimeType: String?): String {
+    val resolved = ContentClassifier.resolveMimeType(item.mimeType, item.originalFileName ?: item.title)
+    return if (resolved.equals("application/octet-stream", ignoreCase = true)) providerMimeType ?: resolved else resolved
+}
+
+private fun launchPreparedIntent(context: Context, scope: CoroutineScope?, prepare: () -> Intent) {
+    fun fail() { Toast.makeText(context, "Could not share or open this item. Please try again.", Toast.LENGTH_LONG).show() }
+    if (scope == null) {
+        try { context.startActivity(prepare()) } catch (_: Exception) { fail() }
+    } else scope.launch {
+        try {
+            val intent = withContext(Dispatchers.IO) { prepare() }
+            context.startActivity(intent)
+        } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+        catch (_: Exception) { fail() }
     }
 }
 
-fun openItemEntityExternally(context: Context, item: ItemEntity, file: File?) {
+fun shareItemEntity(context: Context, item: ItemEntity, file: File?, scope: CoroutineScope? = null) {
+    launchPreparedIntent(context, scope) {
+        val send = Intent(Intent.ACTION_SEND).apply {
+            putExtra(Intent.EXTRA_SUBJECT, item.title)
+            if (file != null && file.exists()) {
+                val uri = exportedOriginalUri(context, item, file)
+                type = originalMimeType(item, context.contentResolver.getType(uri))
+                putExtra(Intent.EXTRA_STREAM, uri)
+                clipData = ClipData.newUri(context.contentResolver, item.originalFileName ?: item.title, uri)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            } else {
+                check(item.contentHash == null) { "Original file is unavailable" }
+                type = "text/plain"
+                putExtra(Intent.EXTRA_TEXT, if (item.kind == "LINK") item.content else "${item.title}\n\n${item.content}")
+            }
+        }
+        Intent.createChooser(send, "Share via")
+    }
+}
+
+fun openItemEntityExternally(context: Context, item: ItemEntity, file: File?, scope: CoroutineScope? = null) {
     try {
         if (item.kind == "LINK") {
             val url = item.content.lineSequence().first().trim()
@@ -571,16 +610,14 @@ fun openItemEntityExternally(context: Context, item: ItemEntity, file: File?) {
         }
 
         if (file != null && file.exists()) {
-            val uri = FileProvider.getUriForFile(
-                context,
-                "${context.packageName}.fileprovider",
-                file
-            )
-            val intent = Intent(Intent.ACTION_VIEW).apply {
-                setDataAndType(uri, item.mimeType ?: "*/*")
-                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            launchPreparedIntent(context, scope) {
+                val uri = exportedOriginalUri(context, item, file)
+                Intent(Intent.ACTION_VIEW).apply {
+                    setDataAndType(uri, originalMimeType(item, context.contentResolver.getType(uri)))
+                    clipData = ClipData.newUri(context.contentResolver, item.title, uri)
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
             }
-            context.startActivity(intent)
             return
         }
 

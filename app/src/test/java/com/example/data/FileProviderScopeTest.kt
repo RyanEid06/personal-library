@@ -17,7 +17,7 @@ import org.xmlpull.v1.XmlPullParser
 class FileProviderScopeTest {
     // AndroidX uses literal '/' for containment; Windows paths cannot exercise it.
     // Actual URI boundaries and open/read are covered by Android instrumentation.
-    @Test fun realManifestExposesOnlyManagedOriginals() {
+    @Test fun realManifestExposesOnlyManagedOriginalsAndNamedExportCache() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val info = context.packageManager.resolveContentProvider("${BuildConfig.APPLICATION_ID}.fileprovider", PackageManager.GET_META_DATA)!!
         assertFalse(info.exported)
@@ -31,6 +31,6 @@ class FileProviderScopeTest {
                 }
             }
         }
-        assertEquals(listOf("files-path" to "storage_root/blobs/"), roots)
+        assertEquals(listOf("files-path" to "storage_root/blobs/", "cache-path" to "shared_originals/"), roots)
     }
 }

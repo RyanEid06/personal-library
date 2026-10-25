@@ -107,10 +107,9 @@ class WhatsAppFixtureTest {
         val rows = expectedIds.map { checkNotNull(repository.dao.getItemWithCollections(it)) }
         assertEquals(expectedIds, projectLocalSearch(rows.reversed(), LocalSearchContext(sort = SortOrder.SOURCE_OLDEST)).items.map { it.item.id })
         assertEquals(expectedIds.reversed(), projectLocalSearch(rows, LocalSearchContext(sort = SortOrder.SOURCE_NEWEST)).items.map { it.item.id })
-        val randomLinks = repository.getOrCreateRandomLinksCollection()
-        assertEquals(CollectionEntity.ROLE_RANDOM_LINKS, randomLinks.appRole)
+        assertTrue("Import defaults to Inbox without creating a folder", repository.dao.getAllCollections().isEmpty())
         assertEquals(201, repository.dao.getAllActiveItems().size) // 200 eligible messages plus original export.
-        assertEquals(expectedIds.toSet() + exportItem().id, repository.dao.getItemIdsForCollection(randomLinks.id).toSet())
+        assertTrue((expectedIds + exportItem().id).all { repository.dao.getCollectionIdsForItem(it).isEmpty() })
         assertArrayEquals(bytes, checkNotNull(repository.getBlobFile(checkNotNull(exportItem().contentHash))).readBytes())
         val before = repository.dao.getAllItemsIncludingTrash().associateBy { it.id }
         assertEquals(0 to 0, repository.importWhatsAppMigration(chat, DateOrder.DAY_FIRST))
@@ -118,7 +117,7 @@ class WhatsAppFixtureTest {
         assertEquals(1, repository.dao.getAllAssets().single().refCount)
     }
 
-    @Test fun incremental160To200AddsExactly40AndKeepsRenamedRandomLinksAndPriorRecords() = runBlocking {
+    @Test fun incremental160To200AddsExactly40ToInboxAndNeverRecreatesAnOrdinaryDeletedFolder() = runBlocking {
         val small = fixtureBytes("Memora_QA_WhatsApp_160.txt")
         assertEquals("403a9800444ac4a3523c82b2a84803db055e4ffb6bb144a4c6fa9912c5bdae49", hash(small))
         val full = fixtureText("Memora_QA_WhatsApp_200.txt")
@@ -126,18 +125,25 @@ class WhatsAppFixtureTest {
         assertEquals(160 to 0, repository.importWhatsAppMigration(small.toString(Charsets.UTF_8), DateOrder.DAY_FIRST))
         val before = messages().associateBy { it.id }
         assertEquals(160, before.size)
-        val collection = repository.getOrCreateRandomLinksCollection()
+        val collection = repository.createCollection("Random Links", "folder", "#123456")
+        val assignedId = before.keys.first()
+        repository.setItemCollections(assignedId, listOf(collection.id))
         repository.editCollection(collection.id, "Synthetic migration archive", "book", "#123456")
         assertEquals(40 to 0, repository.importWhatsAppMigration(full, DateOrder.DAY_FIRST))
         val after = messages().associateBy { it.id }
         assertEquals(200, after.size)
         assertEquals(before, after.filterKeys { it in before })
         assertEquals(sourceRecords(full).drop(160).map { it.key }.toSet(), after.keys - before.keys)
-        assertEquals(collection.id, repository.getOrCreateRandomLinksCollection().id)
-        assertEquals("Synthetic migration archive", repository.getOrCreateRandomLinksCollection().name)
-        assertEquals(1, repository.dao.getAllCollections().count { it.appRole == CollectionEntity.ROLE_RANDOM_LINKS })
-        assertTrue(after.keys.all { repository.dao.getCollectionIdsForItem(it) == listOf(collection.id) })
+        assertEquals("Synthetic migration archive", repository.dao.getAllCollections().single().name)
+        assertNull(repository.dao.getAllCollections().single().appRole)
+        assertEquals(listOf(collection.id), repository.dao.getCollectionIdsForItem(assignedId))
+        assertTrue((after.keys - assignedId).all { repository.dao.getCollectionIdsForItem(it).isEmpty() })
         assertEquals(202, repository.dao.getAllActiveItems().size) // Two distinct original export files.
+        val deletion = repository.deleteCollection(collection.id, undoMillis = 0)
+        assertTrue(repository.finalizeCollectionDeletion(deletion.operationId))
+        assertEquals(0 to 0, repository.importWhatsAppMigration(full, DateOrder.DAY_FIRST))
+        assertTrue(repository.dao.getAllCollections().isEmpty())
+        assertTrue(repository.dao.getItemById(assignedId)!!.isTrash)
     }
 
     @Test fun ambiguousDateStaysUnresolvedUntilChoiceAndChoiceDoesNotChangeIdentity() = runBlocking {
@@ -206,7 +212,7 @@ class WhatsAppFixtureTest {
     @Test fun androidRuntimeResolvesAbsentAndGenericMediaMimeFamiliesAndManagedKinds() {
         val formats = listOf(
             Triple("jpg", "image/", ItemKind.PHOTO), Triple("png", "image/", ItemKind.PHOTO),
-            Triple("gif", "image/", ItemKind.PHOTO), Triple("webp", "image/", ItemKind.PHOTO),
+            Triple("gif", "image/", ItemKind.GIF), Triple("webp", "image/", ItemKind.PHOTO),
             Triple("mp4", "video/", ItemKind.VIDEO), Triple("mov", "video/", ItemKind.VIDEO),
             Triple("opus", "audio/", ItemKind.AUDIO), Triple("m4a", "audio/", ItemKind.AUDIO)
         )

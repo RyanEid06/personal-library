@@ -24,6 +24,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.platform.LocalAccessibilityManager
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
@@ -60,6 +61,7 @@ fun CollectionsScreen(
     var saving by remember { mutableStateOf(false) }
     var saveError by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
+    val accessibility = LocalAccessibilityManager.current
 
     if (showCreateDialog || editingCollection != null) {
         CreateCollectionDialog(
@@ -81,6 +83,7 @@ fun CollectionsScreen(
 
     Scaffold(
         modifier = modifier.fillMaxSize(),
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         snackbarHost = { SnackbarHost(snackbarHost) },
         topBar = {
             TopAppBar(
@@ -128,7 +131,7 @@ fun CollectionsScreen(
             // Computed: Unfiled
             item {
                 CollectionCard(
-                    title = "Unfiled",
+                    title = "Inbox",
                     itemCount = unfiledCount,
                     icon = Icons.Filled.Inbox,
                     color = Color(0xFF6B7280),
@@ -154,30 +157,6 @@ fun CollectionsScreen(
             // User Collections
             items(collections, key = { it.id }) { col ->
                 val count = allItems.count { itemWithCols -> itemWithCols.collections.any { it.id == col.id } }
-                var showDeleteConfirm by remember { mutableStateOf(false) }
-
-                if (showDeleteConfirm) {
-                    AlertDialog(
-                        onDismissRequest = { showDeleteConfirm = false },
-                        title = { Text("Delete Collection?") },
-                        text = { Text("Saved items will remain in Memora. Their membership in this collection will be removed. Membership in other collections will be preserved.") },
-                        confirmButton = {
-                            Button(
-                                onClick = {
-                                    viewModel.deleteCollection(col.id)
-                                    showDeleteConfirm = false
-                                },
-                                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
-                            ) {
-                                Text("Delete")
-                            }
-                        },
-                        dismissButton = {
-                            TextButton(onClick = { showDeleteConfirm = false }) { Text("Cancel") }
-                        }
-                    )
-                }
-
                 var showPrivacy by remember { mutableStateOf(false) }
                 var excluded by remember(col.id, showPrivacy) { mutableStateOf(viewModel.isCollectionExcludedFromAi(col.id)) }
                 if (showPrivacy) {
@@ -206,7 +185,9 @@ fun CollectionsScreen(
                     onEdit = { saveError = null; editingCollection = col },
                     onSelectItems = { onSelectCollectionItems(col.id) },
                     onAiPrivacy = { showPrivacy = true },
-                    onDelete = { showDeleteConfirm = true },
+                    onDelete = { viewModel.deleteCollection(col.id, accessibility?.calculateRecommendedTimeoutMillis(
+                        originalTimeoutMillis = 5_000, containsIcons = false, containsText = true, containsControls = true
+                    ) ?: 5_000) },
                     modifier = Modifier.testTag("col_card_${col.id}")
                 )
             }
@@ -301,7 +282,7 @@ fun CreateCollectionDialog(
     val validationError = when {
         trimmedName.isEmpty() -> "Enter a collection name"
         existingCollections.any { it.id != initialCollection?.id && it.name.trim().equals(trimmedName, ignoreCase = true) } -> "A collection with this name already exists"
-        listOf("Favorites", "Unfiled", "Reminders", "Due Reminders").any { it.equals(trimmedName, ignoreCase = true) } -> "This name is reserved for a system collection"
+        listOf("Favorites", "Inbox", "Reminders", "Due Reminders").any { it.equals(trimmedName, ignoreCase = true) } -> "This name is reserved for a system collection"
         else -> null
     }
 

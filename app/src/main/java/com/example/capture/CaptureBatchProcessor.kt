@@ -17,6 +17,7 @@ data class CaptureBatchResult(val saved: Int, val failed: Int)
 class CaptureBatchProcessor(private val repository: LibraryRepository,
     private val resolve: suspend (String, String?) -> IncomingAsset) {
     suspend fun save(payload: SharePayload, collections: List<String>, explicitSticker: Boolean = false,
+        favorite: Boolean = false, reminder: com.example.data.CaptureReminder? = null,
         onCommitted: (Int, Int) -> Unit = { _, _ -> }): CaptureBatchResult = coroutineScope {
         var saved = 0
         var failed = payload.rejectedCount
@@ -36,7 +37,8 @@ class CaptureBatchProcessor(private val repository: LibraryRepository,
                             job.ensureActive(); return stream.read(buffer, offset, length).also { job.ensureActive() }
                         }
                     }
-                    checked.use { repository.captureStream(it, asset.name, asset.mime, explicitSticker, collections, knownSizeBytes = asset.knownSizeBytes) }
+                    checked.use { repository.captureStream(it, asset.name, asset.mime, explicitSticker, collections,
+                        knownSizeBytes = asset.knownSizeBytes, favorite = favorite, reminder = reminder) }
                     saved++
                 } finally { withContext(NonCancellable) { closer.cancelAndJoin() } }
             } catch (cancelled: CancellationException) { throw cancelled }
@@ -46,8 +48,8 @@ class CaptureBatchProcessor(private val repository: LibraryRepository,
         payload.text?.takeIf { it.isNotBlank() }?.let { text ->
             ensureActive()
             try {
-                if (text.startsWith("https://") || text.startsWith("http://")) repository.saveLink(text, "", "", collections)
-                else repository.createNote("", text, collections)
+                if (text.startsWith("https://") || text.startsWith("http://")) repository.saveLink(text, "", "", collections, favorite, reminder)
+                else repository.createNote("", text, collections, favorite, reminder)
                 saved++
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (_: Exception) { failed++ }

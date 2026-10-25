@@ -107,12 +107,11 @@ class LibraryRepositoryTest {
         assertEquals(0, ambiguous)
 
         val collections = repository.observeCollections().first()
-        val randomLinksCol = collections.find { it.name == "Random Links" }
-        assertNotNull("Migration must create or populate 'Random Links' collection", randomLinksCol)
+        assertTrue("Import must not create a default folder", collections.isEmpty())
 
         val items = repository.observeActiveItemsWithCollections().first()
         val syllabusItem = items.find { it.item.content.contains("https://chem.university.edu/syllabus") }
         assertNotNull(syllabusItem)
-        assertTrue(syllabusItem!!.collections.any { it.name == "Random Links" })
+        assertTrue(syllabusItem!!.collections.isEmpty())
     }
 }

@@ -35,6 +35,60 @@ class InteractiveAiRetrievalTest {
 
     private fun note(id: String, time: Long = 0L) = ItemEntity(id, "birthday $id", "synthetic text", "TEXT", createdAt = time)
 
+    @Test fun explicitAskWorksWhileBackgroundAiPaused() = runBlocking {
+        dao.insertItem(note("candidate"))
+        prefs.edit().putBoolean("ai_paused", true).commit()
+        val snapshot = retrieval.load(LocalSearchContext("birthday"))
+        assertEquals(listOf("candidate"), snapshot.items.map { it.item.id })
+        prefs.edit().putBoolean("ai_paused", false).commit()
+        retrieval.requireCurrent(snapshot) { true }
+    }
+
+    @Test fun expandedSynonymsRetrieveOldRyanBdayBefore160RecentRowsWithoutVectors() = runBlocking {
+        dao.insertCollection(CollectionEntity("current", "Current"))
+        dao.insertCollection(CollectionEntity("private", "Private"))
+        dao.insertItem(note("ryan-bday", 0).copy(title = "Ryan", content = "bday is November 6"))
+        dao.insertItemCollectionCrossRef(ItemCollectionCrossRef("ryan-bday", "current"))
+        repeat(180) { index ->
+            val id = "recent-$index"
+            dao.insertItem(note(id, 1000L + index).copy(title = "Birthday", content = "Unrelated generic record"))
+            dao.insertItemCollectionCrossRef(ItemCollectionCrossRef(id, "current"))
+        }
+        dao.insertItem(note("outside", 9999).copy(title = "Ryan birthday bday", content = "private"))
+        dao.insertItemCollectionCrossRef(ItemCollectionCrossRef("outside", "private"))
+        val snapshot = retrieval.load(LocalSearchContext("When is Ryan's birthday", collectionId = "current"), listOf("bday"))
+        assertEquals("ryan-bday", snapshot.items.first().item.id)
+        assertEquals(InteractiveAiRetrieval.MAX_ITEMS, snapshot.items.size)
+        assertTrue(snapshot.documents.isEmpty())
+        assertTrue(snapshot.items.none { it.item.id == "outside" })
+        val selected = selectAnswerEvidence("When is Ryan's birthday?", snapshot, emptyList(), listOf("bday"))
+        assertTrue(selected.evidence.any { it.text.contains("November 6") })
+    }
+
+    @Test fun aliasOnlyMatchBeats180NewerFallbackItemsAndEarlyUnrelatedChunks() = runBlocking {
+        dao.insertItem(note("alias", 0).copy(title = "Ryan", content = "", kind = "DOCUMENT", localIndexVersion = 7,
+            extractedText = "Ryan bday is November 6"))
+        repeat(180) { dao.insertItem(note("fallback-$it", 1000L + it).copy(title = "Unrelated", content = "Generic record")) }
+        repeat(8) { chunk -> dao.insertSearchDocument(SearchDocumentEntity("local_alias_7_$chunk", "alias", chunk,
+            pageNumber = chunk + 1, textContent = "Unrelated early page")) }
+        dao.insertSearchDocument(SearchDocumentEntity("local_alias_7_99", "alias", 99,
+            pageNumber = 100, textContent = "Ryan bday is November 6"))
+        val snapshot = retrieval.load(LocalSearchContext("birthday"), listOf("bday"))
+        assertEquals("alias", snapshot.items.first().item.id)
+        assertEquals(100, snapshot.documents.first().pageNumber)
+        assertEquals(InteractiveAiRetrieval.MAX_ITEMS, snapshot.items.size)
+        val selected = selectAnswerEvidence("birthday", snapshot, emptyList(), listOf("bday"))
+        assertEquals(100, selected.evidence.first().pageNumber)
+        assertTrue(selected.evidence.first().text.contains("November 6"))
+    }
+
+    @Test fun privacyCapturedBeforePlanCannotChangeBeforeCandidateSelection() = runBlocking {
+        dao.insertItem(note("private-later"))
+        val privacy = retrieval.capturePrivacy()
+        prefs.edit().putStringSet("excluded_items", setOf("private-later")).commit()
+        assertBlocked { retrieval.load(LocalSearchContext("birthday"), expectedPrivacy = privacy) }
+    }
+
     @Test fun excludedAndFilteredRowsCannotConsumeCandidateLimit() = runBlocking {
         dao.insertCollection(CollectionEntity("private", "Secret synthetic collection"))
         dao.insertCollection(CollectionEntity("visible", "Visible"))
@@ -187,8 +241,8 @@ class InteractiveAiRetrievalTest {
         dao.insertSearchDocument(doc)
         val snapshot = retrieval.load(LocalSearchContext("bir"))
         prefs.edit().putBoolean("ai_paused", true).commit()
-        assertBlocked { retrieval.requireCurrent(snapshot) { true } }
-        assertBlocked { retrieval.load(LocalSearchContext("bir")) }
+        retrieval.requireCurrent(snapshot) { true }
+        assertEquals(listOf("candidate"), retrieval.load(LocalSearchContext("bir")).items.map { it.item.id })
         prefs.edit().putBoolean("ai_paused", false).putStringSet("excluded_items", setOf("candidate")).commit()
         assertTrue(retrieval.load(LocalSearchContext("bir")).items.isEmpty())
         assertEquals(listOf(doc), dao.getSearchDocumentsForItem("candidate"))

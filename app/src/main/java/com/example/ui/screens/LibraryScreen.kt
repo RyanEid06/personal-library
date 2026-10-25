@@ -38,6 +38,7 @@ import com.example.ui.components.SelectionActions
 import com.example.ui.components.ActiveSearchFilters
 import com.example.ui.components.LibraryResultState
 import com.example.ui.components.hasSearchFilters
+import com.example.ui.components.AiAnswerCard
 import com.personallibrary.core.model.DateRange
 import java.time.Instant
 import java.time.ZoneId
@@ -51,8 +52,13 @@ fun LibraryScreen(
     onOpenVoiceSearch: () -> Unit,
     onOpenSettings: () -> Unit,
     onOpenAddDialog: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    collectionScope: String? = null,
+    onNavigateBack: (() -> Unit)? = null
 ) {
+    val aiAnswer by viewModel.aiAnswer.collectAsState()
+    val isAiSearching by viewModel.isAiSearching.collectAsState()
+    val aiError by viewModel.aiSearchError.collectAsState()
     val items by viewModel.localSearchResults.collectAsState()
     val allItems by viewModel.items.collectAsState()
     val resultsReady by viewModel.resultsReady.collectAsState()
@@ -118,17 +124,27 @@ fun LibraryScreen(
 
     Scaffold(
         modifier = modifier.fillMaxSize(),
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         snackbarHost = { SnackbarHost(snackbarHost) },
         topBar = {
             TopAppBar(
                 title = {
                     Text(
-                        text = if (isBatchMode) "${selectedItemIds.size} selected" else "${items.size} items • ${dateBasis.label}",
+                        text = if (isBatchMode) "${selectedItemIds.size} selected" else when (collectionScope) {
+                            "computed_unfiled" -> "Inbox"
+                            "computed_favorites" -> "Favorites"
+                            "computed_due" -> "Reminders"
+                            null -> "Library • ${items.size} items"
+                            else -> collections.find { it.id == collectionScope }?.name ?: "Collection"
+                        },
                         style = MaterialTheme.typography.titleMedium,
                         color = MaterialTheme.colorScheme.onSurface,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
+                },
+                navigationIcon = {
+                    onNavigateBack?.let { back -> IconButton(onClick = back) { Icon(Icons.Filled.ArrowBack, contentDescription = "Back to Collections") } }
                 },
                 actions = {
                     if (isBatchMode) {
@@ -210,6 +226,24 @@ fun LibraryScreen(
                 }
             },
             {
+                Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (collectionScope == "computed_unfiled") Text("Items without a folder appear here.", style = MaterialTheme.typography.bodySmall)
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                        Button(onClick = { viewModel.triggerAiSearch(searchQuery) }, enabled = searchQuery.isNotBlank() && !isAiSearching, modifier = Modifier.testTag("ask_ai_search_button")) {
+                            Icon(Icons.Filled.AutoAwesome, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Ask AI", maxLines = 1)
+                        }
+                    }
+                    if (isAiSearching) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                        Text("Looking through your saved items…", style = MaterialTheme.typography.bodyMedium)
+                    }
+                    aiError?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("ai_search_error")) }
+                    aiAnswer?.let { AiAnswerCard(it, onOpenItemDetail) }
+                }
+            },
+            {
                 // Type filter strip
                 TypeFilterChipStrip(
                     selectedKind = selectedKind,
@@ -222,7 +256,8 @@ fun LibraryScreen(
                     onClearCollection = { viewModel.selectCollection(null) },
                     onClearKind = { viewModel.selectKind(null) },
                     onClearDate = { viewModel.setDateFilter(DateFilter.ALL_TIME) },
-                    onClearFilters = viewModel::clearFilters
+                    onClearFilters = viewModel::clearFilters,
+                    collectionLocked = collectionScope != null
                 )
             },
             {
@@ -335,7 +370,7 @@ fun LibraryScreen(
                 }
             }
         )
-        val showResultState = !resultsReady || localSearchError != null || items.isEmpty()
+        val showResultState = !resultsReady || localSearchError != null || (items.isEmpty() && !isAiSearching && aiAnswer == null)
         val resultState: @Composable () -> Unit = {
             Box(Modifier.fillMaxWidth().heightIn(min = 160.dp).padding(16.dp), contentAlignment = Alignment.Center) {
                 LibraryResultState(

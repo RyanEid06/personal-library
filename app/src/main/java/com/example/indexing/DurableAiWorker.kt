@@ -33,6 +33,7 @@ class DurableAiWorker(
 
         val prefs = applicationContext.getSharedPreferences("personal_library_settings", Context.MODE_PRIVATE)
         val repository = LibraryRepository(applicationContext)
+        repository.completeOwnerFeedbackMigration()
         val initialItem = repository.dao.getItemById(itemId) ?: return@withContext Result.success()
         val expectedVersion = initialItem.localIndexVersion
         val requestedVersion = inputData.getInt("content_version", expectedVersion)
@@ -57,6 +58,7 @@ class DurableAiWorker(
         if (initialItem.isTrash) return@withContext Result.success()
 
         suspend fun mayUpload(): Boolean {
+            repository.completeOwnerFeedbackMigration()
             val latest = repository.dao.getItemById(itemId)
             if (latest == null || latest.isTrash || latest.localIndexVersion != expectedVersion) return false
             val colIds = repository.dao.getCollectionIdsForItem(itemId)
@@ -81,23 +83,6 @@ class DurableAiWorker(
         }
 
         try {
-            if (!aiGateway.identityManager.isPaired) {
-                repository.updateAnalysisJobIfCurrent(
-                    AnalysisJobEntity(
-                        itemId = itemId,
-                        expectedContentVersion = expectedVersion,
-                        indexVersion = expectedVersion,
-                        metadataOnly = metadataOnly,
-                        attempts = attempts,
-                        status = "NEEDS_RETRY",
-                        lastErrorClass = "UNPAIRED",
-                        lastErrorTime = System.currentTimeMillis(),
-                        updatedAt = System.currentTimeMillis()
-                    )
-                )
-                return@withContext Result.failure()
-            }
-
             // WorkManager constraints are a scheduling aid; the current policy is authoritative.
             // Check before charging a durable attempt, and again at every concrete HTTP dispatch.
             beforeRequest()

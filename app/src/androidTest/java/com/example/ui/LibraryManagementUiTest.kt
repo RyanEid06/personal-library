@@ -1,6 +1,16 @@
 package com.example.ui
 
 import androidx.activity.compose.setContent
+import androidx.activity.compose.LocalActivityResultRegistryOwner
+import androidx.activity.result.ActivityResultRegistry
+import androidx.activity.result.ActivityResultRegistryOwner
+import androidx.activity.result.contract.ActivityResultContract
+import androidx.core.app.ActivityOptionsCompat
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Density
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.runtime.*
@@ -16,6 +26,7 @@ import com.example.data.CollectionEntity
 import com.example.data.ItemEntity
 import com.example.data.ItemWithCollections
 import com.example.model.SharePayload
+import com.example.ui.components.AddContentDialog
 import com.example.ui.components.EditItemDialog
 import com.example.ui.components.ItemCard
 import com.example.ui.components.ItemGridCard
@@ -86,11 +97,108 @@ class LibraryManagementUiTest {
         compose.onNodeWithText("Delete Collection").assertDoesNotExist()
     }
 
-    @Test fun sharePreviewUsesResolvedDefaultEvenWhenDisplayNameWasRenamed() {
+    @Test fun contextualAddInheritsFolderWithoutAskingAgain() {
+        var selected: List<String>? = null
+        show {
+            AddContentDialog(listOf(CollectionEntity("folder", "Synthetic folder")), {},
+                { _, _, ids -> selected = ids }, { _, _, _, _ -> }, { _, _ -> }, initialCollectionId = "folder")
+        }
+        compose.onNodeWithText("Saving to Synthetic folder").assertIsDisplayed()
+        compose.onNodeWithText("Save to").assertDoesNotExist()
+        compose.onNodeWithTag("add_note_content").performTextInput("Synthetic content")
+        Espresso.closeSoftKeyboard()
+        compose.onNodeWithTag("submit_add_note").performScrollTo().performClick()
+        compose.runOnIdle { assertEquals(listOf("folder"), selected) }
+    }
+
+    @Test fun cancellingReminderChoiceCreatesNoItem() {
+        var creates = 0
+        show {
+            AddContentDialog(emptyList(), {}, { _, _, _ -> creates++ }, { _, _, _, _ -> creates++ }, { _, _ -> creates++ },
+                initialCollectionId = "computed_due")
+        }
+        compose.onNodeWithTag("add_note_content").performTextInput("Synthetic reminder")
+        Espresso.closeSoftKeyboard()
+        compose.onNodeWithTag("submit_add_note").performScrollTo().performClick()
+        compose.onNodeWithText("When should we remind you?").assertIsDisplayed()
+        compose.runOnIdle { assertEquals(0, creates) }
+        Espresso.pressBack()
+        compose.onNodeWithText("When should we remind you?").assertDoesNotExist()
+        compose.onNodeWithTag("add_note_content").assertTextContains("Synthetic reminder")
+        compose.runOnIdle { assertEquals(0, creates) }
+    }
+
+    @Test fun contextualLinkAndFavoriteNoteKeepTheirDestinationWithoutAnotherPicker() {
+        var selected: List<String>? = null
+        show {
+            AddContentDialog(emptyList(), {}, { _, _, ids -> selected = ids }, { _, _, _, _ -> }, { _, _ -> },
+                initialCollectionId = "computed_favorites")
+        }
+        compose.onNodeWithText("Saving to Favorites").assertIsDisplayed()
+        compose.onNodeWithText("Save to").assertDoesNotExist()
+        compose.onNodeWithTag("add_note_content").performTextInput("Synthetic favorite")
+        Espresso.closeSoftKeyboard()
+        compose.onNodeWithTag("submit_add_note").performScrollTo().performClick()
+        compose.runOnIdle { assertEquals(listOf("computed_favorites"), selected) }
+        show {
+            AddContentDialog(emptyList(), {}, { _, _, _ -> }, { _, _, _, ids -> selected = ids }, { _, _ -> },
+                initialCollectionId = "computed_unfiled")
+        }
+        compose.onNodeWithText("Link").performClick()
+        compose.onNodeWithText("Saving to Inbox").assertIsDisplayed()
+        compose.onNodeWithTag("add_link_url").performTextInput("https://example.test/synthetic")
+        Espresso.closeSoftKeyboard()
+        compose.onNodeWithTag("submit_add_link").performScrollTo().performClick()
+        compose.runOnIdle { assertEquals(listOf("computed_unfiled"), selected) }
+    }
+
+    @Test fun contextualFilePickerKeepsItsFolderWithoutASecondQuestion() {
+        var selected: Pair<List<android.net.Uri>, List<String>>? = null
+        val uri = android.net.Uri.parse("content://synthetic-test/owned-file")
+        val registry = object : ActivityResultRegistry() {
+            override fun <I, O> onLaunch(requestCode: Int, contract: ActivityResultContract<I, O>, input: I, options: ActivityOptionsCompat?) {
+                dispatchResult(requestCode, android.app.Activity.RESULT_OK, android.content.Intent().setData(uri))
+            }
+        }
+        show {
+            CompositionLocalProvider(LocalActivityResultRegistryOwner provides object : ActivityResultRegistryOwner {
+                override val activityResultRegistry = registry
+            }) {
+                AddContentDialog(listOf(CollectionEntity("folder", "Synthetic folder")), {}, { _, _, _ -> }, { _, _, _, _ -> },
+                    { uris, ids -> selected = uris to ids }, initialCollectionId = "folder")
+            }
+        }
+        compose.onNodeWithText("Import Files").performClick()
+        compose.onNodeWithTag("select_files_button").performScrollTo().performClick()
+        compose.runOnIdle { assertEquals(listOf(uri) to listOf("folder"), selected) }
+    }
+
+    @Test fun libraryShareChoosesExactlyOneFolderAndReminderCancelDoesNotSave() {
+        var selected: List<String>? = null
+        show {
+            SharePreviewDialog(SharePayload(text = "Synthetic share"), listOf(CollectionEntity("first", "First"), CollectionEntity("second", "Second")),
+                onDismiss = {}, onConfirmSave = { selected = it })
+        }
+        compose.onNodeWithText("First").performScrollTo().performClick()
+        compose.onNodeWithText("Second").performScrollTo().performClick()
+        compose.onNodeWithTag("save_share_button").performScrollTo().performClick()
+        compose.runOnIdle { assertEquals(listOf("second"), selected); selected = null }
+        show {
+            SharePreviewDialog(SharePayload(text = "Synthetic reminder share"), emptyList(),
+                onDismiss = {}, onConfirmSave = { selected = it }, initialCollectionId = "computed_due")
+        }
+        compose.onNodeWithTag("save_share_button").performScrollTo().performClick()
+        compose.onNodeWithText("When should we remind you?").assertIsDisplayed()
+        Espresso.pressBack()
+        compose.runOnIdle { assertNull(selected) }
+        compose.onNodeWithTag("save_share_button").assertExists()
+    }
+
+    @Test fun sharePreviewInheritsItsConcreteFolderEvenWhenDisplayNameWasRenamed() {
         var selected: List<String>? = null
         show {
             SharePreviewDialog(SharePayload(text = "Synthetic share"), listOf(CollectionEntity("stable-default", "Renamed default")),
-                onDismiss = {}, onConfirmSave = { selected = it }, resolveDefaultCollectionId = { "stable-default" })
+                onDismiss = {}, onConfirmSave = { selected = it }, initialCollectionId = "stable-default")
         }
         compose.onNodeWithTag("save_share_button").assertIsEnabled().performClick()
         compose.runOnIdle { assertEquals(listOf("stable-default"), selected) }
@@ -103,8 +211,7 @@ class LibraryManagementUiTest {
         show {
             if (visible) {
                 SharePreviewDialog(SharePayload(text = "Synthetic long-list share"), collections,
-                    onDismiss = { visible = false }, onConfirmSave = { selected = it; visible = false },
-                    resolveDefaultCollectionId = { "synthetic-1" })
+                    onDismiss = { visible = false }, onConfirmSave = { selected = it; visible = false })
             }
         }
         compose.onNodeWithText("Synthetic Collection 24").performScrollTo().performClick()
@@ -114,7 +221,7 @@ class LibraryManagementUiTest {
         compose.onNodeWithText("Synthetic Collection 24").performScrollTo().performClick()
         compose.onNodeWithTag("save_share_button").performScrollTo().assertIsDisplayed().assertIsEnabled().performClick()
         compose.onNodeWithTag("save_share_button").assertDoesNotExist()
-        compose.runOnIdle { assertEquals(listOf("synthetic-1", "synthetic-24"), selected) }
+        compose.runOnIdle { assertEquals(listOf("synthetic-24"), selected) }
     }
 
     @Test fun megabyteExtractedTextUsesBoundedPreviewAndKeepsDetailsUsable() {
@@ -144,6 +251,51 @@ class LibraryManagementUiTest {
 
     @Test fun listLongPressSelectsAndNormalTapTogglesWithoutOpening() = verifySelection(grid = false)
     @Test fun gridLongPressSelectsAndNormalTapTogglesWithoutOpening() = verifySelection(grid = true)
+
+    @Test fun mixedMediaGridKeepsEqualSlotsAndReachableActionsAtLargeText() {
+        show {
+            val density = LocalDensity.current.density
+            CompositionLocalProvider(LocalDensity provides Density(density, 1.5f)) {
+                Row(Modifier.fillMaxWidth()) {
+                    ItemGridCard(ItemWithCollections(ItemEntity("grid-text", "A long synthetic title that wraps", "A synthetic text body that wraps too", "TEXT"), emptyList()),
+                        { null }, {}, {}, {}, modifier = Modifier.weight(1f))
+                    ItemGridCard(ItemWithCollections(ItemEntity("grid-media", "GIF", "", "GIF", reminderTime = System.currentTimeMillis() + 86_400_000), emptyList()),
+                        { null }, {}, {}, {}, modifier = Modifier.weight(1f))
+                }
+            }
+        }
+        val first = compose.onNodeWithTag("item_grid_card_grid-text").fetchSemanticsNode().boundsInRoot
+        val second = compose.onNodeWithTag("item_grid_card_grid-media").fetchSemanticsNode().boundsInRoot
+        assertEquals(first.height, second.height, 1f)
+        for (id in listOf("grid-text", "grid-media")) {
+            compose.onNodeWithTag("share_btn_$id").assertIsDisplayed().assertHasClickAction()
+            compose.onNodeWithTag("trash_btn_$id").assertIsDisplayed().assertHasClickAction()
+        }
+    }
+
+    @Test fun reminderClearStaysOnOneLineAtLargeTextAndReleasesTheReminder() {
+        var cleared = false
+        show {
+            val density = LocalDensity.current.density
+            CompositionLocalProvider(LocalDensity provides Density(density, 1.5f)) {
+                ItemDetailsDialog(ItemWithCollections(ItemEntity("synthetic-reminder", "Synthetic reminder", "", "TEXT",
+                    reminderTime = System.currentTimeMillis() + 86_400_000, isReminderExact = false), emptyList()), { null }, emptyList(),
+                    onDismiss = {}, onFavoriteToggle = {}, onDelete = {}, onCollectionsChange = {},
+                    onSetReminder = { time, _, _, _ -> cleared = time == null })
+            }
+        }
+        compose.onNode(SemanticsMatcher.keyIsDefined(SemanticsActions.Expand))
+            .performSemanticsAction(SemanticsActions.Expand) { assertTrue(it()) }
+        compose.onNodeWithText("Clear").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Clear", useUnmergedTree = true).performSemanticsAction(SemanticsActions.GetTextLayoutResult) { get ->
+            val results = mutableListOf<androidx.compose.ui.text.TextLayoutResult>()
+            assertTrue(get(results))
+            assertEquals(1, results.single().lineCount)
+            assertFalse(results.single().hasVisualOverflow)
+        }
+        compose.onNodeWithText("Clear").performClick()
+        compose.runOnIdle { assertTrue(cleared) }
+    }
 
     private fun verifySelection(grid: Boolean) {
         val item = ItemWithCollections(ItemEntity("synthetic-selection", "Synthetic selection", "Body", "TEXT"), emptyList())

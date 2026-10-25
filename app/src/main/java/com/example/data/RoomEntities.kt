@@ -57,7 +57,7 @@ data class CollectionEntity(
 @Entity(
     tableName = "item_collection_cross_ref",
     primaryKeys = ["itemId", "collectionId"],
-    indices = [Index(value = ["collectionId"])]
+    indices = [Index(value = ["collectionId"]), Index(value = ["itemId"], unique = true)]
 )
 data class ItemCollectionCrossRef(
     val itemId: String,
@@ -233,11 +233,33 @@ interface LibraryDao {
     suspend fun deleteAsset(hash: String)
 
     // Collections
-    @Query("SELECT * FROM collections ORDER BY createdAt ASC")
+    @Query("SELECT * FROM collections WHERE id NOT IN (SELECT collectionId FROM pending_collection_deletions) ORDER BY createdAt ASC")
     fun observeCollections(): Flow<List<CollectionEntity>>
 
-    @Query("SELECT * FROM collections ORDER BY createdAt ASC")
+    @Query("SELECT * FROM collections WHERE id NOT IN (SELECT collectionId FROM pending_collection_deletions) ORDER BY createdAt ASC")
     suspend fun getAllCollections(): List<CollectionEntity>
+
+    @Query("SELECT * FROM collections WHERE id = :id")
+    suspend fun getStoredCollection(id: String): CollectionEntity?
+
+    @Query("SELECT * FROM collections ORDER BY createdAt ASC")
+    suspend fun getAllStoredCollections(): List<CollectionEntity>
+
+    @Query("SELECT * FROM pending_collection_deletions ORDER BY undoUntil")
+    suspend fun getPendingCollectionDeletions(): List<PendingCollectionDeletion>
+
+    @Insert suspend fun insertCollectionDeletion(operation: PendingCollectionDeletion)
+    @Insert suspend fun insertCollectionDeletionItems(items: List<CollectionDeletionItem>)
+    @Query("SELECT itemId FROM collection_deletion_items WHERE operationId = :id")
+    suspend fun getCollectionDeletionItems(id: String): List<String>
+    @Query("DELETE FROM pending_collection_deletions WHERE operationId = :id")
+    suspend fun deleteCollectionDeletion(id: String)
+    @Query("DELETE FROM collection_deletion_items WHERE operationId = :id")
+    suspend fun deleteCollectionDeletionItems(id: String)
+    @Query("SELECT * FROM privacy_migration_memberships")
+    suspend fun getPrivacyMigrationMemberships(): List<PrivacyMigrationMembership>
+    @Query("DELETE FROM privacy_migration_memberships")
+    suspend fun clearPrivacyMigrationMemberships()
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertCollection(collection: CollectionEntity)
@@ -509,6 +531,27 @@ val MIGRATION_4_5 = object : androidx.room.migration.Migration(4, 5) {
     }
 }
 
+val MIGRATION_5_6 = object : androidx.room.migration.Migration(5, 6) {
+    override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+        db.execSQL("CREATE TABLE IF NOT EXISTS privacy_migration_memberships (itemId TEXT NOT NULL, collectionId TEXT NOT NULL, PRIMARY KEY(itemId, collectionId))")
+        db.execSQL("INSERT INTO privacy_migration_memberships SELECT itemId, collectionId FROM item_collection_cross_ref")
+        // There was no primary/order field. The owner chose earliest-created folder, then stable ID.
+        db.execSQL("""DELETE FROM item_collection_cross_ref WHERE collectionId NOT IN (SELECT id FROM collections)
+            OR itemId NOT IN (SELECT id FROM items)
+            OR collectionId != (SELECT c.id FROM collections c JOIN item_collection_cross_ref r ON r.collectionId = c.id
+                WHERE r.itemId = item_collection_cross_ref.itemId ORDER BY c.createdAt, c.id LIMIT 1)""")
+        db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_item_collection_cross_ref_itemId ON item_collection_cross_ref (itemId)")
+        db.execSQL("UPDATE collections SET appRole = NULL")
+        db.execSQL("UPDATE items SET kind = 'STICKER' WHERE kind = 'PHOTO' AND lower(originalFileName) LIKE 'stk-%.webp'")
+        db.execSQL("UPDATE items SET kind = 'GIF' WHERE kind IN ('PHOTO', 'VIDEO', 'FILE') AND (lower(mimeType) = 'image/gif' OR lower(originalFileName) LIKE '%.gif')")
+        db.execSQL("UPDATE assets SET kind = 'STICKER' WHERE kind = 'PHOTO' AND lower(originalName) LIKE 'stk-%.webp'")
+        db.execSQL("UPDATE assets SET kind = 'GIF' WHERE kind IN ('PHOTO', 'VIDEO', 'FILE') AND (lower(mimeType) = 'image/gif' OR lower(originalName) LIKE '%.gif')")
+        db.execSQL("CREATE TABLE IF NOT EXISTS pending_collection_deletions (operationId TEXT NOT NULL PRIMARY KEY, collectionId TEXT NOT NULL, name TEXT NOT NULL, undoUntil INTEGER NOT NULL, trashedAt INTEGER NOT NULL)")
+        db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_pending_collection_deletions_collectionId ON pending_collection_deletions (collectionId)")
+        db.execSQL("CREATE TABLE IF NOT EXISTS collection_deletion_items (operationId TEXT NOT NULL, itemId TEXT NOT NULL, PRIMARY KEY(operationId, itemId))")
+    }
+}
+
 @Database(
     entities = [
         ItemEntity::class,
@@ -518,9 +561,12 @@ val MIGRATION_4_5 = object : androidx.room.migration.Migration(4, 5) {
         ReminderEntity::class,
         ItemFtsEntity::class,
         SearchDocumentEntity::class,
-        AnalysisJobEntity::class
+        AnalysisJobEntity::class,
+        PendingCollectionDeletion::class,
+        CollectionDeletionItem::class,
+        PrivacyMigrationMembership::class
     ],
-    version = 5,
+    version = 6,
     exportSchema = true
 )
 abstract class LibraryRoomDatabase : RoomDatabase() {

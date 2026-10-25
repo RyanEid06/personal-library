@@ -23,6 +23,8 @@ class LibraryManagementTest {
     @Before fun setup() {
         context = ApplicationProvider.getApplicationContext()
         context.getSharedPreferences("personal_library_settings", 0).edit().clear().putBoolean("ai_paused", true).commit()
+        androidx.work.testing.WorkManagerTestInitHelper.initializeTestWorkManager(context,
+            androidx.work.Configuration.Builder().setExecutor(androidx.work.testing.SynchronousExecutor()).build())
         db = Room.inMemoryDatabaseBuilder(context, LibraryRoomDatabase::class.java).addCallback(DATABASE_CALLBACK).build()
         repository = LibraryRepository(context, db)
     }
@@ -44,20 +46,23 @@ class LibraryManagementTest {
         assertEquals(first.copy(name = "READing", iconName = "book", colorHex = "#000000"), repository.dao.getAllCollections().first { it.id == first.id })
     }
 
-    @Test fun collectionDeleteIsAtomicAndNeverDeletesItemsOrOtherMemberships() = runBlocking {
+    @Test fun collectionDeleteIsAtomicAndKeepsUnrelatedItems() = runBlocking {
         val first = repository.createCollection("First", "folder", "#ffffff")
         val second = repository.createCollection("Second", "folder", "#ffffff")
-        val item = repository.createNote("Keep", "Owner content", listOf(first.id, second.id))
-        db.openHelper.writableDatabase.execSQL("CREATE TRIGGER fail_delete BEFORE DELETE ON collections BEGIN SELECT RAISE(ABORT, 'injected'); END")
+        val item = repository.createNote("Trash", "Owner content", listOf(first.id))
+        val unrelated = repository.createNote("Keep", "Unrelated content", listOf(second.id))
+        db.openHelper.writableDatabase.execSQL("CREATE TRIGGER fail_delete BEFORE INSERT ON pending_collection_deletions BEGIN SELECT RAISE(ABORT, 'injected'); END")
         try { repository.deleteCollection(first.id); fail("Expected trigger failure") } catch (_: android.database.sqlite.SQLiteException) { }
-        assertEquals(setOf(first.id, second.id), repository.dao.getCollectionIdsForItem(item.id).toSet())
+        assertFalse(repository.dao.getItemById(item.id)!!.isTrash)
+        assertEquals(listOf(first.id), repository.dao.getCollectionIdsForItem(item.id))
         db.openHelper.writableDatabase.execSQL("DROP TRIGGER fail_delete")
         repository.deleteCollection(first.id)
-        assertEquals(item, repository.dao.getItemById(item.id))
-        assertEquals(listOf(second.id), repository.dao.getCollectionIdsForItem(item.id))
+        assertTrue(repository.dao.getItemById(item.id)!!.isTrash)
+        assertEquals(unrelated, repository.dao.getItemById(unrelated.id))
+        assertEquals(listOf(second.id), repository.dao.getCollectionIdsForItem(unrelated.id))
     }
 
-    @Test fun bulkMembershipChangesAreUnionSubtractAndValidateBeforeWriting() = runBlocking {
+    @Test fun bulkMembershipChangesMoveToOneFolderAndValidateBeforeWriting() = runBlocking {
         val first = repository.createCollection("First", "folder", "#ffffff")
         val second = repository.createCollection("Second", "folder", "#ffffff")
         val item = repository.createNote("Keep", "Content", listOf(first.id))
@@ -65,9 +70,9 @@ class LibraryManagementTest {
         invalid { repository.changeItemCollections(listOf(item.id), listOf("missing"), true) }
         assertEquals(listOf(first.id), repository.dao.getCollectionIdsForItem(item.id))
         repository.changeItemCollections(listOf(item.id, item.id), listOf(second.id), true)
-        assertEquals(setOf(first.id, second.id), repository.dao.getCollectionIdsForItem(item.id).toSet())
+        assertEquals(listOf(second.id), repository.dao.getCollectionIdsForItem(item.id))
         repository.changeItemCollections(listOf(item.id), listOf(second.id), false)
-        assertEquals(listOf(first.id), repository.dao.getCollectionIdsForItem(item.id))
+        assertTrue(repository.dao.getCollectionIdsForItem(item.id).isEmpty())
         repository.moveToTrash(item.id)
         invalid { repository.changeItemCollections(listOf(item.id), listOf(second.id), true) }
     }
@@ -84,23 +89,23 @@ class LibraryManagementTest {
         assertEquals(listOf(existing.id), repository.dao.getCollectionIdsForItem(second.id))
     }
 
-    @Test fun renamedRandomLinksRoutesImportAndRoundTripsPortableRole() = runBlocking {
-        val random = repository.getOrCreateRandomLinksCollection()
-        repository.editCollection(random.id, "Inbox", "chat", "#123456")
+    @Test fun renamedRandomLinksIsOrdinaryAndImportUsesInbox() = runBlocking {
+        val random = repository.createCollection("Random Links", "chat", "#123456")
+        repository.editCollection(random.id, "Saved chats", "chat", "#123456")
         repository.importWhatsAppMigration("13/10/2026, 09:00 - Ryan: hello")
-        assertEquals(random.id, repository.getOrCreateRandomLinksCollection().id)
-        assertTrue(repository.dao.getAllActiveItems().all { repository.dao.getCollectionIdsForItem(it.id) == listOf(random.id) })
+        assertEquals(random.id, repository.dao.getAllCollections().single().id)
+        assertTrue(repository.dao.getAllActiveItems().all { repository.dao.getCollectionIdsForItem(it.id).isEmpty() })
         val destination = File.createTempFile("role-", ".plb", context.cacheDir)
         try {
             assertTrue(repository.exportEncryptedBackup(android.net.Uri.fromFile(destination), "role-passphrase".toCharArray()))
             val preview = repository.inspectBackup(android.net.Uri.fromFile(destination), "role-passphrase".toCharArray())!!
-            assertEquals(CollectionEntity.ROLE_RANDOM_LINKS, preview.manifest.collections.single().appRole)
+            assertNull(preview.manifest.collections.single().appRole)
             repository.discardRestorePreview(preview)
         } finally { destination.delete() }
     }
 
-    @Test fun restoreMergesRenamedRoleAndRemapsMemberships() = runBlocking {
-        val live = repository.getOrCreateRandomLinksCollection()
+    @Test fun restoreTreatsLegacyRoleAsAnOrdinaryDistinctFolder() = runBlocking {
+        val live = repository.createCollection("Random Links", "chat", "#abcdef")
         repository.editCollection(live.id, "My inbox", "chat", "#abcdef")
         val source = repository.createNote("Imported", "Body")
         val destination = File.createTempFile("restore-role-", ".plb", context.cacheDir)
@@ -111,10 +116,11 @@ class LibraryManagementTest {
                 collections = listOf(BackupCollectionRecord("other-install", "Renamed there", "folder", "#ffffff", 1, CollectionEntity.ROLE_RANDOM_LINKS)),
                 memberships = listOf(BackupMembershipRecord(source.id, "other-install"))))
             assertEquals(1, repository.commitRestore(incoming, keepBoth = true))
-            assertEquals(1, repository.dao.getAllCollections().size)
+            assertEquals(2, repository.dao.getAllCollections().size)
             val imported = repository.dao.getAllActiveItems().single { it.id != source.id }
-            assertEquals(listOf(live.id), repository.dao.getCollectionIdsForItem(imported.id))
-            assertEquals("My inbox", repository.getOrCreateRandomLinksCollection().name)
+            assertEquals(listOf("other-install"), repository.dao.getCollectionIdsForItem(imported.id))
+            assertEquals("My inbox", repository.dao.getStoredCollection(live.id)!!.name)
+            assertTrue(repository.dao.getAllCollections().all { it.appRole == null })
         } finally { destination.delete() }
     }
 
@@ -204,8 +210,7 @@ class LibraryManagementTest {
             assertEquals(listOf(live.id), repository.dao.getCollectionIdsForItem(source.id))
             val imported = repository.dao.getAllActiveItems().single { it.id != source.id }
             assertEquals(listOf(restored.id), repository.dao.getCollectionIdsForItem(imported.id))
-            if (role) assertEquals(restored.id, repository.getOrCreateRandomLinksCollection().id)
-            else assertNull(restored.appRole)
+            assertNull(restored.appRole)
         } finally { destination.delete() }
     }
 
@@ -221,7 +226,7 @@ class LibraryManagementTest {
                     if (legacy) null else CollectionEntity.ROLE_RANDOM_LINKS)),
                 memberships = listOf(BackupMembershipRecord(source.id, "other-install"))))
             assertEquals(1, repository.commitRestore(incoming))
-            val role = repository.getOrCreateRandomLinksCollection()
+            val role = repository.dao.getAllCollections().single()
             assertEquals("other-install", role.id)
             assertEquals(if (legacy) "Random Links" else "Renamed inbox", role.name)
             assertEquals(listOf(role.id), repository.dao.getCollectionIdsForItem(source.id))

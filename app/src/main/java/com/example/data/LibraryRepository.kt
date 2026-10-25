@@ -38,7 +38,7 @@ import java.net.URI
 class LibraryRepository(private val context: Context, database: LibraryRoomDatabase? = null) {
     companion object {
         private val assetMutations = Mutex()
-        private val reservedCollectionNames = listOf("Favorites", "Unfiled", "Reminders", "Due Reminders", "Trash", "All Items")
+        private val reservedCollectionNames = listOf("Favorites", "Inbox", "Unfiled", "Reminders", "Due Reminders", "Trash", "All Items")
     }
 
     private suspend fun removeUnreferencedBlobs(hashes: Collection<String>) = withContext(NonCancellable + Dispatchers.IO) {
@@ -54,12 +54,58 @@ class LibraryRepository(private val context: Context, database: LibraryRoomDatab
         LibraryRoomDatabase::class.java,
         "personal_library_room.db"
     )
-        .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
+        .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
         .addCallback(DATABASE_CALLBACK)
         .enableMultiInstanceInvalidation()
         .build()
 
     val dao = db.libraryDao()
+
+    suspend fun completeOwnerFeedbackMigration() = withContext(Dispatchers.IO) {
+        db.withTransaction {
+            val legacy = dao.getPrivacyMigrationMemberships()
+            if (legacy.isEmpty()) return@withTransaction
+            val prefs = context.getSharedPreferences("personal_library_settings", Context.MODE_PRIVATE)
+            // Keep the SQL ledger until the synchronous preferences commit succeeds; retry after any crash.
+            check(com.example.ai.AiPrivacyPreferences.mutate(prefs, "excluded_items") { items ->
+                val excluded = prefs.getStringSet("excluded_collections", emptySet()).orEmpty()
+                items.addAll(legacy.filter { it.collectionId in excluded }.map { it.itemId })
+            }) { "Could not preserve AI privacy settings" }
+            dao.clearPrivacyMigrationMemberships()
+        }
+    }
+
+    private suspend fun preserveCollectionExclusions(itemIds: Collection<String>) {
+        val prefs = context.getSharedPreferences("personal_library_settings", Context.MODE_PRIVATE)
+        val memberships = itemIds.associateWith { dao.getCollectionIdsForItem(it) }
+        check(com.example.ai.AiPrivacyPreferences.mutate(prefs, "excluded_items") { items ->
+            val excluded = prefs.getStringSet("excluded_collections", emptySet()).orEmpty()
+            items.addAll(memberships.filterValues { folders -> folders.any { it in excluded } }.keys)
+        }) { "Could not preserve AI privacy settings" }
+    }
+
+    private suspend fun validateFolderIds(ids: List<String>) {
+        require(ids.distinct().size <= 1) { "Choose one folder" }
+        val active = dao.getAllCollections().map { it.id }.toSet()
+        require(ids.all { it in active }) { "Folder no longer exists" }
+    }
+
+    private suspend fun insertCreatedItem(item: ItemEntity, folders: List<String>, favorite: Boolean, reminder: CaptureReminder?): ItemEntity {
+        validateFolderIds(folders)
+        val exact = reminder?.exact == true && ReminderScheduler(context).canUseExactAlarms()
+        val due = reminder?.let { if (it.dateOnly) com.personallibrary.core.ReminderDate.atNine(requireNotNull(it.localDate)) else it.time }
+        val created = item.copy(isFavorite = favorite, reminderTime = due, isReminderExact = exact,
+            isReminderDateOnly = reminder?.dateOnly == true, reminderLocalDate = reminder?.localDate)
+        dao.insertItem(created)
+        folders.distinct().forEach { dao.insertItemCollectionCrossRef(ItemCollectionCrossRef(created.id, it)) }
+        if (due != null) dao.insertReminder(ReminderEntity("rem_${created.id}", created.id, created.title, due,
+            isExact = exact, isDateOnly = created.isReminderDateOnly, localDate = created.reminderLocalDate))
+        return created
+    }
+
+    private suspend fun scheduleCreatedReminder(item: ItemEntity) {
+        if (item.reminderTime != null) ReminderScheduler(context).scheduleRestored(item, dao.getReminderByItemId(item.id))
+    }
 
     suspend fun updateAnalysisJobIfCurrent(job: AnalysisJobEntity, itemStatus: String = job.status): Boolean = db.withTransaction {
         val current = dao.getItemById(job.itemId)
@@ -113,6 +159,7 @@ class LibraryRepository(private val context: Context, database: LibraryRoomDatab
     }
 
     suspend fun reconcileStorage() = withContext(Dispatchers.IO) {
+        completeOwnerFeedbackMigration()
         assetMutations.withLock {
             val counts = dao.getAllItemsIncludingTrash().mapNotNull { it.contentHash }.groupingBy { it }.eachCount()
             db.withTransaction {
@@ -147,7 +194,9 @@ class LibraryRepository(private val context: Context, database: LibraryRoomDatab
         explicitSticker: Boolean = false,
         collectionIds: List<String> = emptyList(),
         sourceDate: Long? = null,
-        knownSizeBytes: Long? = null
+        knownSizeBytes: Long? = null,
+        favorite: Boolean = false,
+        reminder: CaptureReminder? = null
     ): ItemEntity = withContext(Dispatchers.IO) {
         assetMutations.withLock {
         val storedAsset = assetStore.import(input, originalName, declaredMime, explicitSticker, knownSizeBytes = knownSizeBytes)
@@ -186,15 +235,8 @@ class LibraryRepository(private val context: Context, database: LibraryRoomDatab
             createdAt = System.currentTimeMillis()
         )
 
-        dao.insertItem(item)
-
-        // Assign to collections
-        for (colId in collectionIds) {
-            dao.insertItemCollectionCrossRef(ItemCollectionCrossRef(itemId, colId))
-        }
-
-        item
-        }
+        insertCreatedItem(item, collectionIds, favorite, reminder)
+        }.also { scheduleCreatedReminder(it) }
         } catch (failure: Throwable) {
             try { removeUnreferencedBlobs(listOf(storedAsset.hash)) } catch (cleanup: Exception) { failure.addSuppressed(cleanup) }
             throw failure
@@ -205,7 +247,9 @@ class LibraryRepository(private val context: Context, database: LibraryRoomDatab
     suspend fun createNote(
         title: String,
         content: String,
-        collectionIds: List<String> = emptyList()
+        collectionIds: List<String> = emptyList(),
+        favorite: Boolean = false,
+        reminder: CaptureReminder? = null
     ): ItemEntity = withContext(Dispatchers.IO) {
         db.withTransaction {
         val itemId = UUID.randomUUID().toString()
@@ -217,19 +261,17 @@ class LibraryRepository(private val context: Context, database: LibraryRoomDatab
             aiStatus = "PENDING",
             createdAt = System.currentTimeMillis()
         )
-        dao.insertItem(item)
-        for (colId in collectionIds) {
-            dao.insertItemCollectionCrossRef(ItemCollectionCrossRef(itemId, colId))
-        }
-        item
-        }
+        insertCreatedItem(item, collectionIds, favorite, reminder)
+        }.also { scheduleCreatedReminder(it) }
     }
 
     suspend fun saveLink(
         url: String,
         title: String,
         note: String,
-        collectionIds: List<String> = emptyList()
+        collectionIds: List<String> = emptyList(),
+        favorite: Boolean = false,
+        reminder: CaptureReminder? = null
     ): ItemEntity = withContext(Dispatchers.IO) {
         db.withTransaction {
         val itemId = UUID.randomUUID().toString()
@@ -248,12 +290,8 @@ class LibraryRepository(private val context: Context, database: LibraryRoomDatab
             aiStatus = "PENDING",
             createdAt = System.currentTimeMillis()
         )
-        dao.insertItem(item)
-        for (colId in collectionIds) {
-            dao.insertItemCollectionCrossRef(ItemCollectionCrossRef(itemId, colId))
-        }
-        item
-        }
+        insertCreatedItem(item, collectionIds, favorite, reminder)
+        }.also { scheduleCreatedReminder(it) }
     }
 
     suspend fun updateItem(item: ItemEntity) = withContext(Dispatchers.IO) {
@@ -354,6 +392,11 @@ class LibraryRepository(private val context: Context, database: LibraryRoomDatab
             ids.distinct().filter { id ->
                 val item = dao.getItemById(id)
                 if (item == null || !item.isTrash) false else {
+                    val folderIds = dao.getCollectionIdsForItem(id)
+                    if (dao.getPendingCollectionDeletions().any { it.collectionId in folderIds }) {
+                        preserveCollectionExclusions(listOf(id))
+                        dao.removeAllCollectionsForItem(id)
+                    }
                     dao.restoreFromTrash(id)
                     val reminder = dao.getReminderByItemId(id)
                     if (reminder?.isDateOnly == true && reminder.localDate != null) {
@@ -505,44 +548,86 @@ class LibraryRepository(private val context: Context, database: LibraryRoomDatab
         }
     }
 
-    private suspend fun randomLinksInTransaction(): CollectionEntity {
-        val all = dao.getAllCollections()
-        all.firstOrNull { it.appRole == CollectionEntity.ROLE_RANDOM_LINKS }?.let { return it }
-        // One-time compatibility adoption for installations/backups predating portable roles.
-        val legacy = all.firstOrNull { it.appRole == null && it.name.trim().equals("Random Links", true) }
-        val collection = legacy?.copy(appRole = CollectionEntity.ROLE_RANDOM_LINKS)
-            ?: CollectionEntity(UUID.randomUUID().toString(), "Random Links", "chat", "#10B981", appRole = CollectionEntity.ROLE_RANDOM_LINKS)
-        dao.insertCollection(collection)
-        return collection
-    }
-
-    suspend fun getOrCreateRandomLinksCollection(): CollectionEntity = withContext(Dispatchers.IO) {
-        db.withTransaction { randomLinksInTransaction() }
-    }
-
-    suspend fun deleteCollection(collectionId: String) = withContext(Dispatchers.IO) {
-        db.withTransaction {
-            dao.removeAllItemsForCollection(collectionId)
-            dao.deleteCollection(collectionId)
+    suspend fun deleteCollection(collectionId: String, undoMillis: Long = 5_000, now: Long = System.currentTimeMillis()): PendingCollectionDeletion = withContext(Dispatchers.IO) {
+        require(undoMillis in 0..3_600_000) { "Invalid undo timeout" }
+        val operation = db.withTransaction {
+            require(dao.getPendingCollectionDeletions().isEmpty()) { "Finish the previous Undo before deleting another folder" }
+            val collection = requireNotNull(dao.getAllCollections().find { it.id == collectionId }) { "Folder no longer exists" }
+            val ids = dao.getItemIdsForCollection(collectionId).filter { dao.getItemById(it)?.isTrash == false }
+            preserveCollectionExclusions(dao.getItemIdsForCollection(collectionId))
+            val pending = PendingCollectionDeletion(UUID.randomUUID().toString(), collectionId, collection.name, now + undoMillis, now)
+            dao.insertCollectionDeletion(pending)
+            dao.insertCollectionDeletionItems(ids.map { CollectionDeletionItem(pending.operationId, it) })
+            ids.forEach { dao.moveToTrash(it, now) }
+            pending
         }
+        withContext(NonCancellable) {
+            dao.getCollectionDeletionItems(operation.operationId).forEach { ReminderScheduler(context).cancel(it) }
+            CollectionDeletionWorker.enqueue(context, operation)
+        }
+        operation
+    }
+
+    suspend fun undoCollectionDeletion(operationId: String, now: Long = System.currentTimeMillis()): Boolean = withContext(Dispatchers.IO) {
+        val restored = mutableListOf<String>()
+        val result = db.withTransaction {
+            val operation = dao.getPendingCollectionDeletions().find { it.operationId == operationId } ?: return@withTransaction false
+            if (now >= operation.undoUntil) return@withTransaction false
+            for (id in dao.getCollectionDeletionItems(operationId)) {
+                val item = dao.getItemById(id)
+                if (item?.isTrash == true && item.trashTimestamp == operation.trashedAt) { dao.restoreFromTrash(id); restored += id }
+            }
+            dao.deleteCollectionDeletionItems(operationId)
+            dao.deleteCollectionDeletion(operationId)
+            true
+        }
+        restored.forEach { id -> dao.getItemById(id)?.let { scheduleCreatedReminder(it) } }
+        result
+    }
+
+    suspend fun finalizeCollectionDeletion(operationId: String, now: Long = System.currentTimeMillis()): Boolean = withContext(Dispatchers.IO) {
+        db.withTransaction {
+            val pending = dao.getPendingCollectionDeletions().find { it.operationId == operationId } ?: return@withTransaction true
+            if (now < pending.undoUntil) return@withTransaction false
+            preserveCollectionExclusions(dao.getItemIdsForCollection(pending.collectionId))
+            dao.removeAllItemsForCollection(pending.collectionId)
+            dao.deleteCollection(pending.collectionId)
+            dao.deleteCollectionDeletionItems(operationId)
+            dao.deleteCollectionDeletion(operationId)
+            true
+        }
+    }
+
+    suspend fun resumeCollectionDeletions(): List<PendingCollectionDeletion> = withContext(Dispatchers.IO) {
+        val pending = dao.getPendingCollectionDeletions()
+        pending.forEach { if (!finalizeCollectionDeletion(it.operationId)) CollectionDeletionWorker.enqueue(context, it) }
+        dao.getPendingCollectionDeletions()
     }
 
     suspend fun changeItemCollections(itemIds: Collection<String>, collectionIds: Collection<String>, add: Boolean) = withContext(Dispatchers.IO) {
         db.withTransaction {
             val ids = itemIds.distinct()
             val collections = collectionIds.distinct()
+            require(collections.size <= 1) { "Choose one folder" }
             require(ids.all { dao.getItemById(it)?.isTrash == false }) { "Some selected items are no longer available" }
             val knownCollections = dao.getAllCollections().map { it.id }.toSet()
             require(collections.all { it in knownCollections }) { "Collection no longer exists" }
-            for (id in ids) for (collection in collections) {
-                if (add) dao.insertItemCollectionCrossRef(ItemCollectionCrossRef(id, collection))
-                else dao.removeItemFromCollection(id, collection)
+            preserveCollectionExclusions(ids)
+            for (id in ids) {
+                if (add) dao.removeAllCollectionsForItem(id)
+                for (collection in collections) {
+                    if (add) dao.insertItemCollectionCrossRef(ItemCollectionCrossRef(id, collection))
+                    else dao.removeItemFromCollection(id, collection)
+                }
             }
         }
     }
 
     suspend fun setItemCollections(itemId: String, collectionIds: List<String>) = withContext(Dispatchers.IO) {
         db.withTransaction {
+            validateFolderIds(collectionIds)
+            require(dao.getItemById(itemId)?.isTrash == false) { "Item no longer available" }
+            preserveCollectionExclusions(listOf(itemId))
             dao.removeAllCollectionsForItem(itemId)
             for (colId in collectionIds.distinct()) {
                 dao.insertItemCollectionCrossRef(ItemCollectionCrossRef(itemId, colId))
@@ -604,7 +689,7 @@ class LibraryRepository(private val context: Context, database: LibraryRoomDatab
         val memberships = mutableListOf<BackupMembershipRecord>()
         for (item in allItems) {
             val colIds = dao.getCollectionIdsForItem(item.id)
-            for (cid in colIds) {
+            for (cid in colIds.filter { id -> allCols.any { it.id == id } }) {
                 memberships.add(BackupMembershipRecord(item.id, cid))
             }
         }
@@ -637,7 +722,7 @@ class LibraryRepository(private val context: Context, database: LibraryRoomDatab
                 )
             },
             collections = allCols.map {
-                BackupCollectionRecord(it.id, it.name, it.iconName, it.colorHex, it.createdAt, it.appRole)
+                BackupCollectionRecord(it.id, it.name, it.iconName, it.colorHex, it.createdAt, null)
             },
             memberships = memberships,
             reminders = allReminders.map {
@@ -751,20 +836,13 @@ class LibraryRepository(private val context: Context, database: LibraryRoomDatab
             db.withTransaction {
                 // Collections: insert or reuse
                 for (col in preview.manifest.collections) {
-                    val all = dao.getAllCollections()
-                    val role = col.appRole ?: if (preview.manifest.collections.none { it.appRole == CollectionEntity.ROLE_RANDOM_LINKS } &&
-                        col.name.trim().equals("Random Links", true)) CollectionEntity.ROLE_RANDOM_LINKS else null
-                    val roleOwner = role?.let { wanted -> all.firstOrNull { it.appRole == wanted } }
-                        ?: if (role == CollectionEntity.ROLE_RANDOM_LINKS) all.firstOrNull { it.appRole == null && it.name.trim().equals("Random Links", true) } else null
-                    if (roleOwner != null) {
-                        if (roleOwner.appRole == null) dao.insertCollection(roleOwner.copy(appRole = role))
-                        collectionRemap[col.id] = roleOwner.id
-                        continue
-                    }
+                    val all = dao.getAllStoredCollections()
+                    val hidden = dao.getPendingCollectionDeletions().map { it.collectionId }.toSet()
+                    val role: String? = null // Legacy default roles are ordinary folders in the new model.
                     var existing = all.find { it.id == col.id }
                     // Portable identity survives collision-safe restore names and later owner edits.
                     // A different immutable creation timestamp or role means the ID collides with another collection.
-                    fun samePortableIdentity(candidate: CollectionEntity) = candidate.appRole == role && candidate.createdAt == col.createdAt
+                    fun samePortableIdentity(candidate: CollectionEntity) = candidate.id !in hidden && candidate.appRole == role && candidate.createdAt == col.createdAt
                     var finalId = col.id
                     if (existing == null || !samePortableIdentity(existing)) {
                         val sourceIdAvailable = existing == null
@@ -826,7 +904,12 @@ class LibraryRepository(private val context: Context, database: LibraryRoomDatab
                 }
 
                 // Memberships
-                for (mem in preview.manifest.memberships) {
+                val sourceCollections = preview.manifest.collections.associateBy { it.id }
+                require(preview.manifest.memberships.all { it.collectionId in sourceCollections }) { "Unknown membership collection" }
+                val singleMemberships = preview.manifest.memberships.groupBy { it.itemId }.values.map { members ->
+                    members.minWith(compareBy<BackupMembershipRecord> { sourceCollections.getValue(it.collectionId).createdAt }.thenBy { it.collectionId })
+                }
+                for (mem in singleMemberships) {
                     val finalItemId = idRemap[mem.itemId] ?: mem.itemId
                     // Only insert membership if item was imported or already existed
                     if (existingIds.contains(mem.itemId) && !keepBoth && !idRemap.containsKey(mem.itemId)) {
@@ -967,13 +1050,11 @@ class LibraryRepository(private val context: Context, database: LibraryRoomDatab
                 }
                 var imported = 0
                 db.withTransaction {
-                    val randomLinks = randomLinksInTransaction()
                     val exportId = "whatsapp_export_${export.hash}"
                     if (dao.getItemById(exportId) == null) {
                         dao.insertItem(ItemEntity(id = exportId, title = "WhatsApp export", content = "Original WhatsApp export; imported in timezone ${java.util.TimeZone.getDefault().id}",
                             kind = ItemKind.DOCUMENT.name, contentHash = export.hash, originalFileName = "WhatsApp export.txt",
                             mimeType = "text/plain", fileSizeBytes = export.sizeBytes, aiStatus = "PENDING"))
-                        dao.insertItemCollectionCrossRef(ItemCollectionCrossRef(exportId, randomLinks.id))
                     }
                     for (msg in parsed.messages) {
                         val existing = dao.getItemById(msg.importKey)
@@ -1008,7 +1089,6 @@ class LibraryRepository(private val context: Context, database: LibraryRoomDatab
                             dao.deleteSearchDocumentsForItem(item.id)
                             dao.deleteAnalysisJob(item.id)
                         }
-                        dao.insertItemCollectionCrossRef(ItemCollectionCrossRef(item.id, randomLinks.id))
                     }
                     // Derive counts from actual references, including reuse of one supplied file by many messages.
                     val counts = dao.getAllItemsIncludingTrash().mapNotNull { it.contentHash }.groupingBy { it }.eachCount()

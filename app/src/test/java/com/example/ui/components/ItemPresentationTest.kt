@@ -21,9 +21,54 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
 class ItemPresentationTest {
+    @Test fun namedOriginalExportPreservesBytesSanitizesPathAndKeepsPreviousExportAlive() {
+        val app = ApplicationProvider.getApplicationContext<Context>()
+        val source = java.io.File(app.cacheDir, "synthetic-blob.bin")
+        val bytes = byteArrayOf(71, 73, 70, 56, 57, 97, 0, 13, 127)
+        source.writeBytes(bytes)
+        val item = ItemEntity("gif", "Birthday", "", "GIF", mimeType = "image/gif", originalFileName = "../private/birthday.gif")
+        val first = prepareOriginalForExport(app, item, source)
+        val second = prepareOriginalForExport(app, item, source)
+        try {
+            assertEquals("birthday.gif", first.name)
+            assertTrue(first.canonicalPath.startsWith(java.io.File(app.cacheDir, "shared_originals").canonicalPath + java.io.File.separator))
+            assertArrayEquals(bytes, first.readBytes())
+            assertArrayEquals(bytes, second.readBytes())
+            assertNotEquals(first, second)
+            assertTrue("Opening another chooser must not delete a receiver's original", first.exists())
+        } finally { source.delete(); first.parentFile!!.deleteRecursively(); second.parentFile!!.deleteRecursively() }
+    }
+
+    @Test fun extensionlessOriginalUsesItsKnownMimeExtension() {
+        val app = ApplicationProvider.getApplicationContext<Context>()
+        // Robolectric's MIME map starts empty; Android's framework provides this mapping.
+        org.robolectric.shadow.api.Shadow.extract<org.robolectric.shadows.ShadowMimeTypeMap>(android.webkit.MimeTypeMap.getSingleton())
+            .addExtensionMimeTypeMapping("pdf", "application/pdf")
+        val source = java.io.File(app.cacheDir, "synthetic-no-extension.bin").apply { writeText("synthetic") }
+        val exported = prepareOriginalForExport(app, ItemEntity("pdf", "Document", "", "DOCUMENT", mimeType = "application/pdf", originalFileName = "report"), source)
+        try { assertEquals("report.pdf", exported.name) }
+        finally { source.delete(); exported.parentFile!!.deleteRecursively() }
+    }
+
+    @Test fun legacyGenericOriginalMimeUsesItsKnownFilenameOrProviderType() {
+        assertEquals("image/jpeg", originalMimeType(ItemEntity("jpg", "Photo", "", "PHOTO",
+            mimeType = "application/octet-stream", originalFileName = "photo.jpg"), "image/jpeg"))
+        assertEquals("image/png", originalMimeType(ItemEntity("png", "Photo", "", "PHOTO",
+            mimeType = "application/octet-stream", originalFileName = "unknown"), "image/png"))
+        assertEquals("image/gif", originalMimeType(ItemEntity("gif", "Animation", "", "GIF",
+            mimeType = null, originalFileName = "original.gif"), null))
+    }
+
+    @Test fun explicitOriginalMimeIsPreservedAndUnknownOriginalStaysGeneric() {
+        assertEquals("application/x-synthetic", originalMimeType(ItemEntity("document", "Document", "", "DOCUMENT",
+            mimeType = "application/x-synthetic", originalFileName = "report.pdf"), "application/pdf"))
+        assertEquals("application/octet-stream", originalMimeType(ItemEntity("unknown", "Unknown", "", "FILE",
+            mimeType = "application/octet-stream", originalFileName = "unknown"), null))
+    }
+
     @Test fun kindLabelsMeetTextContrastOnTheirCardAndTintedBadgeInBothThemes() {
         for (dark in listOf(false, true)) {
-            for (kind in listOf("PHOTO", "STICKER", "VIDEO", "AUDIO", "TEXT", "LINK", "DOCUMENT", "UNKNOWN")) {
+            for (kind in listOf("PHOTO", "STICKER", "GIF", "VIDEO", "AUDIO", "TEXT", "LINK", "DOCUMENT", "UNKNOWN")) {
                 val foreground = kindColorForTheme(kind, dark)
                 val surfaces = if (dark) listOf(Color(0xFF1E293B)) else listOf(Color.White, Color(0xFFF1F5F9))
                 for (surface in surfaces) {

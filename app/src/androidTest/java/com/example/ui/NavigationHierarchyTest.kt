@@ -44,6 +44,48 @@ class NavigationHierarchyTest {
         runBlocking { ids.forEach { vm.repository.deletePermanently(it) } }
     }
 
+    @Test fun onlyThreeDestinationsAndFolderDetailStaysInCollections() {
+        compose.onNodeWithTag("nav_item_library").assertIsSelected()
+        compose.onNodeWithTag("nav_item_settings").assertExists()
+        compose.onNodeWithTag("nav_item_search").assertDoesNotExist()
+        compose.onNodeWithTag("nav_item_collections").performClick()
+        compose.onNodeWithTag("col_card_favorites").performClick()
+        compose.onNodeWithTag("nav_item_collections").assertIsSelected()
+        compose.onNodeWithContentDescription("Back to Collections").assertIsDisplayed()
+        compose.onNodeWithTag("clear_filters_button").performScrollTo().performClick()
+        compose.runOnIdle { org.junit.Assert.assertEquals("computed_favorites", vm.selectedCollectionId.value) }
+        compose.onNodeWithTag("nav_item_library").performClick()
+        compose.runOnIdle { org.junit.Assert.assertNull(vm.selectedCollectionId.value) }
+        compose.onNodeWithTag("nav_item_collections").performClick()
+        compose.onNodeWithTag("nav_item_collections").assertIsSelected()
+        compose.onNodeWithContentDescription("Back to Collections").performClick()
+        compose.onNodeWithTag("collections_grid").assertIsDisplayed()
+    }
+
+    @Test fun switchingTabsAndFoldersKeepsEachQueryAndItsImmutableScope() {
+        compose.onNodeWithTag("library_search_input").performTextReplacement("Synthetic Library query")
+        Espresso.closeSoftKeyboard()
+        compose.onNodeWithTag("nav_item_collections").performClick()
+        compose.onNodeWithTag("col_card_favorites").performClick()
+        compose.onNodeWithTag("library_search_input").performTextReplacement("Synthetic Favorites query")
+        Espresso.closeSoftKeyboard()
+        compose.onNodeWithTag("clear_filters_button").performScrollTo().performClick()
+        compose.runOnIdle { org.junit.Assert.assertEquals("computed_favorites", vm.selectedCollectionId.value) }
+        compose.onNodeWithTag("nav_item_library").performClick()
+        compose.onNodeWithTag("library_search_input").performScrollTo().assertTextContains("Synthetic Library query")
+        compose.onNodeWithTag("nav_item_collections").performClick()
+        compose.onNodeWithTag("library_search_input").performScrollTo().assertTextContains("Synthetic Favorites query")
+        compose.onNodeWithContentDescription("Back to Collections").performClick()
+        compose.onNodeWithTag("col_card_due").performClick()
+        compose.runOnIdle {
+            org.junit.Assert.assertEquals("", vm.searchQuery.value)
+            org.junit.Assert.assertEquals("computed_due", vm.selectedCollectionId.value)
+        }
+        compose.onNodeWithContentDescription("Back to Collections").performClick()
+        compose.onNodeWithTag("col_card_favorites").performClick()
+        compose.onNodeWithTag("library_search_input").performScrollTo().assertTextContains("Synthetic Favorites query")
+    }
+
     @Test fun trashBackAndVisibleUpReturnThroughSettings() {
         openTrash()
         compose.onNodeWithContentDescription("Back to Settings").assertHasClickAction()
@@ -95,6 +137,60 @@ class NavigationHierarchyTest {
         }
         compose.onNodeWithTag("edit_item_button").assertIsDisplayed()
         Espresso.pressBack()
+    }
+
+    @Test fun overlappingSharesReuseTheTaskQueueUntilConsumedAndWaitBehindAppLock() {
+        val app = InstrumentationRegistry.getInstrumentation().targetContext
+        @Suppress("DEPRECATION")
+        val info = app.packageManager.getActivityInfo(android.content.ComponentName(app, MainActivity::class.java), 0)
+        org.junit.Assert.assertEquals(android.content.pm.ActivityInfo.LAUNCH_SINGLE_TASK, info.launchMode)
+        val originalTask = compose.activity.taskId
+        val lockWasEnabled = vm.appLockManager.isLockEnabled()
+        try {
+            compose.runOnUiThread { vm.appLockManager.setLockEnabled(false) }
+            app.startActivity(Intent(Intent.ACTION_SEND).setClass(app, MainActivity::class.java).setType("text/plain")
+                .putExtra(Intent.EXTRA_TEXT, "Synthetic first shared note").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            compose.waitUntil(10_000) { vm.incomingShare.value?.text == "Synthetic first shared note" }
+            compose.onNodeWithText("Synthetic first shared note").assertIsDisplayed()
+            org.junit.Assert.assertEquals(originalTask, compose.activity.taskId)
+            // Deliver a second share while the first preview still owns its destination choice.
+            app.startActivity(Intent(Intent.ACTION_SEND_MULTIPLE).setClass(app, MainActivity::class.java).setType("image/*")
+                .putParcelableArrayListExtra(Intent.EXTRA_STREAM, arrayListOf(
+                    android.net.Uri.parse("content://synthetic-test/first"), android.net.Uri.parse("content://synthetic-test/second")))
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+            compose.waitForIdle()
+            compose.onNodeWithText("Synthetic first shared note").assertIsDisplayed()
+            compose.onNodeWithText("2 file(s) attached").assertDoesNotExist()
+            compose.activityRule.scenario.recreate()
+            compose.onNodeWithText("Synthetic first shared note").assertIsDisplayed()
+            compose.onNodeWithText("Discard").performScrollTo().performClick()
+            compose.waitUntil(10_000) { vm.incomingShare.value?.uris?.size == 2 }
+            compose.onNodeWithText("2 file(s) attached").assertIsDisplayed()
+            compose.onNodeWithText("Discard").performScrollTo().performClick()
+            compose.activityRule.scenario.recreate()
+            compose.onNodeWithTag("save_share_button").assertDoesNotExist()
+            compose.runOnUiThread { vm.appLockManager.setLockEnabled(true) }
+            app.startActivity(Intent(Intent.ACTION_SEND).setClass(app, MainActivity::class.java).setType("text/plain")
+                .putExtra(Intent.EXTRA_TEXT, "Synthetic locked share").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            compose.waitUntil(10_000) { vm.incomingShare.value?.text == "Synthetic locked share" }
+            compose.onNodeWithText("Memora is Locked").assertIsDisplayed()
+            compose.onNodeWithTag("save_share_button").assertDoesNotExist()
+            compose.runOnIdle {
+                org.junit.Assert.assertEquals("Synthetic locked share", vm.incomingShare.value!!.text)
+                vm.appLockManager.unlock()
+            }
+            compose.onNodeWithText("Synthetic locked share").assertIsDisplayed()
+            org.junit.Assert.assertEquals(originalTask, compose.activity.taskId)
+            compose.onNodeWithText("Discard").performScrollTo().performClick()
+            compose.activityRule.scenario.recreate()
+            compose.onNodeWithTag("save_share_button").assertDoesNotExist()
+        } finally {
+            compose.runOnUiThread {
+                repeat(3) { if (vm.incomingShare.value != null) vm.setIncomingShare(null) }
+                vm.appLockManager.setLockEnabled(lockWasEnabled)
+            }
+        }
     }
 
     @Test fun largeTextRetainsScrollableLibraryControlsClearFiltersAndTrashActions() {

@@ -8,7 +8,7 @@ import android.net.NetworkCapabilities
 class AiNetworkPolicy(private val context: Context) {
     fun isAllowed(): Boolean {
         val prefs = context.getSharedPreferences("personal_library_settings", Context.MODE_PRIVATE)
-        if (!prefs.getBoolean("ai_wifi_only", true)) return true
+        if (!prefs.getBoolean("ai_wifi_only", false)) return true
         return try {
             val manager = context.getSystemService(ConnectivityManager::class.java) ?: return false
             val network = manager.activeNetwork ?: return false

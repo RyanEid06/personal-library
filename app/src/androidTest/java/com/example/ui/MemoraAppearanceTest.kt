@@ -46,7 +46,7 @@ class MemoraAppearanceTest {
     }
 
     private fun assertCleanHeader(dark: Boolean) {
-        val info = compose.onNodeWithText("items • Saved Date", substring = true)
+        val info = compose.onNodeWithText("Library • ", substring = true)
             .assertIsDisplayed().fetchSemanticsNode().boundsInRoot
         val settings = compose.onNodeWithTag("settings_top_button")
             .assertIsDisplayed().fetchSemanticsNode().boundsInRoot
@@ -60,7 +60,7 @@ class MemoraAppearanceTest {
         val image = root.captureToImage()
         val y = (info.center.y - rootBounds.top).roundToInt()
         assertEquals("Header surface must follow the selected appearance",
-            if (dark) 0xFF1E293B.toInt() else 0xFFFFFFFF.toInt(),
+            if (dark) 0xFF0C1117.toInt() else 0xFFFFFFFF.toInt(),
             image.toPixelMap()[1, y].toArgb())
     }
 

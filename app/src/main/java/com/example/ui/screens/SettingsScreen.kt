@@ -55,13 +55,12 @@ fun SettingsScreen(
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
     val stats by viewModel.storageStats.collectAsState()
-    val isPaired by viewModel.isBackendPaired.collectAsState()
     val lastBackup by viewModel.lastSuccessfulBackup.collectAsState()
     val themeMode by viewModel.themeMode.collectAsState()
 
     val prefs = remember { context.getSharedPreferences("personal_library_settings", Context.MODE_PRIVATE) }
     var pauseAi by remember { mutableStateOf(prefs.getBoolean("ai_paused", false)) }
-    var wifiOnly by remember { mutableStateOf(prefs.getBoolean("ai_wifi_only", true)) }
+    var wifiOnly by remember { mutableStateOf(prefs.getBoolean("ai_wifi_only", false)) }
 
     var showMigrationDialog by remember { mutableStateOf(false) }
     var showExportPassphraseDialog by remember { mutableStateOf(false) }
@@ -90,9 +89,6 @@ fun SettingsScreen(
         }
     }
 
-    var showPairingDialog by remember { mutableStateOf(false) }
-    var pairingSecretInput by remember { mutableStateOf("") }
-    var isPairingInProgress by remember { mutableStateOf(false) }
 
     var isLockEnabled by remember { mutableStateOf(viewModel.appLockManager.isLockEnabled()) }
 
@@ -268,81 +264,6 @@ fun SettingsScreen(
         )
     }
 
-    if (showPairingDialog) {
-        Dialog(onDismissRequest = { if (!isPairingInProgress) showPairingDialog = false }) {
-            Surface(
-                shape = RoundedCornerShape(16.dp),
-                color = MaterialTheme.colorScheme.surface,
-                modifier = Modifier.fillMaxWidth().padding(16.dp)
-            ) {
-                Column(modifier = Modifier.padding(20.dp)) {
-                    Text("Pair Backend AI", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = "Enter the Device Enrollment Secret configured on your backend to establish cryptographic Keystore identity pairing. The secret is never saved to disk.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Spacer(modifier = Modifier.height(14.dp))
-                    OutlinedTextField(
-                        value = pairingSecretInput,
-                        onValueChange = { pairingSecretInput = it },
-                        label = { Text("Enrollment Secret") },
-                        visualTransformation = PasswordVisualTransformation(),
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth().testTag("enrollment_secret_input")
-                    )
-                    Spacer(modifier = Modifier.height(20.dp))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.End
-                    ) {
-                        TextButton(
-                            onClick = { showPairingDialog = false },
-                            enabled = !isPairingInProgress
-                        ) {
-                            Text("Cancel")
-                        }
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Button(
-                            onClick = {
-                                isPairingInProgress = true
-                                coroutineScope.launch {
-                                    try {
-                                    val success = viewModel.pairBackend(pairingSecretInput.trim())
-                                    if (success) {
-                                        showPairingDialog = false
-                                        Toast.makeText(context, "Device paired successfully with backend", Toast.LENGTH_SHORT).show()
-                                    } else {
-                                        Toast.makeText(context, "Pairing failed. Check secret or backend connectivity.", Toast.LENGTH_LONG).show()
-                                    }
-                                    } catch (cancelled: kotlinx.coroutines.CancellationException) {
-                                        throw cancelled
-                                    } catch (_: com.example.ai.DeviceIdentityUnavailableException) {
-                                        Toast.makeText(context, "Android Keystore is unavailable. Unlock your device and retry.", Toast.LENGTH_LONG).show()
-                                    } catch (_: Exception) {
-                                        Toast.makeText(context, "Pairing failed. Check the enrollment secret and backend connection.", Toast.LENGTH_LONG).show()
-                                    } finally {
-                                        isPairingInProgress = false
-                                        pairingSecretInput = ""
-                                    }
-                                }
-                            },
-                            enabled = pairingSecretInput.isNotBlank() && !isPairingInProgress,
-                            modifier = Modifier.testTag("submit_pair_button")
-                        ) {
-                            if (isPairingInProgress) {
-                                CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-                                Spacer(modifier = Modifier.width(6.dp))
-                            }
-                            Text("Pair Device")
-                        }
-                    }
-                }
-            }
-        }
-    }
-
     if (showMigrationDialog) {
         WhatsAppFileImportDialog(
             onDismiss = { showMigrationDialog = false },
@@ -354,6 +275,7 @@ fun SettingsScreen(
 
     Scaffold(
         modifier = modifier.fillMaxSize(),
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
             TopAppBar(
                 title = {
@@ -448,76 +370,6 @@ fun SettingsScreen(
                 }
             }
 
-            // Backend AI Pairing Card
-            Card(
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
-            ) {
-                Column(modifier = Modifier.padding(18.dp)) {
-                    FlowRow(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                if (isPaired) Icons.Filled.CheckCircle else Icons.Filled.CloudOff,
-                                contentDescription = null,
-                                tint = if (isPaired) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("Backend AI Pairing", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                        }
-
-                        Surface(
-                            shape = RoundedCornerShape(8.dp),
-                            color = if (isPaired) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceVariant
-                        ) {
-                            Text(
-                                text = if (isPaired) "Paired" else "Not Paired",
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
-                                style = MaterialTheme.typography.labelSmall,
-                                fontWeight = FontWeight.SemiBold,
-                                color = if (isPaired) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = "Endpoint: ${viewModel.aiGateway.backendBaseUrl}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.outline
-                    )
-
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.End
-                    ) {
-                        if (isPaired) {
-                            OutlinedButton(
-                                onClick = {
-                                    viewModel.unpairBackend()
-                                    Toast.makeText(context, "Device unpaired", Toast.LENGTH_SHORT).show()
-                                }
-                            ) {
-                                Text("Unpair")
-                            }
-                            Spacer(modifier = Modifier.width(8.dp))
-                        }
-                        Button(
-                            onClick = { showPairingDialog = true },
-                            modifier = Modifier.testTag("pair_backend_button")
-                        ) {
-                            Text(if (isPaired) "Reconnect" else "Pair Device")
-                        }
-                    }
-                }
-            }
-
             // AI Controls & Automation Card
             Card(
                 shape = RoundedCornerShape(16.dp),
@@ -540,7 +392,7 @@ fun SettingsScreen(
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text("Pause Background AI", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
-                            Text("Suspends all automatic AI analysis and embedding jobs", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline)
+                            Text("Pauses automatic analysis. You can still Ask AI.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline)
                         }
                         Switch(
                             checked = pauseAi,
@@ -560,7 +412,7 @@ fun SettingsScreen(
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text("Wi-Fi Only for AI Network Calls", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
-                            Text("Require unmetered network connection for Gemini calls", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline)
+                            Text("Use Wi-Fi only instead of Wi-Fi and mobile data.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline)
                         }
                         Switch(
                             checked = wifiOnly,
@@ -574,7 +426,7 @@ fun SettingsScreen(
                 }
             }
 
-            // WhatsApp Random Links Migration
+            // WhatsApp import
             Card(
                 shape = RoundedCornerShape(16.dp),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -584,13 +436,13 @@ fun SettingsScreen(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.AutoMirrored.Filled.Chat, contentDescription = null, tint = Color(0xFF10B981))
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text("WhatsApp 'Random Links' Migration", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                        Text("WhatsApp Import", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                     }
 
                     Spacer(modifier = Modifier.height(8.dp))
 
                     Text(
-                        text = "Migrate your existing Random Links chat export directly into organized collections, preserving dates, notes, and attachment links with strict date parsing.",
+                        text = "Import a WhatsApp chat export into Inbox, preserving dates, notes, and attachment links. You can move items into a folder afterward.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )

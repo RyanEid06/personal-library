@@ -78,7 +78,7 @@ class RepositoryIntegrityTest {
         val item = repository.createNote("Private note", "Private content", listOf(private.id))
         failMemberships()
         try {
-            repository.setItemCollections(item.id, listOf(private.id, extra.id))
+            repository.setItemCollections(item.id, listOf(extra.id))
             fail("Expected injected membership failure")
         } catch (_: android.database.sqlite.SQLiteException) { }
         assertEquals(listOf(private.id), repository.dao.getCollectionIdsForItem(item.id))
@@ -179,9 +179,10 @@ class RepositoryIntegrityTest {
 
     @Test fun captureMembershipFailureRollsBackItemRefcountAndNewBlob() = runBlocking {
         val bytes = "new blob rollback".toByteArray()
+        val folder = repository.createCollection("Valid target", "folder", "#ffffff")
         failMemberships()
         try {
-            repository.captureStream(bytes.inputStream(), "rollback.txt", "text/plain", collectionIds = listOf("any"))
+            repository.captureStream(bytes.inputStream(), "rollback.txt", "text/plain", collectionIds = listOf(folder.id))
             fail("Expected injected transaction failure")
         } catch (_: android.database.sqlite.SQLiteException) { }
         assertTrue(repository.dao.getAllItemsIncludingTrash().isEmpty())

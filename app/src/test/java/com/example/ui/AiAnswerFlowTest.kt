@@ -157,5 +157,24 @@ class AiAnswerFlowTest {
         } finally { release.countDown() }
     }
 
+    @Test fun pausingBackgroundAiDoesNotCancelAnExplicitAnswer() = runBlocking {
+        val entered = CountDownLatch(1)
+        answerHandler = { body ->
+            entered.countDown()
+            release.await(5, TimeUnit.SECONDS)
+            """{"status":"ANSWERED","answer":"Synthetic answer","sourceIds":[${body.getValue("evidence").jsonArray.first().jsonObject.getValue("sourceId")}]}"""
+        }
+        vm.setSearchQuery("birthday")
+        await { vm.resultsReady.value }
+        vm.triggerAiSearch("birthday")
+        try {
+            assertTrue(entered.await(5, TimeUnit.SECONDS))
+            vm.setAiPaused(true)
+            release.countDown()
+            await { !vm.isAiSearching.value }
+            assertEquals("ANSWERED", requireNotNull(vm.aiAnswer.value).response.status)
+        } finally { release.countDown() }
+    }
+
     private suspend fun await(condition: () -> Boolean) = withTimeout(15_000) { while (!condition()) delay(10) }
 }

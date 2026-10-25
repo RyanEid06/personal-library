@@ -36,13 +36,14 @@ fun ActiveSearchFilters(
     onClearKind: () -> Unit,
     onClearDate: () -> Unit,
     onClearFilters: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    collectionLocked: Boolean = false
 ) {
     if (!hasSearchFilters(collectionId, kind, dateFilter)) return
     Column(modifier.fillMaxWidth().testTag("active_search_filters")) {
         // Keep Clear Filters outside the scrolling row, including at large font sizes.
         TextButton(onClick = onClearFilters, modifier = Modifier.align(Alignment.End).testTag("clear_filters_button")) {
-            Text("Clear Filters")
+            Text("Clear Filters", maxLines = 1, softWrap = false)
         }
         LazyRow(
             contentPadding = PaddingValues(horizontal = 16.dp),
@@ -52,11 +53,12 @@ fun ActiveSearchFilters(
             if (collectionId != null) item {
                 val name = when (collectionId) {
                     "computed_favorites" -> "Favorites"
-                    "computed_unfiled" -> "Unfiled"
+                    "computed_unfiled" -> "Inbox"
                     "computed_due" -> "Reminders"
                     else -> collections.find { it.id == collectionId }?.name ?: "Collection"
                 }
-                ActiveFilterChip("Collection: $name", "active_collection_chip", "Clear collection", onClearCollection)
+                if (collectionLocked) SuggestionChip(onClick = {}, label = { Text(name) }, modifier = Modifier.testTag("locked_collection_scope"))
+                else ActiveFilterChip("Collection: $name", "active_collection_chip", "Clear collection", onClearCollection)
             }
             if (kind != null) item {
                 ActiveFilterChip("Type: ${kind.displayName}", "active_type_chip", "Clear type", onClearKind)
@@ -123,7 +125,7 @@ fun LibraryResultState(
                     style = MaterialTheme.typography.bodyMedium,
                     textAlign = TextAlign.Center
                 )
-                if (filtersActive) TextButton(onClick = onClearFilters, modifier = Modifier.testTag("empty_clear_filters_button")) { Text("Clear Filters") }
+                if (filtersActive) TextButton(onClick = onClearFilters, modifier = Modifier.testTag("empty_clear_filters_button")) { Text("Clear Filters", maxLines = 1, softWrap = false) }
             }
         }
     }

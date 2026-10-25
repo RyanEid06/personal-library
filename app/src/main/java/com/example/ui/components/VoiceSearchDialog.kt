@@ -14,6 +14,9 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -32,6 +35,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.core.content.ContextCompat
 import java.util.Locale
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 
 @Composable
 fun VoiceSearchDialog(
@@ -41,47 +47,55 @@ fun VoiceSearchDialog(
     val context = LocalContext.current
     var spokenText by remember { mutableStateOf("") }
     var isListening by remember { mutableStateOf(false) }
-    var statusText by remember { mutableStateOf("Listening for English speech...") }
+    var statusText by remember { mutableStateOf("Starting microphone…") }
+    var session by remember { mutableIntStateOf(0) }
+    var active by remember { mutableStateOf(true) }
 
     var speechRecognizer by remember { mutableStateOf<SpeechRecognizer?>(null) }
 
-    val permissionLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestPermission()
-    ) { granted ->
-        if (granted) {
-            startListening(
-                context = context,
-                onListeningState = { isListening = it },
-                onStatus = { statusText = it },
-                onResult = { spokenText = it },
-                setRecognizer = { speechRecognizer = it }
-            )
-        } else {
-            statusText = "Microphone permission denied. Type your query below."
-            Toast.makeText(context, "Microphone permission denied", Toast.LENGTH_SHORT).show()
-        }
+    fun beginListening() {
+        val attempt = ++session
+        speechRecognizer?.cancel()
+        speechRecognizer?.destroy()
+        speechRecognizer = null
+        isListening = false
+        startListening(
+            context = context,
+            onListeningState = { if (active && session == attempt) isListening = it },
+            onStatus = { if (active && session == attempt) statusText = it },
+            onResult = { if (active && session == attempt) spokenText = it },
+            setRecognizer = { speechRecognizer = it }
+        )
     }
-
-    LaunchedEffect(Unit) {
-        val hasPerm = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
-        if (hasPerm) {
-            startListening(
-                context = context,
-                onListeningState = { isListening = it },
-                onStatus = { statusText = it },
-                onResult = { spokenText = it },
-                setRecognizer = { speechRecognizer = it }
-            )
-        } else {
-            permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-        }
+    val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted && active) beginListening()
+        else if (active) statusText = "Microphone permission denied. Tap the microphone to retry, or type your query."
     }
-
-    DisposableEffect(Unit) {
-        onDispose {
-            try {
+    fun requestListening() {
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) beginListening()
+        else permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+    }
+    LaunchedEffect(Unit) { requestListening() }
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    DisposableEffect(lifecycle) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_STOP) {
+                session++
+                speechRecognizer?.cancel()
                 speechRecognizer?.destroy()
-            } catch (_: Exception) {}
+                speechRecognizer = null
+                isListening = false
+                statusText = "Microphone paused. Tap the microphone to retry, or type your query."
+            }
+        }
+        lifecycle.addObserver(observer)
+        onDispose {
+            active = false
+            session++
+            lifecycle.removeObserver(observer)
+            speechRecognizer?.cancel()
+            speechRecognizer?.destroy()
+            speechRecognizer = null
         }
     }
 
@@ -102,7 +116,7 @@ fun VoiceSearchDialog(
             modifier = Modifier.fillMaxWidth().padding(16.dp)
         ) {
             Column(
-                modifier = Modifier.padding(24.dp),
+                modifier = Modifier.padding(24.dp).verticalScroll(rememberScrollState()),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Text(
@@ -116,6 +130,14 @@ fun VoiceSearchDialog(
                 Box(
                     modifier = Modifier
                         .size(80.dp)
+                        .testTag("voice_microphone_toggle")
+                        .clickable(role = androidx.compose.ui.semantics.Role.Button, onClickLabel = if (isListening) "Stop recording" else "Start recording") {
+                            if (isListening) {
+                                speechRecognizer?.stopListening()
+                                isListening = false
+                                statusText = "Finishing speech… Tap the microphone to record again."
+                            } else requestListening()
+                        }
                         .scale(pulseScale)
                         .background(
                             if (isListening) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
@@ -125,7 +147,7 @@ fun VoiceSearchDialog(
                 ) {
                     Icon(
                         Icons.Filled.Mic,
-                        contentDescription = "Microphone",
+                        contentDescription = if (isListening) "Stop recording" else "Start recording",
                         tint = if (isListening) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.outline,
                         modifier = Modifier.size(36.dp)
                     )
@@ -184,13 +206,14 @@ internal fun startListening(
     onResult: (String) -> Unit,
     setRecognizer: (SpeechRecognizer) -> Unit
 ) {
+    onListeningState(false)
     var onDevice = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && SpeechRecognizer.isOnDeviceRecognitionAvailable(context)
     if (!onDevice && !SpeechRecognizer.isRecognitionAvailable(context)) {
         onStatus("Speech recognition is not available on this device. Type your query below.")
         return
     }
 
-    val recognizer = if (onDevice) {
+    val recognizer = try { if (onDevice) {
         try {
             SpeechRecognizer.createOnDeviceSpeechRecognizer(context)
         } catch (_: Exception) {
@@ -205,6 +228,13 @@ internal fun startListening(
     } else {
         onStatus("Using the default speech service (may use internet)")
         SpeechRecognizer.createSpeechRecognizer(context)
+    }
+    } catch (_: SecurityException) {
+        onStatus("Microphone permission is unavailable. Tap the microphone to retry, or type your query.")
+        return
+    } catch (_: Exception) {
+        onStatus("Speech service could not start. Tap the microphone to retry, or type your query.")
+        return
     }
     setRecognizer(recognizer)
 
@@ -235,7 +265,7 @@ internal fun startListening(
 
         override fun onError(error: Int) {
             onListeningState(false)
-            onStatus("Speech recognition stopped. Type or edit your query below.")
+            onStatus(speechRecognitionErrorMessage(error))
         }
 
         override fun onResults(results: Bundle?) {
@@ -243,8 +273,8 @@ internal fun startListening(
             val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
             if (!matches.isNullOrEmpty()) {
                 onResult(matches[0])
-                onStatus("Speech recognized")
-            }
+                onStatus("Speech recognized. Edit your query or tap Search.")
+            } else onStatus(speechRecognitionErrorMessage(SpeechRecognizer.ERROR_NO_MATCH))
         }
 
         override fun onPartialResults(partialResults: Bundle?) {
@@ -257,5 +287,31 @@ internal fun startListening(
         override fun onEvent(eventType: Int, params: Bundle?) {}
     })
 
-    recognizer.startListening(intent)
+    try {
+        onListeningState(true)
+        onStatus(if (onDevice) "Starting on-device microphone…" else "Starting speech service (may use internet)…")
+        recognizer.startListening(intent)
+    } catch (_: SecurityException) {
+        onListeningState(false)
+        onStatus(speechRecognitionErrorMessage(SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS))
+    } catch (_: Exception) {
+        onListeningState(false)
+        onStatus("Speech service could not start. Tap the microphone to retry, or type your query.")
+    }
+}
+
+internal fun speechRecognitionErrorMessage(error: Int): String {
+    val reason = when (error) {
+        SpeechRecognizer.ERROR_AUDIO -> "Microphone audio could not be recorded."
+        SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Microphone permission is required."
+        SpeechRecognizer.ERROR_NETWORK, SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "Speech service network connection failed."
+        SpeechRecognizer.ERROR_NO_MATCH -> "No speech was recognized."
+        SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "No speech was heard."
+        SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "Speech service is busy."
+        SpeechRecognizer.ERROR_SERVER, SpeechRecognizer.ERROR_SERVER_DISCONNECTED -> "Speech service is unavailable."
+        SpeechRecognizer.ERROR_LANGUAGE_NOT_SUPPORTED, SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE -> "English speech recognition is unavailable on this device."
+        SpeechRecognizer.ERROR_TOO_MANY_REQUESTS -> "Speech service received too many requests. Try again shortly."
+        else -> "Speech recognition could not finish."
+    }
+    return "$reason Tap the microphone to retry, or type your query."
 }

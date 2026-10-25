@@ -69,7 +69,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val interactiveAiRetrieval = InteractiveAiRetrieval(repository.dao, prefs)
     private val aiNetworkPolicy = AiNetworkPolicy(application)
     private val aiPreferenceListener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
-        if (key in setOf("excluded_items", "excluded_collections", "ai_paused", "ai_wifi_only")) {
+        if (key in setOf("excluded_items", "excluded_collections", "ai_wifi_only")) {
             viewModelScope.launch(Dispatchers.Main.immediate) { invalidateAiSearch() }
         }
     }
@@ -151,6 +151,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _incomingShare = MutableStateFlow<SharePayload?>(null)
     val incomingShare: StateFlow<SharePayload?> = _incomingShare.asStateFlow()
+    private val incomingShareQueue = java.util.ArrayDeque<SharePayload>()
+    private val _incomingShareId = MutableStateFlow(0L)
+    val incomingShareId = _incomingShareId.asStateFlow()
 
     private val _selectedItemIds = MutableStateFlow<Set<String>>(emptySet())
     val selectedItemIds: StateFlow<Set<String>> = _selectedItemIds.asStateFlow()
@@ -164,6 +167,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _lastSuccessfulBackup = MutableStateFlow<Long?>(repository.getLastSuccessfulBackupTime())
     val lastSuccessfulBackup: StateFlow<Long?> = _lastSuccessfulBackup.asStateFlow()
+
+    private val _pendingCollectionDeletion = MutableStateFlow<com.example.data.PendingCollectionDeletion?>(null)
+    val pendingCollectionDeletion = _pendingCollectionDeletion.asStateFlow()
+    @Volatile private var deletingCollection = false
 
     private val localSearch = LatestLocalSearch(
         scope = viewModelScope,
@@ -187,6 +194,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch(Dispatchers.IO) {
             repository.cleanAbandonedRestoreStages()
             repository.reconcileStorage()
+            val pending = repository.resumeCollectionDeletions()
+            _pendingCollectionDeletion.value = pending.lastOrNull()
             repository.purgeExpiredTrash()
             com.example.indexing.LocalIndexWorker.enqueue(application)
         }
@@ -288,6 +297,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun selectCollection(colId: String?) {
+        if (browseScope != null && colId != browseScope) return
         if (_selectedCollectionId.value == colId) return
         _selectedCollectionId.value = colId
         refreshFilteredResults()
@@ -321,7 +331,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     /** Query and display preferences remain intact; every restrictive filter is reset together. */
     fun clearFilters() {
-        _selectedCollectionId.value = null
+        _selectedCollectionId.value = browseScope
         _selectedKind.value = null
         _dateFilter.value = DateFilter.ALL_TIME
         _customDateStart.value = null
@@ -329,17 +339,71 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         refreshFilteredResults()
     }
 
+    private data class BrowseState(val query: String, val kind: ItemKind?, val filter: DateFilter,
+        val basis: DateBasis, val start: Long?, val end: Long?, val sort: SortOrder, val grouping: DateGrouping)
+    private var browseScope: String? = null
+    private val browseStates = mutableMapOf<String?, BrowseState>()
+
+    fun activateBrowseContext(collectionId: String?) {
+        if (browseScope == collectionId && _selectedCollectionId.value == collectionId) return
+        browseStates[browseScope] = BrowseState(_searchQuery.value, _selectedKind.value, _dateFilter.value,
+            _dateBasis.value, _customDateStart.value, _customDateEnd.value, _sortOrder.value, _dateGrouping.value)
+        browseScope = collectionId
+        val saved = browseStates[collectionId]
+        _selectedCollectionId.value = collectionId
+        _searchQuery.value = saved?.query.orEmpty()
+        _selectedKind.value = saved?.kind
+        _dateFilter.value = saved?.filter ?: DateFilter.ALL_TIME
+        saved?.let { _dateBasis.value = it.basis; _sortOrder.value = it.sort; _dateGrouping.value = it.grouping }
+        _customDateStart.value = saved?.start
+        _customDateEnd.value = saved?.end
+        clearSelection()
+        refreshFilteredResults()
+    }
+
+    private data class PendingCaptureReminder(val time: Long, val exact: Boolean, val dateOnly: Boolean, val date: String?)
+    private var pendingCaptureReminder: PendingCaptureReminder? = null
+    fun setPendingCaptureReminder(time: Long, exact: Boolean, dateOnly: Boolean, localDate: String?) {
+        pendingCaptureReminder = PendingCaptureReminder(time, exact, dateOnly, localDate)
+    }
+    fun clearPendingCaptureReminder() { pendingCaptureReminder = null }
+
+    private data class SaveContext(val folders: List<String>, val favorite: Boolean, val reminder: com.example.data.CaptureReminder?)
+    private fun consumeSaveContext(ids: List<String>): SaveContext? {
+        val reminder = pendingCaptureReminder.also { pendingCaptureReminder = null }?.let {
+            com.example.data.CaptureReminder(it.time, it.exact, it.dateOnly, it.date)
+        }
+        if (ids.distinct().size > 1 || ("computed_due" in ids && reminder == null)) {
+            libraryMessageEvents.trySend(if (ids.size > 1) "Choose one folder" else "Choose when to remind you")
+            return null
+        }
+        return SaveContext(ids.filterNot { it in setOf("computed_favorites", "computed_due", "computed_unfiled") },
+            "computed_favorites" in ids, reminder)
+    }
+
     fun createNote(title: String, content: String, collectionIds: List<String>) {
+        val target = consumeSaveContext(collectionIds) ?: return
         viewModelScope.launch(Dispatchers.IO) {
-            val item = repository.createNote(title, content, collectionIds)
-            localIndexer.indexItem(item)
+            try {
+                repository.completeOwnerFeedbackMigration()
+                val item = repository.createNote(title, content, target.folders, target.favorite, target.reminder)
+                localIndexer.indexItem(item)
+                libraryMessageEvents.send("Saved to your library")
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { libraryMessageEvents.send("Could not save. Try again.") }
         }
     }
 
     fun saveLink(url: String, title: String, note: String, collectionIds: List<String>) {
+        val target = consumeSaveContext(collectionIds) ?: return
         viewModelScope.launch(Dispatchers.IO) {
-            val item = repository.saveLink(url, title, note, collectionIds)
-            localIndexer.indexItem(item)
+            try {
+                repository.completeOwnerFeedbackMigration()
+                val item = repository.saveLink(url, title, note, target.folders, target.favorite, target.reminder)
+                localIndexer.indexItem(item)
+                libraryMessageEvents.send("Saved to your library")
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { libraryMessageEvents.send("Could not save. Try again.") }
         }
     }
 
@@ -348,15 +412,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun startCapture(payload: SharePayload, collectionIds: List<String>, sticker: Boolean = false): Boolean {
+        val target = consumeSaveContext(collectionIds) ?: return false
         val context = getApplication<Application>()
-        val started = com.example.capture.CaptureService.start(context, payload, collectionIds, sticker)
+        val started = com.example.capture.CaptureService.start(context, payload, target.folders, sticker, target.favorite, target.reminder)
         if (!started) android.widget.Toast.makeText(context, "Another save is running, or saving could not start. Keep the originals and try again.", android.widget.Toast.LENGTH_LONG).show()
         return started
     }
 
     fun confirmShare(collectionIds: List<String>) {
         val payload = _incomingShare.value ?: return
-        if (startCapture(payload, collectionIds)) _incomingShare.value = null
+        if (startCapture(payload, collectionIds)) setIncomingShare(null)
     }
     fun cancelCapture() = com.example.capture.CaptureService.cancel(getApplication())
     fun dismissCaptureMessage() = (getApplication<Application>() as com.example.PersonalLibraryApp).captureState.dismiss()
@@ -376,18 +441,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             _aiSearchError.value = "Use a question of at most 2,000 characters. Your local results are still available."
             return
         }
-        if (!aiGateway.identityManager.isPaired) {
-            _isAiSearching.value = false
-            _aiSearchError.value = "AI search is unavailable. Pair this device in Settings to use AI."
-            return
-        }
         _isAiSearching.value = true
         fun isCurrentRequest() = requestGeneration == aiSearchGeneration.get() &&
             contextGeneration == localSearch.currentGeneration
         aiSearchJob = viewModelScope.launch(Dispatchers.IO) {
             try {
                 aiNetworkPolicy.requireAllowed()
-                val snapshot = interactiveAiRetrieval.load(context)
+                repository.completeOwnerFeedbackMigration()
+                val privacy = interactiveAiRetrieval.capturePrivacy()
+                val beforePlan: suspend () -> Unit = {
+                    ensureActive()
+                    repository.completeOwnerFeedbackMigration()
+                    interactiveAiRetrieval.requirePrivacy(privacy, ::isCurrentRequest)
+                    aiNetworkPolicy.requireAllowed()
+                }
+                val plan = aiGateway.getSearchPlan(query, emptyList(), beforeRequest = beforePlan)
+                val snapshot = interactiveAiRetrieval.load(context, plan.concepts, privacy)
                 val beforeRequest: suspend () -> Unit = {
                     ensureActive()
                     interactiveAiRetrieval.requireCurrent(snapshot, ::isCurrentRequest)
@@ -401,7 +470,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     return@launch
                 }
                 // The gateway invokes this guard again at every auth/content dispatch and retry.
-                val plan = aiGateway.getSearchPlan(query, snapshot.knownCollectionNames, beforeRequest = beforeRequest)
 
                 // Generate query embedding once online with gemini-embedding-2
                 val queryVectors = try {
@@ -497,7 +565,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     beforeRequest()
                     if (isCurrentRequest()) _aiSearchResults.value = rankedResults
                 }
-                val selected = selectAnswerEvidence(query, snapshot, rankedResults)
+                val selected = selectAnswerEvidence(query, snapshot, rankedResults, plan.concepts)
                 val answer = if (selected.evidence.isEmpty()) AnswerResponse("INSUFFICIENT", "", emptyList())
                     else aiGateway.answer(query, selected.evidence, beforeRequest = beforeRequest)
                 val evidenceById = selected.evidence.associateBy { it.sourceId }
@@ -520,11 +588,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             is AiGatewayException.AnswerUnavailableException ->
                                 "Direct answers are not available on this backend yet. Your local results and related matches are still available."
                             is AiGatewayException.UnpairedException, is AiGatewayException.AuthenticationException ->
-                                "AI search is unavailable. Pair this device again in Settings."
+                                "AI could not connect. Try again in a moment. Your local results are still available."
                             is AiGatewayException.NetworkPolicyException ->
                                 "AI search needs an allowed connection. When Wi-Fi-only is on, connect to an unmetered network. Your local results are still available."
                             is AiGatewayException.RequestBlockedException ->
-                                "AI search stopped because privacy settings or library content changed. Your local results are still available. Try again when AI is enabled."
+                                "AI search stopped because privacy settings or library content changed. Your local results are still available. Try again."
                             else -> "AI search is unavailable right now. Your local results are still available. Try again later."
                         }
                     }
@@ -638,8 +706,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    suspend fun getOrCreateRandomLinksCollection(): CollectionEntity = repository.getOrCreateRandomLinksCollection()
-
     fun restoreAllTrash() {
         val ids = _trashItems.value.map { it.id }
         viewModelScope.launch(Dispatchers.IO) {
@@ -675,12 +741,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
 
-    fun deleteCollection(collectionId: String) {
+    @MainThread
+    fun deleteCollection(collectionId: String, undoMillis: Long = 5_000) {
+        if (deletingCollection || _pendingCollectionDeletion.value != null) {
+            libraryMessageEvents.trySend("Use Undo or wait before deleting another collection")
+            return
+        }
+        deletingCollection = true
         viewModelScope.launch(Dispatchers.IO) {
             var deleted = false
             try {
                 val affectedItemIds = repository.dao.getItemIdsForCollection(collectionId)
-                repository.deleteCollection(collectionId)
+                _pendingCollectionDeletion.value = repository.deleteCollection(collectionId, undoMillis)
                 deleted = true
                 withContext(NonCancellable + Dispatchers.IO) {
                     withContext(Dispatchers.Main.immediate) {
@@ -697,30 +769,39 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 throw cancelled
             } catch (_: Exception) {
                 ensureActive()
-                libraryMessageEvents.send(if (deleted) "Collection deleted, but AI processing could not refresh. Saved items remain in Memora."
+                libraryMessageEvents.send(if (deleted) "Collection moved to Trash, but AI processing could not refresh."
                     else "Could not delete the collection. Saved items remain in Memora.")
-            }
+            } finally { deletingCollection = false }
+        }
+    }
+
+    fun undoCollectionDeletion(operationId: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                if (!repository.undoCollectionDeletion(operationId)) libraryMessageEvents.send("Undo time has ended")
+                if (_pendingCollectionDeletion.value?.operationId == operationId) _pendingCollectionDeletion.value = null
+                withContext(Dispatchers.Main.immediate) { invalidateAiSearch() }
+                localIndexer.enqueuePendingAnalysisJobs()
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { libraryMessageEvents.send("Could not undo. Try again.") }
+        }
+    }
+
+    fun finalizeCollectionDeletion(operationId: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                if (repository.finalizeCollectionDeletion(operationId) && _pendingCollectionDeletion.value?.operationId == operationId) {
+                    _pendingCollectionDeletion.value = null
+                }
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { libraryMessageEvents.send("Collection cleanup will retry automatically") }
         }
     }
 
     fun setItemCollections(itemId: String, collectionIds: List<String>) {
         viewModelScope.launch(Dispatchers.IO) {
-            var updated = false
-            try {
-                repository.setItemCollections(itemId, collectionIds)
-                updated = true
-                withContext(NonCancellable + Dispatchers.IO) {
-                    withContext(Dispatchers.Main.immediate) { invalidateAiSearch() }
-                    localIndexer.reconcileAiEligibility(listOf(itemId))
-                }
-                ensureActive()
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (_: Exception) {
-                ensureActive()
-                libraryMessageEvents.send(if (updated) "Collections updated, but AI processing could not refresh. Try again."
-                    else "Could not update collections. Try again.")
-            }
+            changeSelectedCollections(setOf(itemId), collectionIds.toSet(), add = true)
+                ?.let { libraryMessageEvents.send(it) }
         }
     }
 
@@ -730,9 +811,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun setItemAiExcluded(itemId: String, excluded: Boolean) {
-        val current = (prefs.getStringSet("excluded_items", emptySet()) ?: emptySet()).toMutableSet()
-        if (excluded) current.add(itemId) else current.remove(itemId)
-        prefs.edit().putStringSet("excluded_items", current).apply()
+        if (!com.example.ai.AiPrivacyPreferences.mutate(prefs, "excluded_items") { current ->
+            if (excluded) current.add(itemId) else current.remove(itemId)
+        }) {
+            libraryMessageEvents.trySend("Could not save AI privacy settings. Try again.")
+            return
+        }
         invalidateAiSearch()
         viewModelScope.launch(Dispatchers.IO) {
             localIndexer.reconcileAiEligibility(listOf(itemId))
@@ -745,9 +829,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun setCollectionAiExcluded(colId: String, excluded: Boolean) {
-        val current = (prefs.getStringSet("excluded_collections", emptySet()) ?: emptySet()).toMutableSet()
-        if (excluded) current.add(colId) else current.remove(colId)
-        prefs.edit().putStringSet("excluded_collections", current).apply()
+        if (!com.example.ai.AiPrivacyPreferences.mutate(prefs, "excluded_collections") { current ->
+            if (excluded) current.add(colId) else current.remove(colId)
+        }) {
+            libraryMessageEvents.trySend("Could not save AI privacy settings. Try again.")
+            return
+        }
         invalidateAiSearch()
         viewModelScope.launch(Dispatchers.IO) {
             localIndexer.reconcileAiEligibility(repository.dao.getItemIdsForCollection(colId))
@@ -756,7 +843,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setAiPaused(paused: Boolean) {
         prefs.edit().putBoolean("ai_paused", paused).apply()
-        invalidateAiSearch()
         if (paused) {
             androidx.work.WorkManager.getInstance(getApplication()).cancelAllWorkByTag("ai_enrichment")
             viewModelScope.launch(Dispatchers.IO) {
@@ -902,8 +988,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    @Synchronized
     fun setIncomingShare(payload: SharePayload?) {
-        _incomingShare.value = payload
+        if (payload != null && _incomingShare.value != null) incomingShareQueue.addLast(payload)
+        else {
+            _incomingShare.value = payload ?: incomingShareQueue.pollFirst()
+            _incomingShareId.value += 1
+        }
     }
 
     fun getFilteredItems(): List<ItemWithCollections> {

@@ -105,7 +105,7 @@ fun WhatsAppFileImportDialog(
                             TextButton(onClick = { order = value; acknowledgedDates = true }, enabled = !busy) { Text(if (acknowledgedDates && order == value) "✓ $label" else label) }
                         }
                     }
-                    Text("Dates use this phone's current timezone (${java.util.TimeZone.getDefault().id}). Import saves messages and the original export to Random Links. Missing attachment bytes are not imported. Local indexing and queued AI analysis follow.")
+                    Text("Dates use this phone's current timezone (${java.util.TimeZone.getDefault().id}). Import saves messages and the original export to Inbox without creating a folder. Missing attachment bytes are not imported. Local indexing and queued AI analysis follow.")
                 }
                 message?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                 if (busy) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())

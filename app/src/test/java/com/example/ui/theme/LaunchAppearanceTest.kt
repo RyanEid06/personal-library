@@ -22,7 +22,7 @@ import org.robolectric.Robolectric
 class LaunchAppearanceTest {
     private val context: Context get() = ApplicationProvider.getApplicationContext()
 
-    @Test fun systemDarkLaunchWindowUsesTheExistingSlatePalette() {
+    @Test fun systemDarkLaunchWindowUsesSpendWiseBackground() {
         val configuration = Configuration(context.resources.configuration).apply {
             uiMode = (uiMode and Configuration.UI_MODE_NIGHT_MASK.inv()) or Configuration.UI_MODE_NIGHT_YES
         }
@@ -31,7 +31,7 @@ class LaunchAppearanceTest {
         val background = values.getDrawable(0)
         values.recycle()
         assertTrue("Launch background must be a solid palette color", background is ColorDrawable)
-        assertEquals("Cold launch must match Memora's dark background", Color.rgb(15, 23, 42), (background as ColorDrawable).color)
+        assertEquals("Cold launch must match Memora's dark background", Color.rgb(5, 8, 12), (background as ColorDrawable).color)
     }
 
     @Test fun selectedAppearanceAlsoUpdatesThePersistedAndroidSplashMode() {
@@ -54,7 +54,7 @@ class LaunchAppearanceTest {
     }
 
     @Test @Config(sdk = [29, 34], qualifiers = "notnight")
-    fun savedDarkChoiceOverridesALightSystemForTheAppWindow() = assertActivityBackground(ThemeMode.DARK, Color.rgb(15, 23, 42))
+    fun savedDarkChoiceOverridesALightSystemForTheAppWindow() = assertActivityBackground(ThemeMode.DARK, Color.rgb(5, 8, 12))
 
     @Test @Config(sdk = [29, 34], qualifiers = "night")
     fun savedLightChoiceOverridesADarkSystemForTheAppWindow() = assertActivityBackground(ThemeMode.LIGHT, Color.rgb(248, 250, 252))

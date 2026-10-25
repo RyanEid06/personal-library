@@ -10,6 +10,7 @@ import kotlin.math.sqrt
 enum class ItemKind(val displayName: String) {
     PHOTO("Photos"),
     STICKER("Stickers"),
+    GIF("GIFs"),
     VIDEO("Videos"),
     AUDIO("Audio"),
     TEXT("Notes & Text"),

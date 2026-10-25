@@ -38,15 +38,14 @@ import com.example.ui.components.SharePreviewDialog
 import com.example.ui.components.VoiceSearchDialog
 import com.example.ui.screens.CollectionsScreen
 import com.example.ui.screens.LibraryScreen
-import com.example.ui.screens.SearchScreen
 import com.example.ui.screens.SettingsScreen
 import com.example.ui.screens.TrashScreen
+import kotlinx.coroutines.withTimeoutOrNull
 import com.example.ui.theme.PersonalLibraryTheme
 
 enum class AppDestination(val label: String) {
     LIBRARY("Library"),
     COLLECTIONS("Collections"),
-    SEARCH("Search"),
     SETTINGS("Settings"),
     TRASH("Trash")
 }
@@ -195,7 +194,7 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
         val payload = intent?.let(com.example.capture.SharePayloadDecoder::decode) ?: return
         if (payload.text != null || payload.uris.isNotEmpty() || payload.rejectedCount > 0) viewModel.setIncomingShare(payload)
         // Consume delivery immediately. A configuration/process restore must not replay transient grants.
-        setIntent(Intent(this, MainActivity::class.java).setAction(Intent.ACTION_MAIN))
+        setIntent(Intent(this, MainActivity::class.java).setAction(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER))
     }
 }
 
@@ -206,6 +205,7 @@ fun MainAppScaffold(
     onIntentTargetConsumed: (String) -> Unit = {}
 ) {
     var currentDestination by rememberSaveable { mutableStateOf(AppDestination.LIBRARY) }
+    var collectionDetailId by rememberSaveable { mutableStateOf<String?>(null) }
     var activeDetailItemId by rememberSaveable { mutableStateOf<String?>(null) }
     var editingItem by remember { mutableStateOf<ItemWithCollections?>(null) }
     var showAddDialog by remember { mutableStateOf(false) }
@@ -213,11 +213,43 @@ fun MainAppScaffold(
     val destinationStates = rememberSaveableStateHolder()
 
     val incomingShare by viewModel.incomingShare.collectAsState()
+    val incomingShareId by viewModel.incomingShareId.collectAsState()
     val collections by viewModel.collections.collectAsState()
     val allItems by viewModel.items.collectAsState()
     val activeDetailItem = allItems.find { it.item.id == activeDetailItemId }
+    val selectedBrowseId by viewModel.selectedCollectionId.collectAsState()
+    val pendingDeletion by viewModel.pendingCollectionDeletion.collectAsState()
+    val captureContextId = if (currentDestination == AppDestination.COLLECTIONS) collectionDetailId else null
     val capture by viewModel.captureState.collectAsState()
     val isBatchMode by viewModel.isBatchMode.collectAsState()
+    val captureSnackbar = remember { SnackbarHostState() }
+    var snackbarIsError by remember { mutableStateOf(false) }
+    LaunchedEffect(pendingDeletion?.operationId) {
+        val deletion = pendingDeletion ?: return@LaunchedEffect
+        val remaining = deletion.undoUntil - System.currentTimeMillis()
+        if (remaining > 0) {
+            captureSnackbar.currentSnackbarData?.dismiss()
+            snackbarIsError = false
+            val result = withTimeoutOrNull(remaining) {
+                captureSnackbar.showSnackbar("${deletion.name} and its items moved to Trash", actionLabel = "Undo", duration = SnackbarDuration.Indefinite)
+            }
+            if (result == SnackbarResult.ActionPerformed) viewModel.undoCollectionDeletion(deletion.operationId)
+            else viewModel.finalizeCollectionDeletion(deletion.operationId)
+        } else {
+            viewModel.finalizeCollectionDeletion(deletion.operationId)
+        }
+    }
+    LaunchedEffect(capture.message, capture.saving) {
+        if (!capture.saving && capture.message != null) {
+            snackbarIsError = capture.failed > 0 || capture.saved == 0
+            captureSnackbar.showSnackbar(capture.message.orEmpty(), duration = SnackbarDuration.Short)
+            viewModel.dismissCaptureMessage()
+        }
+    }
+    LaunchedEffect(currentDestination, collectionDetailId) {
+        if (currentDestination == AppDestination.LIBRARY) viewModel.activateBrowseContext(null)
+        else if (currentDestination == AppDestination.COLLECTIONS && collectionDetailId != null) viewModel.activateBrowseContext(collectionDetailId)
+    }
     var consumedTargetItemId by rememberSaveable { mutableStateOf<String?>(null) }
     val latestOnIntentTargetConsumed by rememberUpdatedState(onIntentTargetConsumed)
 
@@ -236,6 +268,10 @@ fun MainAppScaffold(
     }
 
     fun navigateUp() {
+        if (currentDestination == AppDestination.COLLECTIONS && collectionDetailId != null) {
+            collectionDetailId = null
+            return
+        }
         currentDestination = if (currentDestination == AppDestination.TRASH) AppDestination.SETTINGS else AppDestination.LIBRARY
     }
 
@@ -249,21 +285,26 @@ fun MainAppScaffold(
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         contentWindowInsets = WindowInsets.systemBars,
+        snackbarHost = { SnackbarHost(captureSnackbar) { data ->
+            Snackbar(data, containerColor = if (snackbarIsError) MaterialTheme.colorScheme.errorContainer else androidx.compose.ui.graphics.Color(0xFF166534),
+                contentColor = if (snackbarIsError) MaterialTheme.colorScheme.onErrorContainer else androidx.compose.ui.graphics.Color.White,
+                actionColor = androidx.compose.ui.graphics.Color.White)
+        } },
         topBar = {
-            if (capture.saving || capture.message != null) {
-                Surface(color = MaterialTheme.colorScheme.secondaryContainer) {
+            if (capture.saving) {
+                Surface(modifier = Modifier.windowInsetsPadding(WindowInsets.statusBars), color = MaterialTheme.colorScheme.secondaryContainer) {
                     Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                        Text(if (capture.saving) "Saving… ${capture.saved} committed, ${capture.failed} failed of ${capture.total}" else capture.message.orEmpty(),
+                        Text("Saving… ${capture.saved} committed, ${capture.failed} failed of ${capture.total}",
                             modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
-                        TextButton(onClick = { if (capture.saving) viewModel.cancelCapture() else viewModel.dismissCaptureMessage() }) {
-                            Text(if (capture.saving) "Cancel" else "Dismiss")
+                        TextButton(onClick = { viewModel.cancelCapture() }) {
+                            Text("Cancel", maxLines = 1, softWrap = false)
                         }
                     }
                 }
             }
         },
         bottomBar = {
-            if (currentDestination in listOf(AppDestination.LIBRARY, AppDestination.COLLECTIONS, AppDestination.SEARCH)) {
+            if (currentDestination in listOf(AppDestination.LIBRARY, AppDestination.COLLECTIONS, AppDestination.SETTINGS)) {
                 NavigationBar(modifier = Modifier.testTag("bottom_nav_bar")) {
                     NavigationBarItem(
                         selected = currentDestination == AppDestination.LIBRARY,
@@ -292,16 +333,16 @@ fun MainAppScaffold(
                     )
 
                     NavigationBarItem(
-                        selected = currentDestination == AppDestination.SEARCH,
-                        onClick = { viewModel.clearSelection(); currentDestination = AppDestination.SEARCH },
+                        selected = currentDestination == AppDestination.SETTINGS,
+                        onClick = { viewModel.clearSelection(); currentDestination = AppDestination.SETTINGS },
                         icon = {
                             Icon(
-                                if (currentDestination == AppDestination.SEARCH) Icons.Filled.Search else Icons.Outlined.Search,
-                                contentDescription = "Search"
+                                if (currentDestination == AppDestination.SETTINGS) Icons.Filled.Settings else Icons.Outlined.Settings,
+                                contentDescription = "Settings"
                             )
                         },
-                        label = { Text("Search") },
-                        modifier = Modifier.testTag("nav_item_search")
+                        label = { Text("Settings") },
+                        modifier = Modifier.testTag("nav_item_settings")
                     )
                 }
             }
@@ -311,11 +352,14 @@ fun MainAppScaffold(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
+                .consumeWindowInsets(padding)
         ) {
             destinationStates.SaveableStateProvider(currentDestination.name) {
             when (currentDestination) {
                 AppDestination.LIBRARY -> {
-                    LibraryScreen(
+                    if (selectedBrowseId != null) {
+                        Box(Modifier.fillMaxSize(), contentAlignment = androidx.compose.ui.Alignment.Center) { CircularProgressIndicator() }
+                    } else LibraryScreen(
                         viewModel = viewModel,
                         onOpenItemDetail = { activeDetailItemId = it.item.id },
                         onOpenVoiceSearch = { showVoiceSearchDialog = true },
@@ -324,24 +368,28 @@ fun MainAppScaffold(
                     )
                 }
                 AppDestination.COLLECTIONS -> {
-                    CollectionsScreen(
+                    val detailId = collectionDetailId
+                    if (detailId == null) CollectionsScreen(
                         viewModel = viewModel,
-                        onCollectionSelected = { colId ->
-                            viewModel.selectCollection(colId)
-                            currentDestination = AppDestination.LIBRARY
-                        },
+                        onCollectionSelected = { collectionDetailId = it },
                         onSelectCollectionItems = { colId ->
+                            viewModel.activateBrowseContext(colId)
                             viewModel.selectCollectionItems(colId)
-                            currentDestination = AppDestination.LIBRARY
+                            collectionDetailId = colId
                         }
-                    )
-                }
-                AppDestination.SEARCH -> {
-                    SearchScreen(
-                        viewModel = viewModel,
-                        onOpenItemDetail = { activeDetailItemId = it.item.id },
-                        onOpenVoiceSearch = { showVoiceSearchDialog = true }
-                    )
+                    ) else if (selectedBrowseId != detailId) {
+                        Box(Modifier.fillMaxSize(), contentAlignment = androidx.compose.ui.Alignment.Center) { CircularProgressIndicator() }
+                    } else destinationStates.SaveableStateProvider("collection_$detailId") {
+                        LibraryScreen(
+                            viewModel = viewModel,
+                            onOpenItemDetail = { activeDetailItemId = it.item.id },
+                            onOpenVoiceSearch = { showVoiceSearchDialog = true },
+                            onOpenSettings = { currentDestination = AppDestination.SETTINGS },
+                            onOpenAddDialog = { showAddDialog = true },
+                            collectionScope = detailId,
+                            onNavigateBack = { collectionDetailId = null }
+                        )
+                    }
                 }
                 AppDestination.SETTINGS -> {
                     SettingsScreen(
@@ -401,7 +449,9 @@ fun MainAppScaffold(
     if (showAddDialog) {
         AddContentDialog(
             collections = collections,
-            onDismiss = { showAddDialog = false },
+            initialCollectionId = captureContextId,
+            onReminderChosen = viewModel::setPendingCaptureReminder,
+            onDismiss = { showAddDialog = false; viewModel.clearPendingCaptureReminder() },
             onCreateNote = { title, content, colId ->
                 viewModel.createNote(title, content, colId)
             },
@@ -417,15 +467,18 @@ fun MainAppScaffold(
     // Modal: Share Preview Dialog (when launched with ACTION_SEND)
     if (incomingShare != null) {
         val payload = incomingShare!!
+        key(incomingShareId) {
         SharePreviewDialog(
             payload = payload,
             collections = collections,
-            onDismiss = { viewModel.setIncomingShare(null) },
+            onDismiss = { viewModel.clearPendingCaptureReminder(); viewModel.setIncomingShare(null) },
             onConfirmSave = { targetCollectionId ->
                 viewModel.confirmShare(targetCollectionId)
             },
-            resolveDefaultCollectionId = { viewModel.getOrCreateRandomLinksCollection().id }
+            initialCollectionId = captureContextId,
+            onReminderChosen = viewModel::setPendingCaptureReminder
         )
+        }
     }
 
     // Modal: Voice Search Dialog
@@ -434,7 +487,6 @@ fun MainAppScaffold(
             onDismiss = { showVoiceSearchDialog = false },
             onQueryConfirmed = { query ->
                 viewModel.setSearchQuery(query)
-                currentDestination = AppDestination.SEARCH
             }
         )
     }

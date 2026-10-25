@@ -53,8 +53,6 @@ class AiQueuePrivacyTest {
         assertTrue(repository.dao.getAnalysisJob(item.id)!!.metadataOnly)
         com.example.ai.AiGateway(context).identityManager.clearPairing()
         context.getSharedPreferences("personal_library_settings", 0).edit().putBoolean("ai_paused", false).commit()
-        assertEquals(ListenableWorker.Result.failure(), worker.doWork())
-        assertTrue(repository.dao.getAnalysisJob(item.id)!!.metadataOnly)
         val requests = java.util.Collections.synchronizedList(mutableListOf<String>())
         val server = com.sun.net.httpserver.HttpServer.create(java.net.InetSocketAddress("127.0.0.1", 0), 0)
         server.createContext("/") { exchange ->
@@ -120,6 +118,7 @@ class AiQueuePrivacyTest {
         val repository = LibraryRepository(context)
         val item = repository.createNote("Policy change", "Cached owner text", emptyList())
         val prefs = context.getSharedPreferences("personal_library_settings", 0)
+        prefs.edit().putBoolean("ai_wifi_only", true).commit()
         val indexer = LocalIndexer(context, repository)
         indexer.indexItem(item)
         val manager = androidx.work.WorkManager.getInstance(context)
@@ -151,7 +150,53 @@ class AiQueuePrivacyTest {
         assertEquals(persisted.copy(status = "NEEDS_RETRY", attempts = 4), repository.dao.getAnalysisJob(item.id))
     }
 
+    @Test fun newQueueDefaultsToConnectedNetworks() = runBlocking {
+        val repository = LibraryRepository(context)
+        val item = repository.createNote("Default network", "Synthetic content")
+        LocalIndexer(context, repository).indexItem(item)
+        val work = androidx.work.WorkManager.getInstance(context).getWorkInfosForUniqueWork("ai_job_${item.id}")
+            .get().filter { !it.state.isFinished }.single()
+        assertEquals(androidx.work.NetworkType.CONNECTED, work.constraints.requiredNetworkType)
+    }
+
+    @Test fun unregisteredWorkerReachesAutomaticAuthAndMigratesExclusionsBeforeAnyDispatch() = runBlocking {
+        val repository = LibraryRepository(context)
+        val item = repository.createNote("Automatic setup", "Synthetic content")
+        repository.dao.insertOrUpdateAnalysisJob(AnalysisJobEntity(itemId = item.id))
+        val requests = java.util.Collections.synchronizedList(mutableListOf<String>())
+        val server = com.sun.net.httpserver.HttpServer.create(java.net.InetSocketAddress("127.0.0.1", 0), 0)
+        server.createContext("/") { exchange ->
+            exchange.requestBody.use { it.readBytes() }
+            requests.add(exchange.requestURI.path)
+            exchange.sendResponseHeaders(500, -1)
+            exchange.close()
+        }
+        server.start()
+        try {
+            com.example.ai.AiGateway(context).apply {
+                backendBaseUrl = "http://127.0.0.1:${server.address.port}"
+                identityManager.clearPairing()
+            }
+            val worker = TestListenableWorkerBuilder<DurableAiWorker>(context,
+                inputData = workDataOf("item_id" to item.id)).build()
+            worker.doWork()
+            assertEquals(listOf("/v1/auth/challenge"), requests)
+            requests.clear()
+            val database = androidx.room.Room.databaseBuilder(context, com.example.data.LibraryRoomDatabase::class.java,
+                "personal_library_room.db").addMigrations(com.example.data.MIGRATION_5_6).addCallback(com.example.data.DATABASE_CALLBACK).build()
+            try {
+                database.openHelper.writableDatabase.execSQL("INSERT INTO privacy_migration_memberships VALUES(?, ?)", arrayOf(item.id, "old-private"))
+                context.getSharedPreferences("personal_library_settings", 0).edit().putStringSet("excluded_collections", setOf("old-private")).commit()
+                TestListenableWorkerBuilder<DurableAiWorker>(context, inputData = workDataOf("item_id" to item.id)).build().doWork()
+                assertTrue(requests.isEmpty())
+                assertTrue(database.libraryDao().getPrivacyMigrationMemberships().isEmpty())
+                assertTrue(context.getSharedPreferences("personal_library_settings", 0).getStringSet("excluded_items", emptySet())!!.contains(item.id))
+            } finally { database.close() }
+        } finally { server.stop(0) }
+    }
+
     @Test fun unavailableNetworkLeavesDurableWorkPendingWithoutConsumingAttempt() = runBlocking {
+        context.getSharedPreferences("personal_library_settings", 0).edit().putBoolean("ai_wifi_only", true).commit()
         val repository = LibraryRepository(context)
         val item = repository.createNote("Offline policy", "Do not send", emptyList())
         repository.dao.insertOrUpdateAnalysisJob(AnalysisJobEntity(itemId = item.id, status = "QUEUED", attempts = 2, metadataOnly = true))
@@ -175,6 +220,7 @@ class AiQueuePrivacyTest {
     @Test fun meteredNetworkDuring401KeepsJobPendingWithoutSpendingRetry() = blockedDuring401(excludeCollection = false)
 
     private fun blockedDuring401(excludeCollection: Boolean) = runBlocking {
+        context.getSharedPreferences("personal_library_settings", 0).edit().putBoolean("ai_wifi_only", true).commit()
         val repository = LibraryRepository(context)
         val collection = repository.createCollection("Synthetic private group", "folder", "#ffffff")
         val item = repository.createNote("Synthetic policy", "chemistry survives locally", listOf(collection.id))

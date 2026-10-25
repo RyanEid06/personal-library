@@ -45,7 +45,7 @@ fun SelectionActions(viewModel: MainViewModel, visibleCount: Int, visibleIds: ()
             )
             for (add in listOf(true, false)) {
                 DropdownMenuItem(
-                    text = { Text(if (add) "Add to collections" else "Remove from collections") },
+                    text = { Text(if (add) "Move to folder" else "Remove from folders") },
                     enabled = selectedIds.isNotEmpty(),
                     onClick = {
                         actionItemIds = selectedIds.toSet()
@@ -85,21 +85,22 @@ private fun BulkCollectionsDialog(
     val scope = rememberCoroutineScope()
     AlertDialog(
         onDismissRequest = { if (!saving) onDismiss() },
-        title = { Text(if (add) "Add $itemCount items to collections" else "Remove $itemCount items from collections") },
+        title = { Text(if (add) "Move $itemCount items to a folder" else "Remove $itemCount items from folders") },
         text = {
             Column {
-                Text(if (add) "Other memberships will stay." else "Saved items and other memberships will stay.")
+                Text(if (add) "Choose one folder. This replaces each item's previous folder." else "Items in the selected folders will move to Inbox. Saved items stay in your library.")
                 if (collections.isEmpty()) Text("Create a collection first.")
                 LazyColumn(Modifier.heightIn(max = 320.dp)) {
                     items(collections, key = { it.id }) { collection ->
                         fun toggle() {
-                            chosen = if (collection.id in chosen) chosen - collection.id else chosen + collection.id
+                            chosen = if (add) setOf(collection.id) else if (collection.id in chosen) chosen - collection.id else chosen + collection.id
                         }
                         Row(
                             Modifier.fillMaxWidth().heightIn(min = 48.dp).clickable(enabled = !saving) { toggle() },
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Checkbox(collection.id in chosen, onCheckedChange = { toggle() }, enabled = !saving)
+                            if (add) RadioButton(collection.id in chosen, onClick = { toggle() }, enabled = !saving)
+                            else Checkbox(collection.id in chosen, onCheckedChange = { toggle() }, enabled = !saving)
                             Text(collection.name, Modifier.weight(1f))
                         }
                     }

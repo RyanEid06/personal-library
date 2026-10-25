@@ -1,6 +1,6 @@
 # Owner-local V1.0.2 QA candidate
 
-This private candidate contains the post-release QA fixes for owner acceptance. The current official public release remains V1.0.1 / code 3. Candidate source uses V1.0.2 / code 4 because changed source must not reuse the published versionCode.
+This private candidate contains the post-release QA fixes and approved 24 October owner-feedback changes for owner acceptance. The current official public release remains V1.0.1 / code 3. The earlier certified V1.0.2 / code 4 pair is preserved; changed candidate source uses V1.0.2 / code 5 and requires fresh exact-source CI.
 
 After the final implementation and QA checkpoint is committed and pushed to `codex/v1.0.1-final-qa`, wait for that exact source SHA to have a completed successful `android.yml` run with all five required jobs (`core`, `android`, `server`, `emulator`, `signing-workflow`) completed successfully. Then use the existing owner-local signing setup:
 
@@ -12,7 +12,7 @@ Use JDK 21 and the prepared `.tools/android-sdk` (or the existing `-AndroidSdkRo
 
 The command uses the same permanent key, release Gradle task, R8 mapping, ARM64/universal packaging, certificate/package/version checks, ABI/OCR preservation, zip alignment and ARM64 ELF checks as the normal release command. It decrypts credentials only after source, CI, SDK, version and permanent-key preflight. It neither publishes a GitHub release nor merges or pushes any branch.
 
-For source version `1.0.2` / code `4`, successful outputs are:
+For source version `1.0.2` / code `5`, successful outputs are:
 
 - `artifacts/release-v1.0.2-candidate/Memora-v1.0.2-arm64-candidate.apk`
 - `artifacts/release-v1.0.2-candidate/Memora-v1.0.2-universal-candidate.apk`
@@ -24,7 +24,7 @@ This directory is ignored by Git. Filenames and directory version follow the exp
 
 Hand off the verified private APK with its exact source SHA, CI run, APK checksum, signing certificate and version, plus the remaining-case checklist in `qa-reports/memora-v1-final/COVERAGE_MAP.md` and observed results in `CASE_RESULTS.md`. Unreachable emulator cases and physical/manual checks may remain pending for this private handoff; keep their failures and incomplete evidence explicit. The owner tests those cases on the candidate before accepting an official public launch. Installing the same-package, same-certificate higher-code candidate over the official app supports an in-place update; returning to code 3 would be a downgrade. While App Lock is enabled, screenshot and Overview content protection also restricts screen recording and non-secure displays.
 
-Owner acceptance and explicit authorization are required before main integration, tagging or a public release. A later changed-source build must pass the same version-reuse guard and may need another versionCode increase if code 4 has already been reserved by a candidate ledger. This preparation does not establish candidate device acceptance or public-release readiness.
+Owner acceptance and explicit authorization are required before main integration, tagging or a public release. A later changed-source build must pass the same version-reuse guard. Preserve the complete certified code 4 pair and its receipts in a verified subdirectory before candidate publication replaces the fixed output names. The automatic-registration backend changes require a separate approved rollout; local implementation does not deploy them or establish live provider acceptance.
 
 The default command without `-QaCandidate` retains the clean-main requirement, Desktop official filenames, official Documents ledger and `artifacts/release-v1` reports. Candidate outputs do not establish an official release.
 

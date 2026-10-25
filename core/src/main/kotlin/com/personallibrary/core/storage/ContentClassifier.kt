@@ -25,9 +25,12 @@ object ContentClassifier {
         val extension = normalizedName.substringAfterLast('.', "")
 
         // Explicit sticker filenames or webp sticker detection
-        if (normalizedName.contains("sticker") && (normalizedMime.contains("webp") || extension == "webp")) {
+        if ((normalizedName.contains("sticker") || normalizedName.startsWith("stk-")) &&
+            (normalizedMime.contains("webp") || extension == "webp")) {
             return ItemKind.STICKER
         }
+
+        if (normalizedMime == "image/gif" || extension == "gif") return ItemKind.GIF
 
         // WebP without explicit sticker hint is classified as PHOTO (spec requirement)
         if (normalizedMime == "image/webp" || extension == "webp") {

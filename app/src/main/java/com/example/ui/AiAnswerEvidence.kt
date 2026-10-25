@@ -17,15 +17,15 @@ internal data class SelectedAnswerEvidence(
 internal fun selectAnswerEvidence(
     question: String,
     snapshot: InteractiveAiSnapshot,
-    semanticResults: List<SemanticSearchResult>
+    semanticResults: List<SemanticSearchResult>,
+    expandedConcepts: List<String> = emptyList()
 ): SelectedAnswerEvidence {
     if (snapshot.privacy.paused || question.isBlank() || question.length > 2000) {
         return SelectedAnswerEvidence(emptyList(), emptyMap())
     }
     // FTS treats terminal question punctuation as a token boundary. Match the
     // cached evidence with that same word, without changing ordinary SearchQuery.
-    val terms = interactiveAiQuestionTerms(question).map { it.replace(terminalPunctuation, "") }
-        .filter { it.isNotBlank() && it.lowercase() !in questionWords }.distinct()
+    val terms = interactiveAiQuestionTerms(question, expandedConcepts).filter { it !in questionWords }
     val snippetQuery = terms.joinToString(" ")
     val documents = snapshot.documents.groupBy { it.itemId }
     val semantic = semanticResults.filter { it.score.isFinite() && it.score > 0f }.associateBy { it.item.item.id }
@@ -93,9 +93,6 @@ internal fun selectAnswerEvidence(
 
 private val questionWords = setOf("when", "where", "what", "which", "who", "whose", "why", "how", "is", "are",
     "was", "were", "the", "an", "and", "or", "of", "to", "for", "do", "does", "did", "can", "could", "please", "me", "my")
-
-// Unicode categories preserve supplementary letters/digits as complete code points.
-private val terminalPunctuation = Regex("^[^\\p{L}\\p{N}]+|[^\\p{L}\\p{N}]+$")
 
 private fun answerRelevance(text: String, terms: List<String>): Int = terms.count { term ->
     var index = text.indexOf(term, ignoreCase = true)

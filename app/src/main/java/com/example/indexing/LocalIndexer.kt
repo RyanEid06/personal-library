@@ -95,6 +95,7 @@ class LocalIndexer(
     }
 
     suspend fun enqueueDurableAiJob(itemId: String) = queueMutations.withLock {
+        repository.completeOwnerFeedbackMigration()
         val prefs = context.getSharedPreferences("personal_library_settings", Context.MODE_PRIVATE)
         val pauseAi = prefs.getBoolean("ai_paused", false)
         if (pauseAi) return@withLock
@@ -108,7 +109,7 @@ class LocalIndexer(
         val excludedCollections = prefs.getStringSet("excluded_collections", emptySet()).orEmpty()
         if (repository.dao.getCollectionIdsForItem(itemId).any { it in excludedCollections }) return@withLock
         val versionTag = "ai_version_${item.localIndexVersion}"
-        val networkType = if (prefs.getBoolean("ai_wifi_only", true)) NetworkType.UNMETERED else NetworkType.CONNECTED
+        val networkType = if (prefs.getBoolean("ai_wifi_only", false)) NetworkType.UNMETERED else NetworkType.CONNECTED
         val manager = WorkManager.getInstance(context)
         val liveWork = manager.getWorkInfosForUniqueWork("ai_job_$itemId").get().filter { !it.state.isFinished }
         if (liveWork.any { versionTag in it.tags && it.constraints.requiredNetworkType == networkType }) return@withLock
@@ -148,7 +149,10 @@ class LocalIndexer(
         for (itemId in itemIds.distinct()) {
             val shouldEnqueue = queueMutations.withLock {
                 val item = repository.dao.getItemById(itemId) ?: return@withLock false
-                if (item.isTrash) return@withLock false
+                if (item.isTrash) {
+                    WorkManager.getInstance(context).cancelUniqueWork("ai_job_$itemId").result.get()
+                    return@withLock false
+                }
                 val currentJob = repository.dao.getAnalysisJob(itemId)?.takeIf { it.expectedContentVersion == item.localIndexVersion }
                     ?: AnalysisJobEntity(itemId, item.localIndexVersion, item.localIndexVersion)
                 val excluded = itemId in prefs.getStringSet("excluded_items", emptySet()).orEmpty() ||
@@ -184,7 +188,7 @@ class LocalIndexer(
         }
     }
 
-    suspend fun enqueuePendingAnalysisJobs(resumeUnpaired: Boolean = false) = withContext(Dispatchers.IO) {
+    suspend fun enqueuePendingAnalysisJobs(resumeUnpaired: Boolean = true) = withContext(Dispatchers.IO) {
         val prefs = context.getSharedPreferences("personal_library_settings", Context.MODE_PRIVATE)
         if (prefs.getBoolean("ai_paused", false)) return@withContext
 

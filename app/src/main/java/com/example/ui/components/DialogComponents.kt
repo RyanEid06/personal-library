@@ -80,6 +80,7 @@ fun ItemDetailsDialog(
     onEdit: (() -> Unit)? = null
 ) {
     val context = LocalContext.current
+    val shareScope = rememberCoroutineScope()
     val item = itemWithCols.item
     val scrollState = rememberScrollState()
     val dateFormatter = remember { SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()) }
@@ -189,7 +190,7 @@ fun ItemDetailsDialog(
                         )
                     }
                     IconButton(onClick = {
-                        shareItemEntity(context, item, blobFile)
+                        shareItemEntity(context, item, blobFile, shareScope)
                     }) {
                         Icon(Icons.Outlined.Share, contentDescription = "Share")
                     }
@@ -351,7 +352,7 @@ fun ItemDetailsDialog(
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 Button(
-                    onClick = { openItemEntityExternally(context, item, blobFile) },
+                    onClick = { openItemEntityExternally(context, item, blobFile, shareScope) },
                     modifier = Modifier.weight(1f).testTag("dialog_open_button")
                 ) {
                     Icon(
@@ -383,18 +384,19 @@ fun ItemDetailsDialog(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    Row(modifier = Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Filled.Notifications, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
                             text = if (item.isReminderDateOnly) "Due: ${item.reminderLocalDate} (date only)" else "Due: ${dateFormatter.format(Date(item.reminderTime))}${if (!item.isReminderExact) " (approximate)" else ""}",
                             fontSize = 12.sp,
                             fontWeight = FontWeight.SemiBold,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                            modifier = Modifier.weight(1f)
                         )
                     }
-                    TextButton(onClick = { onSetReminder(null, false, false, null) }) {
-                        Text("Clear", fontSize = 12.sp, color = MaterialTheme.colorScheme.error)
+                    TextButton(onClick = { onSetReminder(null, false, false, null) }, modifier = Modifier.widthIn(min = 64.dp)) {
+                        Text("Clear", fontSize = 12.sp, color = MaterialTheme.colorScheme.error, maxLines = 1, softWrap = false)
                     }
                 }
                 if (!scheduler.notificationsEnabled()) {
@@ -404,48 +406,13 @@ fun ItemDetailsDialog(
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Multi-Collection Memberships (Many-to-Many!)
-            Text("Collection Memberships", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-            Spacer(modifier = Modifier.height(6.dp))
-
-            val currentAssignedIds = remember(itemWithCols) {
-                mutableStateListOf<String>().apply { addAll(itemWithCols.collections.map { it.id }) }
-            }
-
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f), RoundedCornerShape(8.dp))
-                    .padding(8.dp)
-            ) {
-                if (collections.isEmpty()) {
-                    Text("No collections created yet", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline)
-                } else {
-                    for (col in collections) {
-                        val isChecked = currentAssignedIds.contains(col.id)
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable {
-                                    if (isChecked) currentAssignedIds.remove(col.id) else currentAssignedIds.add(col.id)
-                                    onCollectionsChange(currentAssignedIds.toList())
-                                }
-                                .padding(vertical = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Checkbox(
-                                checked = isChecked,
-                                onCheckedChange = { checked ->
-                                    if (checked) currentAssignedIds.add(col.id) else currentAssignedIds.remove(col.id)
-                                    onCollectionsChange(currentAssignedIds.toList())
-                                }
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(col.name, style = MaterialTheme.typography.bodyMedium)
-                        }
-                    }
-                }
-            }
+            Text("Folder", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+            FolderDestinationPicker(
+                collections = collections,
+                selectedId = itemWithCols.collections.firstOrNull()?.id,
+                includeSmartViews = false,
+                onSelected = { onCollectionsChange(listOfNotNull(it)) }
+            )
 
             Spacer(modifier = Modifier.height(16.dp))
 
@@ -503,20 +470,34 @@ fun AddContentDialog(
     onDismiss: () -> Unit,
     onCreateNote: (String, String, List<String>) -> Unit,
     onSaveLink: (String, String, String, List<String>) -> Unit,
-    onImportFiles: (List<Uri>, List<String>) -> Unit
+    onImportFiles: (List<Uri>, List<String>) -> Unit,
+    initialCollectionId: String? = null,
+    onReminderChosen: (Long, Boolean, Boolean, String?) -> Unit = { _, _, _, _ -> }
 ) {
     var selectedTab by remember { mutableStateOf(0) } // 0: Note, 1: Link, 2: Files
     var title by remember { mutableStateOf("") }
     var content by remember { mutableStateOf("") }
     var url by remember { mutableStateOf("") }
-    val selectedCollectionIds = remember { mutableStateListOf<String>() }
+    var selectedDestination by remember { mutableStateOf(initialCollectionId) }
+    var pendingSave by remember { mutableStateOf<(() -> Unit)?>(null) }
+    fun save(action: () -> Unit) {
+        if (selectedDestination == "computed_due") pendingSave = action else action()
+    }
+    if (pendingSave != null) CaptureReminderPicker(
+        onDismiss = { pendingSave = null },
+        onChosen = { time, exact, dateOnly, date ->
+            onReminderChosen(time, exact, dateOnly, date)
+            val action = pendingSave
+            pendingSave = null
+            action?.invoke()
+        }
+    )
 
     val filePicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetMultipleContents()
     ) { uris: List<Uri> ->
         if (uris.isNotEmpty()) {
-            onImportFiles(uris, selectedCollectionIds.toList())
-            onDismiss()
+            save { onImportFiles(uris, listOfNotNull(selectedDestination)); onDismiss() }
         }
     }
 
@@ -614,30 +595,10 @@ fun AddContentDialog(
 
                 Spacer(modifier = Modifier.height(14.dp))
 
-                // Many-to-many collection selection
-                Text("Assign to Collections:", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
-                Spacer(modifier = Modifier.height(6.dp))
-                for (col in collections) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable {
-                                if (selectedCollectionIds.contains(col.id)) selectedCollectionIds.remove(col.id)
-                                else selectedCollectionIds.add(col.id)
-                            }
-                            .padding(vertical = 2.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Checkbox(
-                            checked = selectedCollectionIds.contains(col.id),
-                            onCheckedChange = { checked ->
-                                if (checked) selectedCollectionIds.add(col.id) else selectedCollectionIds.remove(col.id)
-                            }
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(col.name, style = MaterialTheme.typography.bodyMedium)
-                    }
-                }
+                if (initialCollectionId == null) {
+                    Text("Save to", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
+                    FolderDestinationPicker(collections, selectedDestination, onSelected = { selectedDestination = it })
+                } else Text("Saving to ${destinationName(initialCollectionId, collections)}", style = MaterialTheme.typography.bodyMedium)
 
                 Spacer(modifier = Modifier.height(20.dp))
 
@@ -651,8 +612,7 @@ fun AddContentDialog(
                         Button(
                             onClick = {
                                 if (content.isNotBlank()) {
-                                    onCreateNote(title, content, selectedCollectionIds.toList())
-                                    onDismiss()
+                                    save { onCreateNote(title, content, listOfNotNull(selectedDestination)); onDismiss() }
                                 }
                             },
                             enabled = content.isNotBlank(),
@@ -664,8 +624,7 @@ fun AddContentDialog(
                         Button(
                             onClick = {
                                 if (url.isNotBlank()) {
-                                    onSaveLink(url, title, content, selectedCollectionIds.toList())
-                                    onDismiss()
+                                    save { onSaveLink(url, title, content, listOfNotNull(selectedDestination)); onDismiss() }
                                 }
                             },
                             enabled = url.isNotBlank(),
@@ -686,25 +645,19 @@ fun SharePreviewDialog(
     collections: List<CollectionEntity>,
     onDismiss: () -> Unit,
     onConfirmSave: (List<String>) -> Unit,
-    resolveDefaultCollectionId: (suspend () -> String)? = null
+    initialCollectionId: String? = null,
+    onReminderChosen: (Long, Boolean, Boolean, String?) -> Unit = { _, _, _, _ -> }
 ) {
-    val selectedCollectionIds = remember(payload) { mutableStateListOf<String>() }
-    var resolvingDefault by remember(payload) { mutableStateOf(resolveDefaultCollectionId != null) }
-    var defaultError by remember(payload) { mutableStateOf<String?>(null) }
-    LaunchedEffect(payload) {
-        if (resolveDefaultCollectionId != null) {
-            try {
-                selectedCollectionIds.add(resolveDefaultCollectionId())
-            } catch (cancelled: kotlinx.coroutines.CancellationException) {
-                throw cancelled
-            } catch (_: Exception) {
-                defaultError = "Could not prepare the default collection. Choose a collection or save as Unfiled."
-            } finally {
-                resolvingDefault = false
-            }
+    val selectedCollectionIds = remember(payload) { mutableStateListOf<String>().apply { initialCollectionId?.let { add(it) } } }
+    var showCaptureReminder by remember(payload) { mutableStateOf(false) }
+    if (showCaptureReminder) CaptureReminderPicker(
+        onDismiss = { showCaptureReminder = false },
+        onChosen = { time, exact, dateOnly, date ->
+            onReminderChosen(time, exact, dateOnly, date)
+            showCaptureReminder = false
+            onConfirmSave(selectedCollectionIds.toList())
         }
-    }
-
+    )
     Dialog(onDismissRequest = onDismiss) {
         Surface(
             shape = RoundedCornerShape(16.dp),
@@ -763,31 +716,13 @@ fun SharePreviewDialog(
 
                 Spacer(modifier = Modifier.height(14.dp))
 
-                Text("Target Collections:", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
-                defaultError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-                Spacer(modifier = Modifier.height(4.dp))
-
-                for (col in collections) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth().clickable {
-                            if (!resolvingDefault) {
-                                if (selectedCollectionIds.contains(col.id)) selectedCollectionIds.remove(col.id)
-                                else selectedCollectionIds.add(col.id)
-                            }
-                        },
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Checkbox(
-                            checked = selectedCollectionIds.contains(col.id),
-                            enabled = !resolvingDefault,
-                            onCheckedChange = { checked ->
-                                if (checked) selectedCollectionIds.add(col.id) else selectedCollectionIds.remove(col.id)
-                            }
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(col.name, style = MaterialTheme.typography.bodyMedium)
-                    }
-                }
+                if (initialCollectionId == null) {
+                    Text("Save to", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
+                    FolderDestinationPicker(collections, selectedCollectionIds.firstOrNull(), onSelected = {
+                        selectedCollectionIds.clear()
+                        it?.let(selectedCollectionIds::add)
+                    })
+                } else Text("Saving to ${destinationName(initialCollectionId, collections)}", style = MaterialTheme.typography.bodyMedium)
 
                 Spacer(modifier = Modifier.height(20.dp))
 
@@ -798,8 +733,7 @@ fun SharePreviewDialog(
                     TextButton(onClick = onDismiss) { Text("Discard") }
                     Spacer(modifier = Modifier.width(8.dp))
                     Button(
-                        onClick = { onConfirmSave(selectedCollectionIds.toList()) },
-                        enabled = !resolvingDefault,
+                        onClick = { if (selectedCollectionIds.firstOrNull() == "computed_due") showCaptureReminder = true else onConfirmSave(selectedCollectionIds.toList()) },
                         modifier = Modifier.testTag("save_share_button")
                     ) {
                         Text("Save to Library")
@@ -905,4 +839,90 @@ fun EncryptedBackupPassphraseDialog(
             }
         }
     }
+}
+
+private fun destinationName(id: String?, collections: List<CollectionEntity>): String = when (id) {
+    null, "computed_unfiled" -> "Inbox"
+    "computed_favorites" -> "Favorites"
+    "computed_due" -> "Reminders"
+    else -> collections.find { it.id == id }?.name ?: "Inbox"
+}
+
+@Composable
+private fun FolderDestinationPicker(
+    collections: List<CollectionEntity>,
+    selectedId: String?,
+    includeSmartViews: Boolean = true,
+    onSelected: (String?) -> Unit
+) {
+    val choices = listOf(null to "Inbox") +
+        (if (includeSmartViews) listOf("computed_favorites" to "Favorites", "computed_due" to "Reminders") else emptyList()) +
+        collections.map { it.id to it.name }
+    Column {
+        choices.forEach { (id, name) ->
+            Row(Modifier.fillMaxWidth().clickable { onSelected(id) }.heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) {
+                RadioButton(selected = selectedId == id, onClick = { onSelected(id) })
+                Text(name, style = MaterialTheme.typography.bodyMedium)
+            }
+        }
+        if (selectedId == null) Text("Items without a folder appear in Inbox.", style = MaterialTheme.typography.bodySmall)
+    }
+}
+
+/** Saving starts only after a complete reminder choice. Cancelling any native picker creates nothing. */
+@Composable
+private fun CaptureReminderPicker(onDismiss: () -> Unit, onChosen: (Long, Boolean, Boolean, String?) -> Unit) {
+    val context = LocalContext.current
+    var picking by remember { mutableStateOf(false) }
+    var nativePicker by remember { mutableStateOf<android.app.Dialog?>(null) }
+    var pendingChoice by remember { mutableStateOf<ReminderChoice?>(null) }
+    val scheduler = remember(context) { com.example.reminder.ReminderScheduler(context) }
+    fun commit(choice: ReminderChoice) {
+        if (!scheduler.notificationsEnabled()) Toast.makeText(context, "Reminder saved. Enable notifications in Android Settings for delivery.", Toast.LENGTH_LONG).show()
+        else if (!choice.dateOnly && !scheduler.canUseExactAlarms()) Toast.makeText(context, "Reminder saved. Delivery will be approximate.", Toast.LENGTH_LONG).show()
+        onChosen(choice.time, !choice.dateOnly && scheduler.canUseExactAlarms(), choice.dateOnly, choice.localDate)
+    }
+    val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
+        pendingChoice?.let { commit(it) }
+        pendingChoice = null
+    }
+    fun choose(choice: ReminderChoice) {
+        if (choice.time <= System.currentTimeMillis()) {
+            Toast.makeText(context, "Choose a future reminder date or time", Toast.LENGTH_LONG).show()
+            picking = false
+        } else if (android.os.Build.VERSION.SDK_INT >= 33 && androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            pendingChoice = choice
+            permission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+        } else commit(choice)
+    }
+    DisposableEffect(Unit) { onDispose { nativePicker?.dismiss() } }
+    fun pick(dateOnly: Boolean) {
+        picking = true
+        val calendar = Calendar.getInstance()
+        val picker = DatePickerDialog(context, { _, year, month, day ->
+            val date = java.time.LocalDate.of(year, month + 1, day).toString()
+            if (dateOnly) {
+                choose(ReminderChoice(com.personallibrary.core.ReminderDate.atNine(date), true, date))
+            } else {
+                val timePicker = TimePickerDialog(context, { _, hour, minute ->
+                    calendar.set(year, month, day, hour, minute, 0)
+                    calendar.set(Calendar.MILLISECOND, 0)
+                    choose(ReminderChoice(calendar.timeInMillis, false, null))
+                }, calendar.get(Calendar.HOUR_OF_DAY), calendar.get(Calendar.MINUTE), android.text.format.DateFormat.is24HourFormat(context))
+                timePicker.setOnCancelListener { onDismiss() }
+                nativePicker = timePicker
+                timePicker.show()
+            }
+        }, calendar.get(Calendar.YEAR), calendar.get(Calendar.MONTH), calendar.get(Calendar.DAY_OF_MONTH))
+        picker.setOnCancelListener { onDismiss() }
+        nativePicker = picker
+        picker.show()
+    }
+    if (!picking) AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("When should we remind you?") },
+        text = { Text("Choose a date, or a date and time, before saving to Reminders.") },
+        confirmButton = { TextButton(onClick = { pick(false) }) { Text("Date and time") } },
+        dismissButton = { Row { TextButton(onClick = onDismiss) { Text("Cancel") }; TextButton(onClick = { pick(true) }) { Text("Date only") } } }
+    )
 }
