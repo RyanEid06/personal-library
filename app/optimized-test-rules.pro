@@ -5,6 +5,9 @@
 # Applied only to optimizedCheck with memoraOptimizedTests=true. Ordinary release
 # and the untouched optimized launch candidate retain their normal R8 rules.
 # Regenerate when instrumentation or its pinned dependencies change.
+# TraceReferences pins package-private hierarchy endpoints but not this live
+# intermediate superclass. Keep its package so the inheritance chain stays legal.
+-keepnames class kotlin.collections.CollectionsKt__MutableCollectionsJVMKt
 # The optimized test APK retains these finally-marker calls in Compose's
 # FrameDeferringContinuationInterceptor. Keep only its two actual DEX entry points.
 -keep class kotlin.jvm.internal.InlineMarker {
