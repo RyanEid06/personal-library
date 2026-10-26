@@ -19,6 +19,7 @@ import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.lifecycle.ViewModelProvider
+import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.espresso.Espresso
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.example.MainActivity
@@ -122,7 +123,7 @@ class LibraryManagementUiTest {
         compose.onNodeWithTag("submit_add_note").performScrollTo().performClick()
         compose.onNodeWithText("When should we remind you?").assertIsDisplayed()
         compose.runOnIdle { assertEquals(0, creates) }
-        Espresso.pressBack()
+        InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
         compose.onNodeWithText("When should we remind you?").assertDoesNotExist()
         compose.onNodeWithTag("add_note_content").assertTextContains("Synthetic reminder")
         compose.runOnIdle { assertEquals(0, creates) }
@@ -189,7 +190,8 @@ class LibraryManagementUiTest {
         }
         compose.onNodeWithTag("save_share_button").performScrollTo().performClick()
         compose.onNodeWithText("When should we remind you?").assertIsDisplayed()
-        Espresso.pressBack()
+        InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
+        compose.onNodeWithText("When should we remind you?").assertDoesNotExist()
         compose.runOnIdle { assertNull(selected) }
         compose.onNodeWithTag("save_share_button").assertExists()
     }
@@ -243,9 +245,9 @@ class LibraryManagementUiTest {
         compose.onNodeWithText("Copy Extracted Text").assertIsDisplayed()
         compose.runOnIdle { assertEquals(1024 * 1024, item.extractedText!!.length) }
         // Android Back first collapses an expanded sheet, then dismisses the partial sheet.
-        Espresso.pressBack()
+        InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
         compose.onNode(SemanticsMatcher.keyIsDefined(SemanticsActions.Expand)).assertExists()
-        Espresso.pressBack()
+        InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
         compose.onNodeWithText("Synthetic large document").assertDoesNotExist()
     }
 

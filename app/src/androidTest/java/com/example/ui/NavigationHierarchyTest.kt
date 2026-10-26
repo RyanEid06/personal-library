@@ -90,14 +90,14 @@ class NavigationHierarchyTest {
     @Test fun trashBackAndVisibleUpReturnThroughSettings() {
         openTrash()
         compose.onNodeWithContentDescription("Back to Settings").assertHasClickAction()
-        Espresso.pressBack()
+        InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
         compose.onNodeWithText("Settings & Portability").assertIsDisplayed()
         compose.onNodeWithContentDescription("Back to Library").performClick()
         compose.onNodeWithTag("settings_top_button").assertIsDisplayed()
         openTrash()
         compose.onNodeWithContentDescription("Back to Settings").performClick()
         compose.onNodeWithText("Settings & Portability").assertIsDisplayed()
-        Espresso.pressBack()
+        InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
         compose.onNodeWithTag("settings_top_button").assertIsDisplayed()
     }
 
@@ -107,10 +107,10 @@ class NavigationHierarchyTest {
         compose.onNodeWithTag("trash_list").performScrollToNode(hasTestTag("perm_delete_btn_$id"))
         compose.onNodeWithTag("perm_delete_btn_$id").performClick()
         compose.onNodeWithText("Delete Forever?").assertIsDisplayed()
-        Espresso.pressBack()
+        InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
         compose.onNodeWithText("Delete Forever?").assertDoesNotExist()
         compose.onNodeWithContentDescription("Back to Settings").assertIsDisplayed()
-        Espresso.pressBack()
+        InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
         compose.onNodeWithText("Settings & Portability").assertIsDisplayed()
     }
 
@@ -124,7 +124,7 @@ class NavigationHierarchyTest {
         compose.onNodeWithTag("edit_item_button").assertIsDisplayed()
         compose.activityRule.scenario.recreate()
         compose.onNodeWithTag("edit_item_button").assertIsDisplayed()
-        Espresso.pressBack()
+        InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
         compose.onNodeWithTag("settings_top_button").assertIsDisplayed()
         seed()
         compose.waitForIdle()
@@ -137,7 +137,7 @@ class NavigationHierarchyTest {
                 .putExtra(ReminderReceiver.EXTRA_ITEM_ID, id))
         }
         compose.onNodeWithTag("edit_item_button").assertIsDisplayed()
-        Espresso.pressBack()
+        InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
     }
 
     @Test fun overlappingSharesReuseTheTaskQueueUntilConsumedAndWaitBehindAppLock() {
@@ -235,7 +235,8 @@ class NavigationHierarchyTest {
             scrollLibraryTo(container, hasText(title))
             clickLibraryTarget(container, hasText(title))
             compose.onNodeWithTag("edit_item_button").assertIsDisplayed()
-            Espresso.pressBack()
+            InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
+            compose.onNodeWithTag("edit_item_button").assertDoesNotExist()
             scrollLibraryTo(container, hasTestTag("active_type_chip"))
             clickLibraryTarget(container, hasTestTag("active_type_chip"))
             compose.runOnIdle { org.junit.Assert.assertNull(vm.selectedKind.value) }
@@ -291,15 +292,27 @@ class NavigationHierarchyTest {
     }
 
     private fun scrollLibraryTo(container: String, target: SemanticsMatcher) {
-        val host = compose.onNodeWithTag(container)
         val trace = StringBuilder()
+        // Resolve the replacement list/grid without Compose's off-thread failure-tree dump.
+        compose.waitUntil(10_000) {
+            compose.onAllNodesWithTag(container).fetchSemanticsNodes().singleOrNull()?.let {
+                it.boundsInRoot.height > 0 && it.config.contains(SemanticsActions.ScrollBy)
+            } == true
+        }
         // Scan half a viewport on the UI thread: tiny hosts defeat touch slop and skip targets on flings.
         for (towardTop in listOf(false, true)) {
             repeat(160) {
                 compose.waitForIdle()
+                val host = checkNotNull(compose.onAllNodesWithTag(container).fetchSemanticsNodes().singleOrNull()) {
+                    "Expected one $container viewport while scrolling; $trace"
+                }
+                fun scrollBy(distance: Float) = compose.runOnUiThread {
+                    check(host.config.contains(SemanticsActions.ScrollBy)) { "$container lost its scroll action; $trace" }
+                    checkNotNull(host.config[SemanticsActions.ScrollBy].action)(0f, distance)
+                }
                 val targetNode = compose.onNode(target)
                 if (targetNode.isDisplayed()) {
-                    val viewport = host.fetchSemanticsNode().boundsInRoot
+                    val viewport = host.boundsInRoot
                     val full = targetNode.getUnclippedBoundsInRoot()
                     val top = with(compose.density) { full.top.toPx() }
                     val bottom = with(compose.density) { full.bottom.toPx() }
@@ -309,14 +322,12 @@ class NavigationHierarchyTest {
                         when { top > viewport.top -> top - viewport.top; bottom < viewport.bottom -> bottom - viewport.bottom; else -> 0f }
                     }
                     if (kotlin.math.abs(delta) <= 1f) return
-                    host.performSemanticsAction(SemanticsActions.ScrollBy) { scroll -> scroll(0f, delta) }
+                    scrollBy(delta)
                     return@repeat
                 }
-                trace.appendLine("towardTop=$towardTop step=$it host=${host.getUnclippedBoundsInRoot()}")
-                val distance = maxOf(1f, host.fetchSemanticsNode().boundsInRoot.height / 2)
-                host.performSemanticsAction(SemanticsActions.ScrollBy) { scroll ->
-                    scroll(0f, if (towardTop) -distance else distance)
-                }
+                trace.appendLine("towardTop=$towardTop step=$it host=${host.boundsInRoot}")
+                val distance = maxOf(1f, host.boundsInRoot.height / 2)
+                scrollBy(if (towardTop) -distance else distance)
             }
         }
         val instrumentation = InstrumentationRegistry.getInstrumentation()
@@ -328,10 +339,9 @@ class NavigationHierarchyTest {
             }
             bitmap.recycle()
         }
-        val tree = compose.onRoot(useUnmergedTree = true).printToString()
-        java.io.File(evidence, "failed.txt").writeText("$trace\n$tree")
+        java.io.File(evidence, "failed.txt").writeText(trace.toString())
         org.junit.Assert.assertTrue(
-            "Target $target unreachable in $container; layout=${vm.libraryLayout.value}; ready=${vm.resultsReady.value}; results=${vm.localSearchResults.value.size}\n$trace\n$tree",
+            "Target $target unreachable in $container; layout=${vm.libraryLayout.value}; ready=${vm.resultsReady.value}; results=${vm.localSearchResults.value.size}\n$trace",
             compose.onNode(target).isDisplayed()
         )
     }
