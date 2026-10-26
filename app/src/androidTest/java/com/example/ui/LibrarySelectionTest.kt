@@ -56,7 +56,9 @@ class LibrarySelectionTest {
         val second = seed("second")
         showLibrary(LibraryLayout.LIST)
         waitForVisible(setOf(first.id, second.id))
+        compose.waitUntil(10_000) { compose.onNodeWithTag("item_card_${first.id}").isDisplayed() }
         compose.onNodeWithTag("item_card_${first.id}").performTouchInput { longClick() }
+        compose.waitUntil(10_000) { compose.onNodeWithText("1 selected").isDisplayed() }
         compose.onNodeWithText("1 selected").assertIsDisplayed()
         compose.onNodeWithTag("item_card_${second.id}").performClick()
         compose.onNodeWithText("2 selected").assertIsDisplayed()
